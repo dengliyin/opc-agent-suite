@@ -1,0 +1,3 @@
+# The web service uses the Python standard library only.
+# Node.js, FFmpeg, FFprobe, Chrome, and HyperFrames live in the offline runtime bundle.
+

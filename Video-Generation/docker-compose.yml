@@ -1,0 +1,23 @@
+services:
+  omni-segment-agent:
+    build: .
+    container_name: omni-segment-agent
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PYTHONUNBUFFERED: "1"
+      ADAPTATION_AGENT_URL: "${ADAPTATION_AGENT_URL:-http://host.docker.internal:8788}"
+      OPC_VAULT_ROOT: /vault
+      SCRIPT_ROOT: /vault/wiki/视频/06产品适配后的脚本/omni
+      GROK_SCRIPT_ROOT: /vault/wiki/视频/06产品适配后的脚本/grok
+      REFERENCE_ROOT: /vault/wiki/产品/产品底图
+      VIDEO_OUTPUT_ROOT: /vault/wiki/视频/10omni视频片段
+      GROK_VIDEO_OUTPUT_ROOT: /vault/wiki/视频/10grok视频片段
+    ports:
+      - "${HOST_BIND:-127.0.0.1}:${PORT:-9995}:8876"
+    volumes:
+      - ./:/app
+      - "${OPC_VAULT_ROOT:?Set OPC_VAULT_ROOT in .env}:/vault"
+    working_dir: /app
+    command: ["uvicorn", "agent.app:app", "--host", "0.0.0.0", "--port", "8876"]

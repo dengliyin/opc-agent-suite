@@ -1,0 +1,63 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+.runtime/
+
+# Python environments and caches
+**/.venv/
+**/__pycache__/
+**/.pytest_cache/
+**/*.py[cod]
+
+# Logs, process state, databases, and temporary files
+**/*.log
+**/*.pid
+**/*.sqlite
+**/*.sqlite3
+**/*.db
+**/*.tmp
+**/*.bak
+**/*.bak_*
+
+# Local secrets and machine-specific configuration
+**/agent_secrets.local.json
+**/*.pem
+**/*.key
+**/settings.local.json
+**/paths.local.json
+Video-Collection/config.json
+Script-Generation/app_config.json
+Script-Generation/fastmoss_config.json
+Script-Generation/opc_engine/features/script_generation/config/inputs.json
+Script-Generation/opc_engine/features/script_generation/config/model_settings.json
+Script-Generation/workflow_configs/**/config/inputs.json
+Video-Generation/.env
+Finished-Video-Manager/data/
+
+# Browser state and generated application data
+**/browser-profile/
+**/run_logs/
+**/logs/
+**/outputs/
+**/projects/
+**/downloads/
+**/storage/
+Video-Collection/data/product_info_options.json
+Script-Generation/runtime/
+Script-Generation/workflow_configs/unified_console/runtime/
+Video-Assembly-hd/data/
+Video-Assembly-hd/media/
+Video-Assembly-hd/runs/
+
+# Offline renderer binaries are installed separately.
+Video-Assembly-hd/runtime/
+
+# Large media and generated archives
+**/*.mp4
+**/*.mov
+**/*.m4v
+**/*.webm
+**/*.zip
+**/*.tar
+**/*.tar.gz

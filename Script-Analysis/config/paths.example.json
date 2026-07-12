@@ -1,0 +1,5 @@
+{
+  "_说明": "本地业务目录配置示例。复制为 paths.local.json 后填写你自己的视频目录和脚本目录。",
+  "video_dir": "/absolute/path/to/03爆款视频",
+  "script_dir": "/absolute/path/to/04爆款视频脚本"
+}

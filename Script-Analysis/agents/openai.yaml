@@ -1,0 +1,4 @@
+interface:
+  display_name: "视频拆解智能体"
+  short_description: "面向TikTok电商短视频的拆解与脚本结构沉淀助手"
+  default_prompt: "Use $Script-Analysis to analyze a local MP4 and produce a structured teardown for script generation."

@@ -1,0 +1,38 @@
+{
+  "product": {
+    "slug": "",
+    "name": "",
+    "path": ""
+  },
+  "fastmoss": {
+    "phone": "",
+    "password": "",
+    "keyword": "",
+    "country": "马来西亚",
+    "category_path": [
+      "全部"
+    ],
+    "shop_type": "全部",
+    "product_types": [],
+    "product_status": "在售",
+    "creator_conversion_rate_filter": "全部",
+    "total_sales_filter": "全部",
+    "total_gmv_filter": "全部",
+    "sales_7d_filter": "全部",
+    "gmv_7d_filter": "全部",
+    "creator_count_filter": "全部",
+    "commission_rate_filter": "全部",
+    "shipping_method_filter": "全部",
+    "product_limit": 3,
+    "videos_per_product": 5,
+    "show_browser": false
+  },
+  "download": {
+    "enabled": true,
+    "source_csv": "",
+    "limit": 0
+  },
+  "output": {
+    "result_folder_name": "results"
+  }
+}

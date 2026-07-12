@@ -1,0 +1,4 @@
+interface:
+  display_name: "脚本适配智能体"
+  short_description: "把成品脚本适配成视频生成模型可用的分镜JSON和Veo批量CSV"
+  default_prompt: "启动脚本适配智能体网页界面"

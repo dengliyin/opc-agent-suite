@@ -1,0 +1,481 @@
+const $ = (id) => document.getElementById(id);
+
+let state = { report: null, job: null, checks: [], outputs: [], app_root: '' };
+let activeStatus = 'missing';
+let selected = new Set();
+let cleanupSelected = new Set();
+let pollTimer = null;
+let lastJobStatus = 'idle';
+let toastTimer = null;
+
+const statusLabels = {
+  missing: '待拼接',
+  done: '已有成品',
+  archived: '已归档',
+  invalid: '异常',
+};
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function basename(path) {
+  return String(path || '').split('/').filter(Boolean).pop() || '';
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes || 0);
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(0)} KB`;
+  return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatScanTime(value) {
+  if (!value) return '尚未扫描';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return `扫描于 ${date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;
+}
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    ...options,
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || `请求失败：${response.status}`);
+  return data;
+}
+
+function showToast(message, isError = false) {
+  clearTimeout(toastTimer);
+  $('toast').textContent = message;
+  $('toast').className = `toast show${isError ? ' error' : ''}`;
+  toastTimer = setTimeout(() => { $('toast').className = 'toast'; }, 2600);
+}
+
+function reportItems(status = activeStatus) {
+  return (state.report?.items || []).filter((item) => item.status === status);
+}
+
+function syncSelection() {
+  const valid = new Set(reportItems('missing').map((item) => item.script_dir));
+  selected = new Set([...selected].filter((path) => valid.has(path)));
+  const validCleanup = new Set(
+    reportItems('done').filter((item) => item.cleanup_eligible).map((item) => item.script_dir),
+  );
+  cleanupSelected = new Set([...cleanupSelected].filter((path) => validCleanup.has(path)));
+}
+
+function renderChecks() {
+  const allReady = state.checks.length > 0 && state.checks.every((item) => item.ok);
+  $('runtimeBadge').textContent = allReady ? '离线环境就绪' : '离线依赖缺失';
+  $('runtimeBadge').className = `badge ${allReady ? 'ok' : 'error'}`;
+  $('runtimeChecks').innerHTML = state.checks.map((item) => `
+    <div class="checkRow ${item.ok ? '' : 'fail'}" title="${escapeHtml(item.path)}">
+      <i class="checkDot"></i>
+      <span>${escapeHtml(item.label)}</span>
+      <code>${item.ok ? '就绪' : '缺失'}</code>
+    </div>
+  `).join('');
+}
+
+function renderCounts() {
+  const counts = state.report?.by_status || {};
+  $('missingCount').textContent = counts.missing || 0;
+  $('doneCount').textContent = counts.done || 0;
+  $('archivedCount').textContent = counts.archived || 0;
+  $('invalidCount').textContent = counts.invalid || 0;
+  document.querySelectorAll('.stat').forEach((button) => {
+    button.classList.toggle('active', button.dataset.status === activeStatus);
+  });
+}
+
+function groupedItems(items) {
+  const groups = new Map();
+  items.forEach((item) => {
+    const key = `${item.model}/${item.date}/${item.product}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  });
+  return groups;
+}
+
+function taskRow(item) {
+  const scriptName = basename(item.script_dir);
+  const clips = (item.video_paths || []).length;
+  const cleanupMode = item.status === 'done' && item.cleanup_eligible;
+  const selectable = item.status === 'missing' || cleanupMode;
+  const selectedAttr = (cleanupMode ? cleanupSelected : selected).has(item.script_dir) ? 'checked' : '';
+  const checkbox = selectable
+    ? `<input class="taskCheck" type="checkbox" data-mode="${cleanupMode ? 'cleanup' : 'assemble'}" data-script-dir="${escapeHtml(item.script_dir)}" ${selectedAttr} aria-label="选择 ${escapeHtml(scriptName)}" />`
+    : '';
+  const issue = (item.issues || []).join('、');
+  const meta = item.status === 'missing'
+    ? `${clips} 个片段 · ${basename(item.md_path)}`
+    : item.status === 'done'
+      ? `${basename(item.output_path)}${item.cleanup_eligible ? ` · 待清理 ${item.cleanup_file_count} 个文件 / ${formatBytes(item.cleanup_bytes)}` : ''}`
+      : item.status === 'archived'
+        ? '脚本保留，待拼接素材与成品均未匹配'
+        : (issue || '目录结构不完整');
+  const pillLabel = item.status === 'done'
+    ? item.cleanup_eligible ? '待清理' : item.media_cleaned ? '已清理' : '已有成品'
+    : statusLabels[item.status] || item.status;
+  const pillClass = item.status === 'done'
+    ? item.cleanup_eligible ? 'cleanup' : item.media_cleaned ? 'cleaned' : 'done'
+    : item.status;
+  return `
+    <div class="taskRow ${selectable ? '' : 'readonly'}">
+      ${checkbox}
+      <div class="taskMain">
+        <div class="taskName">${escapeHtml(scriptName)}</div>
+        <div class="taskMeta"><span>${escapeHtml(meta)}</span></div>
+      </div>
+      <span class="statusPill ${pillClass}">${pillLabel}</span>
+    </div>
+  `;
+}
+
+function renderTasks() {
+  const items = reportItems();
+  if (!items.length) {
+    const messages = {
+      missing: '没有待拼接项目',
+      done: '没有本地成品记录',
+      archived: '没有已归档脚本',
+      invalid: '没有异常项目',
+    };
+    $('taskList').innerHTML = `<div class="emptyState">${messages[activeStatus]}</div>`;
+  } else {
+    $('taskList').innerHTML = [...groupedItems(items)].map(([key, rows]) => {
+      const parts = key.split('/');
+      return `
+        <div class="groupHead"><span>${escapeHtml(parts[2])}</span><span>${escapeHtml(parts[0])} · ${escapeHtml(parts[1])} · ${rows.length} 条</span></div>
+        ${rows.map(taskRow).join('')}
+      `;
+    }).join('');
+  }
+  const selectableItems = activeStatus === 'missing'
+    ? reportItems('missing')
+    : activeStatus === 'done'
+      ? reportItems('done').filter((item) => item.cleanup_eligible)
+      : [];
+  const selection = activeStatus === 'done' ? cleanupSelected : selected;
+  const selectablePaths = selectableItems.map((item) => item.script_dir);
+  const allSelected = selectablePaths.length > 0 && selectablePaths.every((path) => selection.has(path));
+  $('selectAll').checked = allSelected;
+  $('selectAll').indeterminate = selectablePaths.some((path) => selection.has(path)) && !allSelected;
+  $('selectAll').disabled = selectablePaths.length === 0;
+  $('selectionSummary').textContent = `已选择 ${activeStatus === 'missing' || activeStatus === 'done' ? selection.size : 0} 项`;
+  $('scanMeta').textContent = formatScanTime(state.report?.scanned_at);
+}
+
+function renderQueueState() {
+  const missing = Number(state.report?.by_status?.missing || 0);
+  const cleanupAvailable = reportItems('done').filter((item) => item.cleanup_eligible).length;
+  const running = Boolean(state.job?.running);
+  if (running) {
+    $('queueState').textContent = '拼接执行中';
+    $('queueHint').textContent = '运行结束后会自动重新扫描';
+  } else if (activeStatus === 'done' && cleanupAvailable > 0) {
+    $('queueState').textContent = '等待成品确认';
+    $('queueHint').textContent = `${cleanupAvailable} 个已拼接项目仍保留源素材，清理前需二次确认`;
+  } else if (activeStatus === 'done') {
+    $('queueState').textContent = '无待清理素材';
+    $('queueHint').textContent = '已清理项目仅保留脚本、记录和成品';
+  } else if (missing > 0) {
+    $('queueState').textContent = '等待确认';
+    $('queueHint').textContent = `发现 ${missing} 个待拼接项目，确认前不会执行`;
+  } else {
+    $('queueState').textContent = '队列已清空';
+    $('queueHint').textContent = '当前没有需要拼接的片段';
+  }
+  const ffprobeReady = state.checks.some((item) => item.key === 'ffprobe' && item.ok);
+  $('scanBtn').disabled = running;
+  $('assembleBtn').hidden = activeStatus !== 'missing';
+  $('assembleBtn').disabled = running || selected.size === 0 || !state.offline_ready;
+  $('cleanupBtn').hidden = activeStatus !== 'done';
+  $('cleanupBtn').disabled = running || cleanupSelected.size === 0 || !ffprobeReady;
+  $('cancelBtn').disabled = !running;
+}
+
+function jobLabel(status) {
+  return {
+    idle: '空闲', queued: '排队中', running: '拼接中', cancelling: '终止中',
+    completed: '已完成', cancelled: '已终止', failed: '失败',
+  }[status] || status;
+}
+
+function renderJob() {
+  const job = state.job || {};
+  const percent = Number(job.percent || 0);
+  $('jobBadge').textContent = jobLabel(job.status || 'idle');
+  $('jobBadge').className = `badge ${job.status === 'completed' ? 'ok' : job.status === 'failed' ? 'error' : job.running ? 'warn' : ''}`;
+  $('progressSummary').textContent = job.total ? `${jobLabel(job.status)}：${job.completed || 0} / ${job.total}` : '暂无任务';
+  $('progressPercent').textContent = `${percent}%`;
+  $('progressFill').style.width = `${Math.max(0, Math.min(100, percent))}%`;
+  $('progressCurrent').textContent = job.error || job.current || (job.status === 'completed' ? '本次拼接已完成' : '等待确认');
+  const logs = job.logs || [];
+  $('logs').textContent = logs.length ? logs.join('\n') : '暂无运行日志';
+  $('logs').classList.toggle('empty', logs.length === 0);
+  $('logs').scrollTop = $('logs').scrollHeight;
+  $('logState').textContent = job.running ? '实时更新' : '本地进程';
+}
+
+function renderOutputs() {
+  const outputs = state.outputs || [];
+  $('outputs').innerHTML = outputs.length ? outputs.map((item) => `
+    <div class="outputItem">
+      <div>
+        <div class="outputName">${escapeHtml(item.name)}</div>
+        <div class="outputMeta">${escapeHtml(item.relative)} · ${formatBytes(item.size)}</div>
+      </div>
+      <button class="iconButton small openPathBtn" type="button" title="打开成品" aria-label="打开成品" data-path="${escapeHtml(item.path)}">↗</button>
+    </div>
+  `).join('') : '<div class="emptyState compact">暂无成品记录</div>';
+}
+
+function render() {
+  syncSelection();
+  $('pendingPath').textContent = state.report?.pending_root || '未配置';
+  $('outputPath').textContent = state.report?.output_root || '未配置';
+  renderChecks();
+  renderCounts();
+  renderTasks();
+  renderJob();
+  renderOutputs();
+  renderQueueState();
+}
+
+async function refreshState(showError = true) {
+  try {
+    state = await api('/api/state');
+    render();
+    managePolling();
+  } catch (error) {
+    if (showError) showToast(error.message, true);
+  }
+}
+
+async function scan() {
+  $('scanBtn').disabled = true;
+  $('queueState').textContent = '正在扫描';
+  try {
+    const data = await api('/api/scan', { method: 'POST', body: '{}' });
+    state.report = data.report;
+    state.outputs = data.outputs || state.outputs;
+    selected = new Set(reportItems('missing').map((item) => item.script_dir));
+    activeStatus = 'missing';
+    render();
+    showToast(`扫描完成：${state.report.by_status?.missing || 0} 个待拼接项目`);
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    $('scanBtn').disabled = false;
+  }
+}
+
+function openConfirmModal() {
+  if (!selected.size) {
+    showToast('请先选择待拼接项目', true);
+    return;
+  }
+  $('confirmCount').textContent = selected.size;
+  $('confirmOutputPath').textContent = state.report?.output_root || '';
+  $('confirmModal').hidden = false;
+  $('confirmRunBtn').focus();
+}
+
+function closeConfirmModal() {
+  $('confirmModal').hidden = true;
+}
+
+function openCleanupModal() {
+  if (!cleanupSelected.size) {
+    showToast('请先选择已有成品且待清理的项目', true);
+    return;
+  }
+  const items = reportItems('done').filter((item) => cleanupSelected.has(item.script_dir));
+  const fileCount = items.reduce((sum, item) => sum + Number(item.cleanup_file_count || 0), 0);
+  const bytes = items.reduce((sum, item) => sum + Number(item.cleanup_bytes || 0), 0);
+  $('cleanupCount').textContent = items.length;
+  $('cleanupFileSummary').textContent = `${fileCount} 个片段、图片或锁文件 · ${formatBytes(bytes)}`;
+  $('cleanupVerified').checked = false;
+  $('confirmCleanupBtn').disabled = true;
+  $('cleanupModal').hidden = false;
+  $('cleanupVerified').focus();
+}
+
+function closeCleanupModal() {
+  $('cleanupModal').hidden = true;
+  $('cleanupVerified').checked = false;
+  $('confirmCleanupBtn').disabled = true;
+}
+
+async function cleanupMedia() {
+  if (!$('cleanupVerified').checked) return;
+  $('confirmCleanupBtn').disabled = true;
+  try {
+    const data = await api('/api/cleanup', {
+      method: 'POST',
+      body: JSON.stringify({
+        confirmed: true,
+        verified: true,
+        scan_id: state.report?.scan_id || '',
+        script_dirs: [...cleanupSelected],
+      }),
+    });
+    state.report = data.report;
+    state.outputs = data.outputs || state.outputs;
+    cleanupSelected = new Set();
+    closeCleanupModal();
+    render();
+    showToast(`清理完成：已删除 ${data.deleted_count || 0} 个素材文件`);
+  } catch (error) {
+    showToast(error.message, true);
+    $('confirmCleanupBtn').disabled = !$('cleanupVerified').checked;
+  }
+}
+
+async function startAssembly() {
+  $('confirmRunBtn').disabled = true;
+  try {
+    const data = await api('/api/assemble', {
+      method: 'POST',
+      body: JSON.stringify({
+        confirmed: true,
+        scan_id: state.report?.scan_id || '',
+        script_dirs: [...selected],
+      }),
+    });
+    state.job = data.job;
+    closeConfirmModal();
+    renderJob();
+    renderQueueState();
+    managePolling();
+    showToast('已确认，开始本地拼接');
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    $('confirmRunBtn').disabled = false;
+  }
+}
+
+async function cancelJob() {
+  try {
+    const data = await api('/api/cancel', { method: 'POST', body: '{}' });
+    state.job = data.job;
+    renderJob();
+    renderQueueState();
+    showToast('正在终止拼接任务');
+  } catch (error) {
+    showToast(error.message, true);
+  }
+}
+
+async function openPath(path) {
+  if (!path) return;
+  try {
+    await api('/api/open', { method: 'POST', body: JSON.stringify({ path }) });
+  } catch (error) {
+    showToast(error.message, true);
+  }
+}
+
+function managePolling() {
+  const running = Boolean(state.job?.running);
+  if (running && !pollTimer) {
+    pollTimer = setInterval(async () => {
+      try {
+        const data = await api('/api/job');
+        state.job = data.job;
+        renderJob();
+        renderQueueState();
+        if (!state.job.running) {
+          clearInterval(pollTimer);
+          pollTimer = null;
+          await refreshState(false);
+          if (lastJobStatus === 'running' || lastJobStatus === 'queued' || lastJobStatus === 'cancelling') {
+            showToast(state.job.status === 'completed' ? '拼接完成，扫描结果已更新' : jobLabel(state.job.status), state.job.status === 'failed');
+          }
+        }
+        lastJobStatus = state.job.status;
+      } catch (error) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+        showToast(error.message, true);
+      }
+    }, 1000);
+  } else if (!running && pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+  lastJobStatus = state.job?.status || 'idle';
+}
+
+document.querySelector('.statStrip').addEventListener('click', (event) => {
+  const button = event.target.closest('.stat');
+  if (!button) return;
+  activeStatus = button.dataset.status;
+  renderCounts();
+  renderTasks();
+  renderQueueState();
+});
+
+$('taskList').addEventListener('change', (event) => {
+  const checkbox = event.target.closest('.taskCheck');
+  if (!checkbox) return;
+  const selection = checkbox.dataset.mode === 'cleanup' ? cleanupSelected : selected;
+  if (checkbox.checked) selection.add(checkbox.dataset.scriptDir);
+  else selection.delete(checkbox.dataset.scriptDir);
+  renderTasks();
+  renderQueueState();
+});
+
+$('selectAll').addEventListener('change', (event) => {
+  const items = activeStatus === 'done'
+    ? reportItems('done').filter((item) => item.cleanup_eligible)
+    : activeStatus === 'missing' ? reportItems('missing') : [];
+  const selection = activeStatus === 'done' ? cleanupSelected : selected;
+  items.forEach((item) => {
+    if (event.target.checked) selection.add(item.script_dir);
+    else selection.delete(item.script_dir);
+  });
+  renderTasks();
+  renderQueueState();
+});
+
+$('outputs').addEventListener('click', (event) => {
+  const button = event.target.closest('.openPathBtn');
+  if (button) openPath(button.dataset.path);
+});
+
+$('scanBtn').addEventListener('click', scan);
+$('assembleBtn').addEventListener('click', openConfirmModal);
+$('cleanupBtn').addEventListener('click', openCleanupModal);
+$('cancelBtn').addEventListener('click', cancelJob);
+$('refreshBtn').addEventListener('click', () => refreshState());
+$('closeModalBtn').addEventListener('click', closeConfirmModal);
+$('cancelModalBtn').addEventListener('click', closeConfirmModal);
+$('confirmRunBtn').addEventListener('click', startAssembly);
+$('confirmModal').addEventListener('click', (event) => { if (event.target === $('confirmModal')) closeConfirmModal(); });
+$('closeCleanupModalBtn').addEventListener('click', closeCleanupModal);
+$('cancelCleanupModalBtn').addEventListener('click', closeCleanupModal);
+$('cleanupVerified').addEventListener('change', (event) => { $('confirmCleanupBtn').disabled = !event.target.checked; });
+$('confirmCleanupBtn').addEventListener('click', cleanupMedia);
+$('cleanupModal').addEventListener('click', (event) => { if (event.target === $('cleanupModal')) closeCleanupModal(); });
+$('pendingPath').addEventListener('click', () => openPath(state.report?.pending_root));
+$('outputPath').addEventListener('click', () => openPath(state.report?.output_root));
+$('openOutputBtn').addEventListener('click', () => openPath(state.report?.output_root));
+$('openAppBtn').addEventListener('click', () => openPath(state.app_root));
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !$('confirmModal').hidden) closeConfirmModal();
+  if (event.key === 'Escape' && !$('cleanupModal').hidden) closeCleanupModal();
+});
+
+refreshState();

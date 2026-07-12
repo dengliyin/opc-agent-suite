@@ -1,0 +1,4 @@
+interface:
+  display_name: "脚本生产智能体"
+  short_description: "用产品文档、竞品爆款脚本/拆解、模块内知识库和脚本产出提示词生成爆款带货脚本"
+  default_prompt: "Use `python3 -m opc_engine.features.script_generation.script_generation_agent_web --port 9993` for the visual web UI, or `python3 -m opc_engine.features.script_generation.generate_product_script` for direct CLI generation. Keep all script-generation configuration under `opc_engine/features/script_generation/config/`; when I provide a product document and competitor hot script, pass them as `--product-doc` and `--reference-script`; use Gemini/ModelMesh settings from this module's local config or environment variables."

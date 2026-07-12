@@ -1,0 +1,15 @@
+{
+  "_说明": "产品脚本改写智能体配置。API Key 单独保存在 agent_secrets.local.json。",
+  "model": {
+    "deepseek_base_url": "https://api.deepseek.com",
+    "deepseek_model": "deepseek-v4-pro",
+    "max_output_tokens": 32768
+  },
+  "paths": {
+    "hot_scripts_root": "${OPC_VAULT_ROOT}/wiki/视频/04爆款视频脚本",
+    "product_info_root": "${OPC_VAULT_ROOT}/wiki/产品/产品信息"
+  },
+  "files": {
+    "rewrite_prompt_path": "agent_config/product_script_rewrite_prompt.md"
+  }
+}

@@ -1,0 +1,23 @@
+# Local OS/editor files
+.DS_Store
+*.swp
+*.tmp
+
+# Python runtime
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Runtime outputs and private config
+software/script-adaptation-app/projects/
+software/script-adaptation-app/outputs/
+software/script-adaptation-app/app_config.json
+software/script-adaptation-app/fastmoss_config.json
+software/script-adaptation-app/**/agent_secrets.local.json
+software/script-adaptation-app/**/backups/
+software/script-adaptation-app/**/*.bak
+software/script-adaptation-app/**/*.bak_*
+
+# Local logs
+*.log

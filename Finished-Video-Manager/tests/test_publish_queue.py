@@ -1,0 +1,122 @@
+import sqlite3
+import tempfile
+import time
+import unittest
+from pathlib import Path
+
+from finished_video_manager.publish_queue import PublishQueue
+
+
+def task(name: str, profile_id: str = "profile-1") -> dict:
+    return {
+        "video_path": f"/tmp/{name}.mp4",
+        "video_name": f"{name}.mp4",
+        "product_code": "TEST",
+        "country": "UK",
+        "profile_id": profile_id,
+        "profile_name": f"UK-shop-channel-{profile_id}",
+        "caption": "Test caption #one #two #three #four #five",
+        "product_id": "123",
+        "product_short_name": "Test product",
+        "ai_generated": True,
+        "visibility": "public",
+    }
+
+
+class PublishQueueTest(unittest.TestCase):
+    def test_closes_profile_after_last_consecutive_task(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            calls = []
+            closed_profiles = []
+            queue = PublishQueue(
+                Path(directory) / "queue.sqlite3",
+                lambda item: calls.append(item["video_name"]) or {"url": "/tiktokstudio/content"},
+                interval_seconds=0,
+                profile_closer=lambda item: closed_profiles.append(item["profile_id"]) or {"success": True},
+            )
+            queue.enqueue([task("first"), task("second"), task("third")])
+            queue.start()
+            queue.control("resume")
+            deadline = time.time() + 3
+            while time.time() < deadline and queue.payload()["counts"].get("published") != 3:
+                time.sleep(0.05)
+            queue.stop()
+
+            self.assertEqual(calls, ["first.mp4", "second.mp4", "third.mp4"])
+            self.assertEqual(closed_profiles, ["profile-1"])
+
+    def test_closes_profile_when_next_task_switches_account(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            closed_profiles = []
+            queue = PublishQueue(
+                Path(directory) / "queue.sqlite3",
+                lambda item: {"url": "/tiktokstudio/content"},
+                interval_seconds=0,
+                profile_closer=lambda item: closed_profiles.append(item["profile_id"]) or {"success": True},
+            )
+            queue.enqueue([task("a1", "account-a"), task("a2", "account-a"), task("b1", "account-b")])
+            queue.start()
+            queue.control("resume")
+            deadline = time.time() + 3
+            while time.time() < deadline and queue.payload()["counts"].get("published") != 3:
+                time.sleep(0.05)
+            queue.stop()
+
+            self.assertEqual(closed_profiles, ["account-a", "account-b"])
+
+    def test_enqueue_waits_for_explicit_resume(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            calls = []
+            queue = PublishQueue(
+                Path(directory) / "queue.sqlite3",
+                lambda item: calls.append(item["video_name"]) or {"url": "/tiktokstudio/content"},
+                interval_seconds=0,
+            )
+            queue.enqueue([task("staged")])
+            queue.start()
+            time.sleep(0.2)
+
+            payload = queue.payload()
+            self.assertTrue(payload["paused"])
+            self.assertEqual(payload["counts"].get("pending"), 1)
+            self.assertEqual(calls, [])
+
+            queue.control("resume")
+            deadline = time.time() + 2
+            while time.time() < deadline and not calls:
+                time.sleep(0.05)
+            queue.stop()
+            self.assertEqual(calls, ["staged.mp4"])
+
+    def test_executes_in_reordered_sequence_with_interval(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            calls = []
+            queue = PublishQueue(Path(directory) / "queue.sqlite3", lambda item: calls.append(item["video_name"]) or {"url": "/tiktokstudio/content"}, interval_seconds=1)
+            queue.control("pause")
+            ids = queue.enqueue([task("first"), task("second")])
+            queue.task_action(ids[0], "move_down")
+            queue.start()
+            queue.control("resume")
+            deadline = time.time() + 5
+            while time.time() < deadline and len(calls) < 2:
+                time.sleep(0.1)
+            queue.stop()
+            self.assertEqual(calls, ["second.mp4", "first.mp4"])
+            self.assertEqual(queue.payload()["counts"].get("published"), 2)
+
+    def test_running_task_becomes_needs_review_after_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "queue.sqlite3"
+            queue = PublishQueue(path, lambda item: {})
+            queue.control("pause")
+            task_id = queue.enqueue([task("interrupted")])[0]
+            with sqlite3.connect(path) as connection:
+                connection.execute("UPDATE queue_tasks SET status='running' WHERE id=?", (task_id,))
+            restarted = PublishQueue(path, lambda item: {})
+            payload = restarted.payload()
+            self.assertTrue(payload["paused"])
+            self.assertEqual(payload["tasks"][0]["status"], "needs_review")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,0 +1,21 @@
+{
+  "_说明": "视频拆解智能体配置示例。复制为 settings.local.json 后填写真实 api_key；所有路径都相对 Script-Analysis 文件夹。",
+  "api_key": "",
+  "base_url": "https://router.shengsuanyun.com/api",
+  "model": "google/gemini-3-flash",
+  "max_output_tokens": 32768,
+  "timeout_seconds": 240,
+  "temperature": 0.2,
+  "output_dir": "outputs",
+  "prompt_file": "config/video_teardown_prompt.md",
+  "_字段说明": {
+    "api_key": "接口密钥，只保存在本地 settings.local.json。",
+    "base_url": "Gemini 兼容接口 base URL。",
+    "model": "默认 Gemini 3.0 视频分析模型。",
+    "max_output_tokens": "单次拆解最大输出 token 数。",
+    "timeout_seconds": "单次接口请求超时时间。",
+    "temperature": "拆解任务建议低温，减少编造。",
+    "output_dir": "默认输出目录。",
+    "prompt_file": "视频拆解提示词。"
+  }
+}

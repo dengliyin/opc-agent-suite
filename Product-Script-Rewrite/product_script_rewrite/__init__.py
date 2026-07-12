@@ -1,0 +1,2 @@
+"""Product script rewrite agent."""
+

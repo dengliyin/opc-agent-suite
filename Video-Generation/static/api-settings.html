@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>API 设置</title>
+    <link rel="stylesheet" href="/styles.css?v=tkfastmoss-ui-2" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <h1>API 设置</h1>
+          <div id="settingsSummary" class="config-line"></div>
+        </div>
+        <div class="toolbar">
+          <a class="button secondary nav-link" href="/">入口</a>
+          <a class="button secondary nav-link" href="/settings">路径设置</a>
+          <button id="reloadButton" class="button secondary" type="button">刷新</button>
+          <button id="saveButton" class="button primary" type="button">保存 API</button>
+        </div>
+      </header>
+
+      <main class="settings-workspace">
+        <section class="panel settings-panel">
+          <div class="panel-heading">
+            <h2>接口与模型</h2>
+            <span id="saveState" class="muted"></span>
+          </div>
+          <div id="apiSummary" class="api-summary"></div>
+          <form id="apiForm" class="settings-form"></form>
+        </section>
+      </main>
+    </div>
+
+    <script>
+      const form = document.querySelector("#apiForm");
+      const saveState = document.querySelector("#saveState");
+      const settingsSummary = document.querySelector("#settingsSummary");
+      const saveButton = document.querySelector("#saveButton");
+      const reloadButton = document.querySelector("#reloadButton");
+      const apiSummary = document.querySelector("#apiSummary");
+      let functionDetailMap = {};
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+      }
+
+      async function api(path, options = {}) {
+        const response = await fetch(path, {
+          headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+          ...options,
+        });
+        if (!response.ok) {
+          let detail = response.statusText;
+          try {
+            const body = await response.json();
+            detail = body.detail || detail;
+          } catch (_) {}
+          throw new Error(detail);
+        }
+        return response.json();
+      }
+
+      function statusChip(field) {
+        if (field.secret) {
+          return field.configured ? `<span class="chip ok">已配置</span>` : `<span class="chip error">未配置</span>`;
+        }
+        return `<span class="chip ok">当前</span>`;
+      }
+
+      function fieldControl(field) {
+        const attrs = [
+          `data-key="${escapeHtml(field.key)}"`,
+          field.secret ? `type="password"` : `type="${escapeHtml(field.type || "text")}"`,
+          field.min !== null && field.min !== undefined ? `min="${escapeHtml(field.min)}"` : "",
+          field.max !== null && field.max !== undefined ? `max="${escapeHtml(field.max)}"` : "",
+          field.secret && field.configured ? `placeholder="已配置，留空不修改"` : "",
+          field.secret && !field.configured ? `placeholder="请输入 API Key"` : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
+
+        if (field.options?.length) {
+          const options = field.options
+            .map((option) => `<option value="${escapeHtml(option)}" ${option === field.value ? "selected" : ""}>${escapeHtml(option)}</option>`)
+            .join("");
+          return `<select data-key="${escapeHtml(field.key)}">${options}</select>`;
+        }
+        return `<input ${attrs} value="${escapeHtml(field.value)}" />`;
+      }
+
+      function renderParamControls(controls = []) {
+        if (!controls.length) {
+          return `<span class="muted">无可配置参数</span>`;
+        }
+        return controls
+          .map(
+            (control) => `
+              <label class="api-param-control">
+                <span>${escapeHtml(control.label)}</span>
+                <select data-key="${escapeHtml(control.key)}">
+                  ${(control.options || [])
+                    .map(
+                      (option) =>
+                        `<option value="${escapeHtml(option.value)}" ${option.value === control.value ? "selected" : ""}>${escapeHtml(option.label)}</option>`,
+                    )
+                    .join("")}
+                </select>
+              </label>
+            `,
+          )
+          .join("");
+      }
+
+      function renderSummary(summary) {
+        functionDetailMap = {};
+        const inventory = (summary.api_inventory || [])
+          .map(
+            (api) => `
+              <section class="api-info-card">
+                <div class="api-info-head">
+                  <div>
+                    <strong>${escapeHtml(api.api)}</strong>
+                    <span>${escapeHtml(api.base_url)}</span>
+                  </div>
+                  <span class="chip ${api.key_status === "已配置" ? "ok" : "error"}">${escapeHtml(api.key_status)}</span>
+                </div>
+                <div class="api-model-list">
+                  ${(api.models || [])
+                    .map(
+                      (model) => `
+                        <div class="api-model-item">
+                          <div>
+                            <strong>${escapeHtml(model.name)}</strong>
+                            <span>${escapeHtml(model.role)}</span>
+                          </div>
+                          <div class="api-model-meta">
+                            <span>${escapeHtml((model.endpoints || []).join(" / "))}</span>
+                            <span>${escapeHtml((model.params || []).join("；"))}</span>
+                          </div>
+                        </div>
+                      `,
+                    )
+                    .join("")}
+                </div>
+              </section>
+            `,
+          )
+          .join("");
+
+        const mappings = (summary.agent_function_map || [])
+          .map(
+            (agent) => {
+              const rows = (agent.functions || [])
+                .map((item) => {
+                  functionDetailMap[item.key] = item.option_details || {};
+                  return `
+                    <div class="api-map-row" data-map-row="${escapeHtml(item.key)}">
+                      <strong>${escapeHtml(item.function)}</strong>
+                      <select data-key="${escapeHtml(item.key)}" class="api-map-select">
+                        ${(item.options || [])
+                          .map(
+                            (option) =>
+                              `<option value="${escapeHtml(option.value)}" ${option.value === item.selected ? "selected" : ""}>${escapeHtml(option.label)}</option>`,
+                          )
+                          .join("")}
+                      </select>
+                      <div class="api-param-controls" data-param-controls>${renderParamControls(item.controls || [])}</div>
+                    </div>
+                  `;
+                })
+                .join("");
+              return `
+                <section class="api-map-card">
+                  <h3>${escapeHtml(agent.agent)}</h3>
+                  <div class="api-map-table">${rows}</div>
+                </section>
+              `;
+            },
+          )
+          .join("");
+
+        apiSummary.innerHTML = `
+          <div class="api-summary-card">
+            <strong>1. API 与可调用模型</strong>
+            <span>${escapeHtml(summary.description)}</span>
+          </div>
+          <div class="api-info-grid">${inventory}</div>
+          <div class="api-summary-card">
+            <strong>2. Agent 功能调用关系</strong>
+            <span>每个功能对应使用的 API、模型和关键参数。</span>
+          </div>
+          <div class="api-map-grid">${mappings}</div>
+        `;
+      }
+
+      function render(data) {
+        settingsSummary.textContent = data.active_jobs?.length
+          ? `有 ${data.active_jobs.length} 个任务运行中`
+          : "API 设置保存后立即生效";
+        renderSummary(data.summary || {});
+        form.innerHTML = (data.groups || [])
+          .map(
+            (group) => `
+              <section class="settings-group">
+                <div class="settings-group-title">
+                  <h3>${escapeHtml(group.title)}</h3>
+                  <span>${escapeHtml(group.description || "")}</span>
+                </div>
+                ${(group.fields || [])
+                  .map(
+                    (field) => `
+                      <label class="settings-row">
+                        <div class="settings-label">
+                          <strong>${escapeHtml(field.label)}</strong>
+                          <span>${escapeHtml(field.env_key)}</span>
+                        </div>
+                        ${fieldControl(field)}
+                        <div class="settings-status">${statusChip(field)}</div>
+                      </label>
+                    `,
+                  )
+                  .join("")}
+              </section>
+            `,
+          )
+          .join("");
+      }
+
+      async function loadSettings() {
+        saveState.textContent = "读取中";
+        const data = await api("/settings/api/apis");
+        render(data);
+        saveState.textContent = "";
+      }
+
+      async function saveSettings() {
+        const payload = {};
+        document.querySelectorAll("[data-key]").forEach((input) => {
+          if (input.type === "number") {
+            payload[input.dataset.key] = Number(input.value);
+          } else {
+            payload[input.dataset.key] = input.value.trim();
+          }
+        });
+        saveButton.disabled = true;
+        saveState.textContent = "保存中";
+        try {
+          const data = await api("/settings/api/apis", {
+            method: "POST",
+            body: JSON.stringify(payload),
+          });
+          render(data);
+          saveState.textContent = "已保存";
+        } catch (error) {
+          saveState.textContent = `保存失败：${error.message}`;
+        } finally {
+          saveButton.disabled = false;
+        }
+      }
+
+      reloadButton.addEventListener("click", () => {
+        loadSettings().catch((error) => {
+          saveState.textContent = `读取失败：${error.message}`;
+        });
+      });
+      apiSummary.addEventListener("change", (event) => {
+        const select = event.target.closest(".api-map-select");
+        if (!select) return;
+        const row = select.closest(".api-map-row");
+        const detail = functionDetailMap[select.dataset.key]?.[select.value];
+        if (!row || !detail) return;
+        row.querySelector("[data-param-controls]").innerHTML = renderParamControls(detail.controls || []);
+      });
+      saveButton.addEventListener("click", saveSettings);
+      loadSettings().catch((error) => {
+        saveState.textContent = `读取失败：${error.message}`;
+      });
+    </script>
+  </body>
+</html>

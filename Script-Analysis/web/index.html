@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>视频拆解智能体</title>
+    <link rel="stylesheet" href="/app.css?v=cartesia-20260701" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>视频拆解智能体</h1>
+        <p id="rootPath"></p>
+      </div>
+      <div class="status-strip">
+        <span id="modelBadge">Model</span>
+        <span id="keyBadge">API</span>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="panel left-panel">
+        <div class="panel-head">
+          <h2>视频队列</h2>
+          <button id="openConfigBtn" class="secondary">编辑提示词</button>
+        </div>
+
+        <div class="panel-body">
+          <div class="field-block">
+            <label for="videoDirInput">视频目录</label>
+            <input id="videoDirInput" type="text" />
+          </div>
+          <div class="field-block">
+            <label for="scriptDirInput">脚本目录</label>
+            <input id="scriptDirInput" type="text" />
+          </div>
+
+          <div class="field-block">
+            <label for="batchLimitInput">本次拆解条数</label>
+            <input id="batchLimitInput" type="number" min="1" step="1" placeholder="留空处理全部待拆解视频" />
+          </div>
+          <div class="process-note">逐条处理，非并发；填 1 即本次只处理 1 条。</div>
+
+          <div class="split-actions">
+            <button id="scanBtn" class="secondary">扫描视频</button>
+            <button id="processBtn" class="primary">开始拆解</button>
+          </div>
+
+          <div class="queue-summary" id="queueSummary" hidden></div>
+
+          <div class="subhead row-head">
+            <span>待拆解</span>
+            <span id="selectedCount" class="muted">已选 0</span>
+          </div>
+          <div id="selectionTools" class="selection-tools" hidden>
+            <button id="selectAllBtn" class="secondary">全选</button>
+            <button id="clearSelectionBtn" class="secondary">清空</button>
+          </div>
+          <div id="pendingList" class="list queue-list"></div>
+
+          <details class="skip-block">
+            <summary>重复跳过</summary>
+            <div id="skippedList" class="list"></div>
+          </details>
+
+          <details class="skip-block">
+            <summary>无法识别 ID</summary>
+            <div id="missingIdList" class="list"></div>
+          </details>
+        </div>
+      </section>
+
+      <section class="panel center-panel">
+        <div class="panel-head">
+          <h2>拆解运行</h2>
+          <span id="jobStatus" class="badge idle">待机</span>
+        </div>
+        <div class="panel-body">
+          <div id="progressPanel" class="progress-panel" hidden></div>
+          <pre id="logPane" class="log-pane">等待任务...</pre>
+
+          <div class="panel-head compact">
+            <h2>配置</h2>
+            <div class="actions">
+              <button id="saveSettingsBtn" class="secondary">保存配置</button>
+            </div>
+          </div>
+          <div class="settings-grid">
+            <label>模型<input id="modelInput" type="text" /></label>
+            <label>Base URL<input id="baseUrlInput" type="text" /></label>
+            <label>API Key<input id="apiKeyInput" type="password" placeholder="留空则不修改" /></label>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel right-panel">
+        <div class="panel-head">
+          <h2>脚本结果</h2>
+          <button id="openOutputBtn" class="secondary">打开目录</button>
+        </div>
+        <div class="panel-body">
+          <div id="outputList" class="runs"></div>
+        </div>
+      </section>
+    </main>
+
+    <div id="editorModal" class="editor-modal" hidden>
+      <section class="config-drawer">
+        <div class="tabbar">
+          <button class="tab active" data-config="prompt">提示词</button>
+          <button id="saveConfigBtn" class="secondary">保存文件</button>
+          <button id="closeConfigBtn" class="secondary">关闭</button>
+        </div>
+        <textarea id="configEditor" spellcheck="false"></textarea>
+      </section>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

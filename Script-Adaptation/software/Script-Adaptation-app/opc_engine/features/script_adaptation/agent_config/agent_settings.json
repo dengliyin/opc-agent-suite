@@ -1,0 +1,35 @@
+{
+  "_说明": "脚本适配智能体主配置。所有路径都按本文件所在目录解析，避免依赖外部配置目录。",
+  "product_project": {
+    "_说明": "内部输出归档目录。脚本适配页不重复确认产品信息，脚本 Markdown 本身作为产品上下文来源。",
+    "product_project_slug": "script_adaptation_workspace"
+  },
+  "model": {
+    "_说明": "AI 文本模型配置。API Key 不写在这里，放到 agent_secrets.local.json 或环境变量。",
+    "modelmesh_base_url": "https://api.deepseek.com",
+    "video_analysis_model": "deepseek-v4-pro",
+    "script_adaptation_text_model": "deepseek-v4-pro",
+    "video_analysis_max_output_tokens": 32768
+  },
+  "adaptation": {
+    "_说明": "脚本适配任务参数。target_model 用于提示词变量，segment_seconds 是每段视频生成时长上限。",
+    "script_adaptation_target_model": "omni",
+    "script_adaptation_segment_seconds": 10,
+    "script_adaptation_input_dir": "${OPC_VAULT_ROOT}/wiki/视频/05产品视频脚本",
+    "script_adaptation_output_root": "${OPC_VAULT_ROOT}/wiki/视频/06产品适配后的脚本/veo",
+    "script_adaptation_output_roots": {
+      "veo": "${OPC_VAULT_ROOT}/wiki/视频/06产品适配后的脚本/veo",
+      "omni": "${OPC_VAULT_ROOT}/wiki/视频/06产品适配后的脚本/omni",
+      "grok": "${OPC_VAULT_ROOT}/wiki/视频/06产品适配后的脚本/grok"
+    }
+  },
+  "files": {
+    "_说明": "智能体能力文件。文件必须放在本目录内，路径不要指向外部配置目录。",
+    "script_adaptation_prompt_path": "veo_script_adaptation_prompt.md",
+    "script_adaptation_prompt_paths": {
+      "veo": "veo_script_adaptation_prompt.md",
+      "omni": "omni_script_adaptation_prompt.md",
+      "grok": "grok_script_adaptation_prompt.md"
+    }
+  }
+}

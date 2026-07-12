@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>片段合成智能体</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header>
+    <div>
+      <h1>片段合成智能体</h1>
+      <div class="sub">素材扫描 · 人工确认 · 完全离线渲染</div>
+    </div>
+    <div class="statusBar">
+      <span class="badge ok">离线模式</span>
+      <span class="badge" id="runtimeBadge">检查运行环境</span>
+      <span class="badge" id="jobBadge">空闲</span>
+      <span class="badge">:9998</span>
+    </div>
+  </header>
+
+  <main>
+    <section>
+      <div class="panelHead">
+        <h2>目录与运行环境</h2>
+        <button class="iconButton" id="openAppBtn" type="button" title="打开 Agent 目录" aria-label="打开 Agent 目录">⌂</button>
+      </div>
+      <div class="panelBody configBody">
+        <label>待拼接目录</label>
+        <button class="pathBox" id="pendingPath" type="button" title="打开待拼接目录">加载中</button>
+
+        <label>成品目录</label>
+        <button class="pathBox" id="outputPath" type="button" title="打开成品目录">加载中</button>
+
+        <div class="ruleTitle">离线依赖</div>
+        <div class="checkList" id="runtimeChecks"></div>
+
+        <div class="ruleTitle">拼接规则</div>
+        <dl class="ruleList">
+          <div><dt>画面</dt><dd>1080 × 1920 · 30 fps</dd></div>
+          <div><dt>字幕</dt><dd>不生成</dd></div>
+          <div><dt>排序</dt><dd>按“片段N”</dd></div>
+          <div><dt>超时</dt><dd>超过目标 8% 进入判断</dd></div>
+          <div><dt>语速</dt><dd>有效尾音自动加速，最高 1.6×</dd></div>
+          <div><dt>收尾</dt><dd>静音尾帧裁切</dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <section>
+      <div class="panelHead">
+        <h2>扫描与确认</h2>
+        <div class="actions">
+          <button class="blue" id="scanBtn" type="button" data-testid="scan-button">↻ 扫描</button>
+          <button class="primary" id="assembleBtn" type="button" data-testid="assemble-button">确认拼接</button>
+          <button class="danger" id="cleanupBtn" type="button" data-testid="cleanup-button" disabled>清理素材</button>
+          <button class="danger" id="cancelBtn" type="button" disabled>终止</button>
+        </div>
+      </div>
+      <div class="panelBody queueBody">
+        <div class="statStrip" aria-label="扫描统计">
+          <button class="stat active" type="button" data-status="missing">
+            <span>待拼接</span><strong id="missingCount">0</strong>
+          </button>
+          <button class="stat" type="button" data-status="done">
+            <span>已有成品</span><strong id="doneCount">0</strong>
+          </button>
+          <button class="stat" type="button" data-status="archived">
+            <span>已归档</span><strong id="archivedCount">0</strong>
+          </button>
+          <button class="stat" type="button" data-status="invalid">
+            <span>异常</span><strong id="invalidCount">0</strong>
+          </button>
+        </div>
+
+        <div class="queueToolbar">
+          <label class="selectControl">
+            <input id="selectAll" type="checkbox" />
+            <span>选择当前全部</span>
+          </label>
+          <span id="selectionSummary">已选择 0 项</span>
+          <span class="scanMeta" id="scanMeta">尚未扫描</span>
+        </div>
+
+        <div class="taskList" id="taskList" data-testid="task-list">
+          <div class="emptyState">正在读取扫描结果</div>
+        </div>
+
+        <div class="queueFooter">
+          <strong id="queueState">等待扫描</strong>
+          <span id="queueHint">扫描不会直接执行拼接</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="resultPanel">
+      <div class="panelHead">
+        <h2>运行</h2>
+        <button class="iconButton" id="refreshBtn" type="button" title="刷新运行状态" aria-label="刷新运行状态">↻</button>
+      </div>
+      <div class="panelBody resultBody">
+        <div class="progressPanel" id="progressPanel">
+          <div class="progressTop">
+            <strong id="progressSummary">暂无任务</strong>
+            <span id="progressPercent">0%</span>
+          </div>
+          <div class="progressTrack"><div id="progressFill"></div></div>
+          <div class="progressCurrent" id="progressCurrent">等待确认</div>
+        </div>
+
+        <div class="outputHeader">
+          <span>运行日志</span>
+          <span id="logState">本地进程</span>
+        </div>
+        <pre class="logPane empty" id="logs" data-testid="run-logs">暂无运行日志</pre>
+
+        <div class="outputHeader">
+          <span>成品文件</span>
+          <button class="iconButton small" id="openOutputBtn" type="button" title="打开成品目录" aria-label="打开成品目录">⌂</button>
+        </div>
+        <div class="outputs" id="outputs">
+          <div class="emptyState compact">暂无成品记录</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="modalOverlay" id="confirmModal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" hidden>
+    <div class="modalWindow">
+      <div class="modalHead">
+        <div>
+          <strong id="confirmTitle">确认开始拼接</strong>
+          <span>确认后会依次处理所选项目</span>
+        </div>
+        <button class="iconButton" id="closeModalBtn" type="button" title="关闭" aria-label="关闭">×</button>
+      </div>
+      <div class="modalBody">
+        <div class="confirmCount"><strong id="confirmCount">0</strong><span>个成品视频</span></div>
+        <div class="confirmRows">
+          <div><span>执行方式</span><strong>本地离线 · 顺序渲染</strong></div>
+          <div><span>字幕</span><strong>不保留字幕</strong></div>
+          <div><span>输出目录</span><strong id="confirmOutputPath"></strong></div>
+        </div>
+      </div>
+      <div class="modalFoot">
+        <button class="blue" id="cancelModalBtn" type="button">返回检查</button>
+        <button class="primary" id="confirmRunBtn" type="button" data-testid="confirm-run-button">确认并开始</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modalOverlay" id="cleanupModal" role="dialog" aria-modal="true" aria-labelledby="cleanupTitle" hidden>
+    <div class="modalWindow">
+      <div class="modalHead">
+        <div>
+          <strong id="cleanupTitle">清理已拼接素材</strong>
+          <span>删除后无法从本应用恢复</span>
+        </div>
+        <button class="iconButton" id="closeCleanupModalBtn" type="button" title="关闭" aria-label="关闭">×</button>
+      </div>
+      <div class="modalBody">
+        <div class="confirmCount"><strong id="cleanupCount">0</strong><span>个已拼接项目</span></div>
+        <div class="confirmRows">
+          <div><span>删除内容</span><strong id="cleanupFileSummary">0 个片段或图片</strong></div>
+          <div><span>保留内容</span><strong>Markdown 脚本、导出记录、成品 MP4</strong></div>
+          <div><span>执行条件</span><strong>成品含有效视频轨与音频轨</strong></div>
+        </div>
+        <label class="cleanupVerify">
+          <input id="cleanupVerified" type="checkbox" />
+          <span>我已确认所选成品可以使用</span>
+        </label>
+      </div>
+      <div class="modalFoot">
+        <button class="blue" id="cancelCleanupModalBtn" type="button">返回检查</button>
+        <button class="danger" id="confirmCleanupBtn" type="button" data-testid="confirm-cleanup-button" disabled>确认删除</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

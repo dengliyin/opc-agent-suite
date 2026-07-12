@@ -1,0 +1,11 @@
+{
+  "_说明": "脚本生成智能体输入示例。复制为 inputs.json 后填写本机路径；inputs.json 已被 .gitignore 忽略。",
+  "script_product_document_path": "/path/to/product_document.md",
+  "script_reference_script_path": "/path/to/competitor_hot_script.md",
+  "script_reference_analysis_path": "",
+  "script_reference_kind": "竞品爆款脚本/拆解稿",
+  "script_total_duration": "",
+  "script_enable_mutation_rewrite": "",
+  "script_mutation_variants": "3",
+  "output_dir": ""
+}

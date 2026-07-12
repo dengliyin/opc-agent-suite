@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>路径设置</title>
+    <link rel="stylesheet" href="/styles.css?v=tkfastmoss-ui-2" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <h1>路径设置</h1>
+          <div id="settingsSummary" class="config-line"></div>
+        </div>
+        <div class="toolbar">
+          <a class="button secondary nav-link" href="/">入口</a>
+          <a class="button secondary nav-link" href="/api-settings">API 设置</a>
+          <button id="reloadButton" class="button secondary" type="button">刷新</button>
+          <button id="saveButton" class="button primary" type="button">保存路径</button>
+        </div>
+      </header>
+
+      <main class="settings-workspace">
+        <section class="panel settings-panel">
+          <div class="panel-heading">
+            <h2>输入与输出路径</h2>
+            <span id="saveState" class="muted"></span>
+          </div>
+          <form id="pathForm" class="settings-form"></form>
+        </section>
+      </main>
+    </div>
+
+    <div id="folderModal" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-card folder-picker">
+        <div class="modal-heading">
+          <div>
+            <h2 id="folderModalTitle">选择文件夹</h2>
+            <span id="folderModalHint" class="muted"></span>
+          </div>
+          <button id="closeFolderModalButton" class="mini-button" type="button">关闭</button>
+        </div>
+        <div class="folder-current">
+          <button id="parentFolderButton" class="mini-button" type="button">上一级</button>
+          <span id="currentFolderPath"></span>
+        </div>
+        <div id="folderRoots" class="folder-roots"></div>
+        <div id="folderList" class="folder-list"></div>
+        <div class="folder-create">
+          <input id="newFolderName" placeholder="新建文件夹名称" />
+          <button id="createFolderButton" class="mini-button" type="button">新建文件夹</button>
+        </div>
+        <div class="modal-actions">
+          <span id="folderPickerState" class="muted"></span>
+          <button id="chooseCurrentFolderButton" class="button primary" type="button">选择当前文件夹</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const form = document.querySelector("#pathForm");
+      const saveState = document.querySelector("#saveState");
+      const settingsSummary = document.querySelector("#settingsSummary");
+      const saveButton = document.querySelector("#saveButton");
+      const reloadButton = document.querySelector("#reloadButton");
+      const folderModal = document.querySelector("#folderModal");
+      const folderModalTitle = document.querySelector("#folderModalTitle");
+      const folderModalHint = document.querySelector("#folderModalHint");
+      const closeFolderModalButton = document.querySelector("#closeFolderModalButton");
+      const parentFolderButton = document.querySelector("#parentFolderButton");
+      const currentFolderPath = document.querySelector("#currentFolderPath");
+      const folderRoots = document.querySelector("#folderRoots");
+      const folderList = document.querySelector("#folderList");
+      const folderPickerState = document.querySelector("#folderPickerState");
+      const chooseCurrentFolderButton = document.querySelector("#chooseCurrentFolderButton");
+      const newFolderName = document.querySelector("#newFolderName");
+      const createFolderButton = document.querySelector("#createFolderButton");
+      const pathValues = {};
+      const pathFields = {};
+      let pickerTargetKey = "";
+      let pickerCurrentPath = "";
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+      }
+
+      async function api(path, options = {}) {
+        const response = await fetch(path, {
+          headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+          ...options,
+        });
+        if (!response.ok) {
+          let detail = response.statusText;
+          try {
+            const body = await response.json();
+            detail = body.detail || detail;
+          } catch (_) {}
+          throw new Error(detail);
+        }
+        return response.json();
+      }
+
+      function statusChip(field) {
+        if (field.kind === "input") {
+          return field.is_dir ? `<span class="chip ok">可用</span>` : `<span class="chip error">不存在</span>`;
+        }
+        if (field.is_dir) return `<span class="chip ok">可用</span>`;
+        if (field.parent_exists) return `<span class="chip warn">待创建</span>`;
+        return `<span class="chip error">父目录不存在</span>`;
+      }
+
+      function render(data) {
+        settingsSummary.textContent = data.active_jobs?.length
+          ? `有 ${data.active_jobs.length} 个任务运行中`
+          : "路径保存后立即生效";
+        (data.fields || []).forEach((field) => {
+          pathValues[field.key] = field.value;
+          pathFields[field.key] = field;
+        });
+        form.innerHTML = (data.fields || [])
+          .map(
+            (field) => `
+              <div class="settings-row">
+                <div class="settings-label">
+                  <strong>${escapeHtml(field.label)}</strong>
+                  <span>${escapeHtml(field.env_key)}</span>
+                </div>
+                <div class="path-picker-control">
+                  <div class="path-display" data-path-value="${escapeHtml(field.key)}" title="${escapeHtml(field.value)}">${escapeHtml(field.value)}</div>
+                  <button class="mini-button choose-folder-button" data-key="${escapeHtml(field.key)}" type="button">选择文件夹</button>
+                </div>
+                <div class="settings-status">${statusChip(field)}</div>
+              </div>
+            `,
+          )
+          .join("");
+      }
+
+      async function loadSettings() {
+        saveState.textContent = "读取中";
+        const data = await api("/settings/api/paths");
+        render(data);
+        saveState.textContent = "";
+      }
+
+      async function saveSettings() {
+        const payload = { ...pathValues };
+        saveButton.disabled = true;
+        saveState.textContent = "保存中";
+        try {
+          const data = await api("/settings/api/paths", {
+            method: "POST",
+            body: JSON.stringify(payload),
+          });
+          render(data);
+          saveState.textContent = "已保存";
+        } catch (error) {
+          saveState.textContent = `保存失败：${error.message}`;
+        } finally {
+          saveButton.disabled = false;
+        }
+      }
+
+      async function openFolderPicker(key) {
+        pickerTargetKey = key;
+        const field = pathFields[key] || {};
+        folderModalTitle.textContent = `选择：${field.label || "文件夹"}`;
+        folderModalHint.textContent = field.kind === "output" ? "选择输出目录；需要新目录时可先新建文件夹" : "选择已有输入目录";
+        folderModal.classList.remove("hidden");
+        await loadDirectory(pathValues[key] || "");
+      }
+
+      function closeFolderPicker() {
+        folderModal.classList.add("hidden");
+        folderPickerState.textContent = "";
+        pickerTargetKey = "";
+        pickerCurrentPath = "";
+        newFolderName.value = "";
+      }
+
+      async function loadDirectory(path) {
+        folderPickerState.textContent = "读取中";
+        const query = path ? `?path=${encodeURIComponent(path)}` : "";
+        const data = await api(`/settings/api/directories${query}`);
+        pickerCurrentPath = data.current;
+        currentFolderPath.textContent = data.current;
+        parentFolderButton.disabled = !data.parent;
+        parentFolderButton.dataset.path = data.parent || "";
+        folderRoots.innerHTML = (data.roots || [])
+          .map((root) => `<button class="mini-button folder-root-button" data-path="${escapeHtml(root.path)}" type="button">${escapeHtml(root.label)}</button>`)
+          .join("");
+        folderList.innerHTML = (data.entries || [])
+          .map(
+            (entry) => `
+              <button class="folder-entry" data-path="${escapeHtml(entry.path)}" type="button">
+                <span>${escapeHtml(entry.name)}</span>
+                <small>${escapeHtml(entry.path)}</small>
+              </button>
+            `,
+          )
+          .join("");
+        if (!folderList.innerHTML) {
+          folderList.innerHTML = `<div class="folder-empty">当前目录下没有可选子文件夹</div>`;
+        }
+        createFolderButton.disabled = !data.can_write;
+        folderPickerState.textContent = data.can_write ? "" : "当前目录不可写";
+      }
+
+      function chooseCurrentFolder() {
+        if (!pickerTargetKey || !pickerCurrentPath) return;
+        pathValues[pickerTargetKey] = pickerCurrentPath;
+        const display = document.querySelector(`[data-path-value="${CSS.escape(pickerTargetKey)}"]`);
+        if (display) {
+          display.textContent = pickerCurrentPath;
+          display.title = pickerCurrentPath;
+        }
+        const status = display?.closest(".settings-row")?.querySelector(".settings-status");
+        if (status) {
+          status.innerHTML = `<span class="chip warn">待保存</span>`;
+        }
+        closeFolderPicker();
+      }
+
+      async function createFolder() {
+        const name = newFolderName.value.trim();
+        if (!name) {
+          folderPickerState.textContent = "请输入新文件夹名称";
+          return;
+        }
+        folderPickerState.textContent = "新建中";
+        const data = await api("/settings/api/directories", {
+          method: "POST",
+          body: JSON.stringify({ parent: pickerCurrentPath, name }),
+        });
+        newFolderName.value = "";
+        pickerCurrentPath = data.current;
+        await loadDirectory(data.current);
+        folderPickerState.textContent = "已新建并进入该文件夹";
+      }
+
+      reloadButton.addEventListener("click", () => {
+        loadSettings().catch((error) => {
+          saveState.textContent = `读取失败：${error.message}`;
+        });
+      });
+      form.addEventListener("click", (event) => {
+        const button = event.target.closest(".choose-folder-button");
+        if (!button) return;
+        openFolderPicker(button.dataset.key).catch((error) => {
+          saveState.textContent = `打开文件夹失败：${error.message}`;
+        });
+      });
+      folderList.addEventListener("click", (event) => {
+        const entry = event.target.closest(".folder-entry");
+        if (!entry) return;
+        loadDirectory(entry.dataset.path).catch((error) => {
+          folderPickerState.textContent = `读取失败：${error.message}`;
+        });
+      });
+      folderRoots.addEventListener("click", (event) => {
+        const root = event.target.closest(".folder-root-button");
+        if (!root) return;
+        loadDirectory(root.dataset.path).catch((error) => {
+          folderPickerState.textContent = `读取失败：${error.message}`;
+        });
+      });
+      parentFolderButton.addEventListener("click", () => {
+        if (!parentFolderButton.dataset.path) return;
+        loadDirectory(parentFolderButton.dataset.path).catch((error) => {
+          folderPickerState.textContent = `读取失败：${error.message}`;
+        });
+      });
+      closeFolderModalButton.addEventListener("click", closeFolderPicker);
+      chooseCurrentFolderButton.addEventListener("click", chooseCurrentFolder);
+      createFolderButton.addEventListener("click", () => {
+        createFolder().catch((error) => {
+          folderPickerState.textContent = `新建失败：${error.message}`;
+        });
+      });
+      saveButton.addEventListener("click", saveSettings);
+      loadSettings().catch((error) => {
+        saveState.textContent = `读取失败：${error.message}`;
+      });
+    </script>
+  </body>
+</html>
