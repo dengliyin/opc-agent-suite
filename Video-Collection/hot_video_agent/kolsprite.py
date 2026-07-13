@@ -8,7 +8,7 @@ import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
@@ -303,6 +303,11 @@ class KolspriteDownloader:
                 continue
         return False
 
+    @staticmethod
+    def is_browser_closed_error(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return "target page, context or browser has been closed" in message or "browser has been closed" in message
+
     def close_snaptik_ad_pages(self, page) -> bool:
         closed = False
         try:
@@ -468,7 +473,12 @@ class KolspriteDownloader:
                 button = self.wait_for_snaptik_download_button(page, timeout_ms=15000)
         raise RuntimeError("SnapTik 下载失败")
 
-    def download_one_with_retries(self, page, row: Dict[str, str]) -> Tuple[str, Path]:
+    def download_one_with_retries(
+        self,
+        page,
+        row: Dict[str, str],
+        reset_page: Optional[Callable[[], Any]] = None,
+    ) -> Tuple[str, Path]:
         last_error: Optional[Exception] = None
         for attempt in range(1, self.retry_count + 1):
             try:
@@ -477,6 +487,9 @@ class KolspriteDownloader:
                 return self.download_one(page, row)
             except Exception as exc:
                 last_error = exc
+                if reset_page and self.is_browser_closed_error(exc):
+                    self.log("  浏览器上下文已关闭，重新打开后继续...")
+                    page = reset_page()
                 if attempt >= self.retry_count:
                     break
                 self.log(f"  本次解析失败: {exc}")
@@ -486,6 +499,8 @@ class KolspriteDownloader:
                 except Exception:
                     pass
         self.log(f"  Kolsprite 多次失败，改用 SnapTik: {last_error}")
+        if last_error and reset_page and self.is_browser_closed_error(last_error):
+            page = reset_page()
         return self.download_one_snaptik(page, row)
 
     def run(self, csv_path: Optional[Path] = None) -> Tuple[Path, List[Path], List[Path], List[str]]:
@@ -517,22 +532,40 @@ class KolspriteDownloader:
             ]
             if not self.show_browser:
                 browser_args.extend(["--start-minimized", "--window-size=1440,900"])
-            context = p.chromium.launch_persistent_context(
-                user_data_dir=str(profile_dir),
-                headless=False,
-                slow_mo=350,
-                accept_downloads=True,
-                viewport={"width": 1440, "height": 900},
-                args=browser_args,
-                **chromium_launch_options(),
-            )
-            self.minimize_browser_windows()
-            page = context.pages[0] if context.pages else context.new_page()
+            context = None
+            page = None
+
+            def open_page():
+                nonlocal context, page
+                context = p.chromium.launch_persistent_context(
+                    user_data_dir=str(profile_dir),
+                    headless=False,
+                    slow_mo=350,
+                    accept_downloads=True,
+                    viewport={"width": 1440, "height": 900},
+                    args=browser_args,
+                    **chromium_launch_options(),
+                )
+                self.minimize_browser_windows()
+                page = context.pages[0] if context.pages else context.new_page()
+                return page
+
+            def reset_page():
+                nonlocal context, page
+                try:
+                    if context:
+                        context.close()
+                except Exception:
+                    pass
+                time.sleep(1)
+                return open_page()
+
+            page = open_page()
             try:
                 for index, row in enumerate(rows, start=1):
                     self.log(f"[{index}/{len(rows)}] {row['tiktok_video_url']}")
                     try:
-                        status, target = self.download_one_with_retries(page, row)
+                        status, target = self.download_one_with_retries(page, row, reset_page)
                         if status == "downloaded":
                             downloaded.append(target)
                         else:

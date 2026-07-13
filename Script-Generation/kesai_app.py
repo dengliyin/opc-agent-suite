@@ -810,6 +810,9 @@ def start_agent_service(service_id):
         log_file.flush()
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
+        chrome_path = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+        if service_id == "collect" and not env.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE") and chrome_path.exists():
+            env["PLAYWRIGHT_CHROMIUM_EXECUTABLE"] = str(chrome_path)
         process = subprocess.Popen(
             service["command"],
             cwd=str(service["cwd"]),
