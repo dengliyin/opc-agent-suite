@@ -88,6 +88,25 @@ class PublishQueueTest(unittest.TestCase):
             queue.stop()
             self.assertEqual(calls, ["staged.mp4"])
 
+    def test_selected_execution_mode_is_forwarded_to_executor(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            modes = []
+            queue = PublishQueue(
+                Path(directory) / "queue.sqlite3",
+                lambda item: modes.append(item["execution_mode"]) or {},
+                interval_seconds=0,
+            )
+            queue.enqueue([task("headless")])
+            queue.start()
+            queue.control("resume", "headless")
+            deadline = time.time() + 2
+            while time.time() < deadline and not modes:
+                time.sleep(0.05)
+            queue.stop()
+
+            self.assertEqual(modes, ["headless"])
+            self.assertEqual(queue.payload()["execution_mode"], "headless")
+
     def test_executes_in_reordered_sequence_with_interval(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             calls = []

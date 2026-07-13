@@ -467,6 +467,19 @@ def bitbrowser_post(path: str, payload: dict[str, Any], timeout: int = 15) -> di
         return json.loads(response.read().decode("utf-8"))
 
 
+def bitbrowser_open_payload(profile_id: str, execution_mode: str = "visible") -> dict[str, Any]:
+    if execution_mode == "visible":
+        return {"id": profile_id}
+    if execution_mode == "headless":
+        return {
+            "id": profile_id,
+            "args": ["--headless"],
+            "queue": True,
+            "ignoreDefaultUrls": True,
+        }
+    raise ValueError("不支持的执行方式")
+
+
 def list_bitbrowser_profiles() -> dict[str, Any]:
     result = bitbrowser_post("/browser/list", {"page": 0, "pageSize": 100})
     if not result.get("success"):
@@ -1225,14 +1238,19 @@ def publish_tiktok_video(
     product_short_name: str,
     ai_generated: bool = True,
     visibility: str = "public",
+    execution_mode: str = "visible",
 ) -> dict[str, Any]:
     if visibility != "public":
         raise ValueError("当前脚本只允许发布为所有人可见")
-    result = prepare_tiktok_upload(profile_id, video_value, caption, ai_generated)
+    result = prepare_tiktok_upload(profile_id, video_value, caption, ai_generated, execution_mode)
     if caption and not result.get("caption_filled"):
         raise RuntimeError("视频已选择，但文案没有被完整替换，停止发布")
 
-    open_result = bitbrowser_post("/browser/open", {"id": profile_id}, timeout=30)
+    open_result = bitbrowser_post(
+        "/browser/open",
+        bitbrowser_open_payload(profile_id, execution_mode),
+        timeout=30,
+    )
     open_data = open_result.get("data") or {}
     cdp_endpoint = normalize_cdp_endpoint(open_data.get("http") or open_data.get("ws") or "")
     if not cdp_endpoint:
@@ -1281,14 +1299,24 @@ def publish_tiktok_video(
         playwright.stop()
 
 
-def prepare_tiktok_upload(profile_id: str, video_value: str, caption: str, ai_generated: bool = True) -> dict[str, Any]:
+def prepare_tiktok_upload(
+    profile_id: str,
+    video_value: str,
+    caption: str,
+    ai_generated: bool = True,
+    execution_mode: str = "visible",
+) -> dict[str, Any]:
     if not profile_id:
         raise ValueError("请选择一个比特浏览器窗口")
     video_path = safe_video_path(video_value)
     if not video_path.exists() or not video_path.is_file():
         raise ValueError("视频文件不存在")
 
-    open_result = bitbrowser_post("/browser/open", {"id": profile_id}, timeout=30)
+    open_result = bitbrowser_post(
+        "/browser/open",
+        bitbrowser_open_payload(profile_id, execution_mode),
+        timeout=30,
+    )
     if not open_result.get("success"):
         raise RuntimeError(open_result.get("msg") or "打开比特浏览器窗口失败")
     open_data = open_result.get("data") or {}
@@ -1346,6 +1374,7 @@ def prepare_tiktok_upload(profile_id: str, video_value: str, caption: str, ai_ge
             "caption_pre_filled": caption_pre_filled,
             "caption_filled": caption_filled,
             "ai_generated": ai_generated,
+            "execution_mode": execution_mode,
             "ai_label_set": ai_label_set,
             "tiktok_upload_url": TIKTOK_UPLOAD_URL,
         }
@@ -1775,6 +1804,7 @@ def run_tiktok_publish_locked(task: dict[str, Any]) -> dict[str, Any]:
             str(task.get("product_short_name", "")),
             bool(task.get("ai_generated", True)),
             str(task.get("visibility", "public")),
+            str(task.get("execution_mode", "visible")),
         )
     finally:
         PUBLISH_LOCK.release()
@@ -2871,7 +2901,7 @@ HTML = r"""<!doctype html>
       renderSelectionBar();
       renderPublishContext();
       await loadQueueSummary();
-      setPublishStatus(`已加入 ${tasks.length} 个待执行任务。请前往发布队列点击“执行任务”。`, 'ok');
+      setPublishStatus(`已加入 ${tasks.length} 个待执行任务。请前往发布队列选择“可视执行”或“后台执行”。`, 'ok');
     }
 
     function setPublishStatus(text, kind = '') {
@@ -3627,7 +3657,8 @@ QUEUE_HTML = r"""<!doctype html>
       <div class="toolbar">
         <div id="queueStatus" class="statusText">正在读取队列...</div>
         <div class="toolbarActions">
-          <button id="resumeButton" class="primary" onclick="controlQueue('resume')">执行任务</button>
+          <button id="visibleButton" class="primary" onclick="startQueue('visible')">可视执行</button>
+          <button id="headlessButton" onclick="startQueue('headless')">后台执行</button>
           <button id="pauseButton" onclick="controlQueue('pause')">暂停队列</button>
           <button class="danger" onclick="clearPending()">清空等待任务</button>
         </div>
@@ -3663,7 +3694,8 @@ QUEUE_HTML = r"""<!doctype html>
       const counts = queue.counts || {};
       const running = Number(counts.running || 0);
       const pending = Number(counts.pending || 0);
-      const workerState = running ? '执行中' : (queue.paused && pending ? '待执行' : (queue.paused ? '已暂停' : (pending ? '运行中' : '空闲')));
+      const executionLabel = queue.execution_mode === 'headless' ? '后台执行' : '可视执行';
+      const workerState = running || (!queue.paused && pending) ? executionLabel : (queue.paused && pending ? '待执行' : (queue.paused ? '已暂停' : '空闲'));
       document.getElementById('workerState').textContent = workerState;
       document.getElementById('queueBadge').textContent = `发布队列 ${pending + running}`;
       document.getElementById('runningCount').textContent = running;
@@ -3671,13 +3703,15 @@ QUEUE_HTML = r"""<!doctype html>
       document.getElementById('problemCount').textContent = Number(counts.failed || 0) + Number(counts.needs_review || 0);
       document.getElementById('publishedCount').textContent = counts.published || 0;
       document.getElementById('canceledCount').textContent = counts.canceled || 0;
-      document.getElementById('resumeButton').disabled = !queue.paused || !pending || Boolean(running);
+      const startDisabled = !queue.paused || !pending || Boolean(running);
+      document.getElementById('visibleButton').disabled = startDisabled;
+      document.getElementById('headlessButton').disabled = startDisabled;
       document.getElementById('pauseButton').disabled = queue.paused || (!pending && !running);
       renderTaskList();
-      if (running) setStatus('正在执行发布任务。');
-      else if (queue.paused && pending) setStatus(`${pending} 个任务待执行，点击“执行任务”后开始发布。`);
+      if (running) setStatus(`正在以${executionLabel}方式发布。`);
+      else if (queue.paused && pending) setStatus(`${pending} 个任务待执行，请选择“可视执行”或“后台执行”。`);
       else if (queue.paused) setStatus('队列已暂停，当前没有待执行任务。');
-      else if (pending) setStatus('队列正在按顺序串行执行。');
+      else if (pending) setStatus(`队列正在以${executionLabel}方式按顺序串行执行。`);
       else setStatus('当前没有待执行任务。');
       updateCountdown();
     }
@@ -3729,8 +3763,11 @@ QUEUE_HTML = r"""<!doctype html>
       if (task.status === 'failed' || task.status === 'needs_review') return `<button onclick="retryTask(${task.id},'${task.status}')">重试</button><button class="danger" onclick="taskAction(${task.id},'cancel')">取消</button>`;
       return '';
     }
-    async function controlQueue(action) {
-      await post('/api/queue/control',{action});
+    async function startQueue(executionMode) {
+      await controlQueue('resume', executionMode);
+    }
+    async function controlQueue(action, executionMode='') {
+      await post('/api/queue/control',{action, execution_mode:executionMode});
     }
     async function clearPending() {
       if (!confirm('确认取消所有等待中任务？正在发布的任务不受影响。')) return;
@@ -3843,7 +3880,10 @@ class Handler(BaseHTTPRequestHandler):
                 json_response(self, 200, {"ok": True, "task_ids": task_ids, "queue": get_publish_queue().payload()})
             elif parsed.path == "/api/queue/control":
                 payload = read_json_body(self)
-                result = get_publish_queue().control(str(payload.get("action", "")))
+                result = get_publish_queue().control(
+                    str(payload.get("action", "")),
+                    str(payload.get("execution_mode", "")),
+                )
                 json_response(self, 200, result)
             elif parsed.path == "/api/queue/task":
                 payload = read_json_body(self)

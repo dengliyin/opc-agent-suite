@@ -81,6 +81,7 @@ class PublishQueue:
             )
             connection.execute("INSERT OR IGNORE INTO queue_meta(key, value) VALUES('paused', '1')")
             connection.execute("INSERT OR IGNORE INTO queue_meta(key, value) VALUES('next_run_at', '0')")
+            connection.execute("INSERT OR IGNORE INTO queue_meta(key, value) VALUES('execution_mode', 'visible')")
             interrupted = connection.execute(
                 "UPDATE queue_tasks SET status='needs_review', completed_at=?, error=? WHERE status='running'",
                 (now_text(), "服务在发布过程中重启，请先确认 TikTok 是否已经发布，再决定是否重试。"),
@@ -166,6 +167,7 @@ class PublishQueue:
             rows = [dict(row) for row in connection.execute("SELECT * FROM queue_tasks ORDER BY position, id")]
             paused = self._get_meta(connection, "paused", "0") == "1"
             next_run_at = float(self._get_meta(connection, "next_run_at", "0") or 0)
+            execution_mode = self._get_meta(connection, "execution_mode", "visible")
         counts: dict[str, int] = {}
         for row in rows:
             row["ai_generated"] = bool(row.get("ai_generated"))
@@ -174,16 +176,21 @@ class PublishQueue:
             "tasks": rows,
             "counts": counts,
             "paused": paused,
+            "execution_mode": execution_mode,
             "interval_seconds": self.interval_seconds,
             "next_run_at": next_run_at,
             "server_time": time.time(),
         }
 
-    def control(self, action: str) -> dict[str, Any]:
+    def control(self, action: str, execution_mode: str = "") -> dict[str, Any]:
         with self._connect() as connection:
             if action == "pause":
                 self._set_meta(connection, "paused", "1")
             elif action == "resume":
+                execution_mode = execution_mode.strip() or "visible"
+                if execution_mode not in ("visible", "headless"):
+                    raise ValueError("不支持的执行方式")
+                self._set_meta(connection, "execution_mode", execution_mode)
                 self._set_meta(connection, "paused", "0")
             elif action == "clear_pending":
                 connection.execute(
@@ -248,6 +255,7 @@ class PublishQueue:
             next_run_at = float(self._get_meta(connection, "next_run_at", "0") or 0)
             if next_run_at > time.time():
                 return
+            execution_mode = self._get_meta(connection, "execution_mode", "visible")
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 "SELECT * FROM queue_tasks WHERE status='pending' ORDER BY position, id LIMIT 1"
@@ -261,6 +269,7 @@ class PublishQueue:
             )
             task = dict(row)
             task["ai_generated"] = bool(task.get("ai_generated"))
+            task["execution_mode"] = execution_mode
 
         status = "published"
         error = ""
