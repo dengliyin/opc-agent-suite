@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -136,6 +137,138 @@ class CoreTests(unittest.TestCase):
         self.assertIn('src="vendor/gsap.min.js"', html)
         self.assertNotIn("http://", html)
         self.assertNotIn("https://", html)
+
+    def test_sticker_options_support_three_styles_and_reject_invalid_text(self) -> None:
+        self.assertEqual(set(core.STICKER_STYLES), {"dark", "highlight", "outline"})
+        for style in core.STICKER_STYLES:
+            options = core.normalize_sticker_options(
+                {"enabled": True, "text": "立即入手", "style": style, "position": "top", "timing": "full"}
+            )
+            self.assertEqual(options["style"], style)
+            self.assertTrue(options["enabled"])
+        with self.assertRaisesRegex(ValueError, "贴纸文字"):
+            core.normalize_sticker_options({"enabled": True, "text": ""})
+        with self.assertRaisesRegex(ValueError, "36"):
+            core.normalize_sticker_options({"enabled": True, "text": "字" * 37})
+
+    def test_generated_composition_renders_escaped_timed_sticker(self) -> None:
+        html = core.build_index_html(
+            [{"duration": 5.0, "media_name": "segment_01.mp4"}],
+            total_duration=5.0,
+            sticker={
+                "enabled": True,
+                "text": "立即 <入手>",
+                "style": "highlight",
+                "position": "bottom",
+                "timing": "custom",
+                "start": 1,
+                "end": 3.5,
+            },
+        )
+
+        self.assertIn('id="text-sticker"', html)
+        self.assertIn('class="clip text-sticker-slot position-bottom"', html)
+        self.assertIn('class="text-sticker-body style-highlight"', html)
+        self.assertIn('data-start="1.000" data-duration="2.500" data-track-index="7"', html)
+        self.assertIn("data-layout-allow-occlusion", html)
+        self.assertIn('src: local("PingFang SC")', html)
+        self.assertIn("立即 &lt;入手&gt;", html)
+        self.assertNotIn("立即 <入手>", html)
+        self.assertIn('tl.fromTo("#text-sticker-body"', html)
+
+    def test_confirmation_persists_sticker_settings_in_latest_scan(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            report_path = Path(temporary) / "scan.json"
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "scan_id": "current",
+                        "items": [
+                            {"script_dir": "/one", "status": "missing"},
+                            {"script_dir": "/two", "status": "missing"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.object(server.core, "REPORT_PATH", report_path):
+                confirmed, selected = server.confirmed_report(
+                    "current",
+                    ["/one"],
+                    {"enabled": True, "text": "新品上市", "style": "outline", "position": "center", "timing": "full"},
+                )
+            persisted = json.loads(report_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(selected[0]["sticker"]["style"], "outline")
+        self.assertEqual(confirmed["items"][0]["sticker"]["text"], "新品上市")
+        self.assertEqual(persisted["items"][0]["sticker"]["position"], "center")
+        self.assertNotIn("sticker", persisted["items"][1])
+
+    def test_scan_preserves_saved_sticker_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pending = root / "pending"
+            pending.mkdir()
+            report_path = root / "scan.json"
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "items": [
+                            {
+                                "script_dir": "/saved",
+                                "sticker": {
+                                    "enabled": True,
+                                    "text": "限时优惠",
+                                    "style": "highlight",
+                                    "position": "bottom",
+                                    "timing": "full",
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            item = core.ScriptItem(
+                model="omni",
+                date="2026-07-13",
+                product="产品",
+                script_dir="/saved",
+                md_path="/saved/saved.md",
+                video_paths=["/saved/clip.mp4"],
+                output_path="/output/saved.mp4",
+                status="missing",
+            )
+            with (
+                patch.object(server.core, "PENDING_ROOT", pending),
+                patch.object(server.core, "REPORT_PATH", report_path),
+                patch.object(server.core, "scan_items", return_value=[item]),
+            ):
+                payload = server.scan_now()
+
+        self.assertEqual(payload["items"][0]["sticker"]["text"], "限时优惠")
+        self.assertEqual(payload["items"][0]["sticker"]["style"], "highlight")
+
+    def test_ui_contract_includes_output_panel_and_modal_sticker_designer(self) -> None:
+        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        javascript = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+        ids = re.findall(r'\bid="([^"]+)"', html)
+
+        self.assertEqual(len(ids), len(set(ids)))
+        for required in (
+            "stickerEnabled",
+            "stickerText",
+            "stickerStyleField",
+            "stickerPositionField",
+            "stickerTimingField",
+            "stickerPreviewText",
+            "openOutputBtn",
+            "outputs",
+        ):
+            self.assertIn(required, ids)
+            self.assertIn(required, javascript)
+        self.assertEqual(set(re.findall(r'name="stickerStyle" value="([^"]+)"', html)), set(core.STICKER_STYLES))
+        self.assertGreater(html.index('id="stickerEnabled"'), html.index('id="confirmModal"'))
 
     def test_cleanup_keeps_script_marker_and_finished_video(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

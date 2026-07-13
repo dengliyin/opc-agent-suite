@@ -127,7 +127,7 @@
   </main>
 
   <div class="modalOverlay" id="confirmModal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" hidden>
-    <div class="modalWindow">
+    <div class="modalWindow stickerModal">
       <div class="modalHead">
         <div>
           <strong id="confirmTitle">确认开始拼接</strong>
@@ -141,6 +141,70 @@
           <div><span>执行方式</span><strong>本地离线 · 顺序渲染</strong></div>
           <div><span>字幕</span><strong>不保留字幕</strong></div>
           <div><span>输出目录</span><strong id="confirmOutputPath"></strong></div>
+        </div>
+        <div class="stickerDesigner">
+          <div class="stickerControls">
+            <div class="stickerToggleRow">
+              <div><strong>文字贴纸</strong><span id="stickerToggleState">已关闭</span></div>
+              <label class="switchControl" title="启用文字贴纸">
+                <input id="stickerEnabled" type="checkbox" />
+                <span class="switchTrack" aria-hidden="true"><i></i></span>
+              </label>
+            </div>
+
+            <label class="stickerField" for="stickerText">
+              <span>贴纸文字 <small id="stickerTextCount">0 / 36</small></span>
+              <input id="stickerText" type="text" maxlength="36" placeholder="例如：立即入手" disabled />
+            </label>
+
+            <fieldset class="stickerField" id="stickerStyleField" disabled>
+              <legend>文字风格</legend>
+              <div class="styleSegments" role="radiogroup" aria-label="文字风格">
+                <label>
+                  <input type="radio" name="stickerStyle" value="dark" checked />
+                  <span><i class="styleSwatch dark">字</i><b>黑底白字</b></span>
+                </label>
+                <label>
+                  <input type="radio" name="stickerStyle" value="highlight" />
+                  <span><i class="styleSwatch highlight">字</i><b>黄底黑字</b></span>
+                </label>
+                <label>
+                  <input type="radio" name="stickerStyle" value="outline" />
+                  <span><i class="styleSwatch outline">字</i><b>白字描边</b></span>
+                </label>
+              </div>
+            </fieldset>
+
+            <fieldset class="stickerField" id="stickerPositionField" disabled>
+              <legend>显示位置</legend>
+              <div class="compactSegments" role="radiogroup" aria-label="显示位置">
+                <label><input type="radio" name="stickerPosition" value="top" checked /><span>上方</span></label>
+                <label><input type="radio" name="stickerPosition" value="center" /><span>中部</span></label>
+                <label><input type="radio" name="stickerPosition" value="bottom" /><span>下方</span></label>
+              </div>
+            </fieldset>
+
+            <fieldset class="stickerField" id="stickerTimingField" disabled>
+              <legend>显示时间</legend>
+              <div class="compactSegments timingSegments" role="radiogroup" aria-label="显示时间">
+                <label><input type="radio" name="stickerTiming" value="full" checked /><span>全片</span></label>
+                <label><input type="radio" name="stickerTiming" value="custom" /><span>自定义</span></label>
+              </div>
+              <div class="customTiming" id="stickerCustomTiming" hidden>
+                <label><span>开始</span><input id="stickerStart" type="number" min="0" step="0.1" value="0" /></label>
+                <label><span>结束</span><input id="stickerEnd" type="number" min="0.4" step="0.1" value="3" /></label>
+                <em>秒</em>
+              </div>
+            </fieldset>
+          </div>
+
+          <div class="stickerPreviewPanel">
+            <div class="stickerPreviewHead"><span>9:16 预览</span><strong id="stickerPreviewStyle">黑底白字</strong></div>
+            <div class="stickerPreviewFrame" id="stickerPreviewFrame">
+              <div class="stickerPreviewSafe" aria-hidden="true"></div>
+              <div class="stickerPreviewText preview-dark preview-top" id="stickerPreviewText">文字贴纸</div>
+            </div>
+          </div>
         </div>
       </div>
       <div class="modalFoot">

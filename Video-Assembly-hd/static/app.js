@@ -15,6 +15,22 @@ const statusLabels = {
   invalid: '异常',
 };
 
+const defaultSticker = Object.freeze({
+  enabled: false,
+  text: '',
+  style: 'dark',
+  position: 'top',
+  timing: 'full',
+  start: 0,
+  end: 3,
+});
+
+const stickerStyleLabels = {
+  dark: '黑底白字',
+  highlight: '黄底黑字',
+  outline: '白字描边',
+};
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -39,6 +55,98 @@ function formatScanTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return `扫描于 ${date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;
+}
+
+function normalizeSticker(value = {}) {
+  const style = Object.hasOwn(stickerStyleLabels, value.style) ? value.style : defaultSticker.style;
+  const position = ['top', 'center', 'bottom'].includes(value.position) ? value.position : defaultSticker.position;
+  const timing = ['full', 'custom'].includes(value.timing) ? value.timing : defaultSticker.timing;
+  return {
+    enabled: value.enabled === true,
+    text: String(value.text || '').replace(/\s+/g, ' ').trim().slice(0, 36),
+    style,
+    position,
+    timing,
+    start: Number.isFinite(Number(value.start)) ? Number(value.start) : defaultSticker.start,
+    end: Number.isFinite(Number(value.end)) ? Number(value.end) : defaultSticker.end,
+  };
+}
+
+function checkedValue(name, fallback) {
+  return document.querySelector(`input[name="${name}"]:checked`)?.value || fallback;
+}
+
+function setCheckedValue(name, value) {
+  const input = document.querySelector(`input[name="${name}"][value="${value}"]`);
+  if (input) input.checked = true;
+}
+
+function stickerFromForm() {
+  return normalizeSticker({
+    enabled: $('stickerEnabled').checked,
+    text: $('stickerText').value,
+    style: checkedValue('stickerStyle', defaultSticker.style),
+    position: checkedValue('stickerPosition', defaultSticker.position),
+    timing: checkedValue('stickerTiming', defaultSticker.timing),
+    start: $('stickerStart').value,
+    end: $('stickerEnd').value,
+  });
+}
+
+function selectedStickerConfig() {
+  const items = reportItems('missing').filter((item) => selected.has(item.script_dir));
+  if (!items.length) return normalizeSticker(defaultSticker);
+  const configs = items.map((item) => normalizeSticker(item.sticker));
+  const first = JSON.stringify(configs[0]);
+  return configs.every((config) => JSON.stringify(config) === first)
+    ? configs[0]
+    : normalizeSticker(defaultSticker);
+}
+
+function stickerFormIsValid(options = stickerFromForm()) {
+  if (!options.enabled) return true;
+  if (!options.text || options.text.length > 36) return false;
+  if (options.timing === 'custom') {
+    return options.start >= 0 && options.end - options.start >= 0.4;
+  }
+  return true;
+}
+
+function updateStickerDesigner() {
+  const options = stickerFromForm();
+  const enabled = options.enabled;
+  $('stickerToggleState').textContent = enabled ? '已启用' : '已关闭';
+  $('stickerText').disabled = !enabled;
+  ['stickerStyleField', 'stickerPositionField', 'stickerTimingField'].forEach((id) => {
+    $(id).disabled = !enabled;
+  });
+  const custom = enabled && options.timing === 'custom';
+  $('stickerCustomTiming').hidden = !custom;
+  $('stickerStart').disabled = !custom;
+  $('stickerEnd').disabled = !custom;
+  $('stickerTextCount').textContent = `${options.text.length} / 36`;
+  $('stickerPreviewStyle').textContent = stickerStyleLabels[options.style];
+  $('stickerPreviewFrame').classList.toggle('disabled', !enabled);
+  $('stickerPreviewText').className = `stickerPreviewText preview-${options.style} preview-${options.position}`;
+  $('stickerPreviewText').textContent = options.text || '文字贴纸';
+  $('stickerPreviewText').style.fontSize = options.text.length > 28 ? '9px' : options.text.length > 18 ? '10px' : '12px';
+  const valid = stickerFormIsValid(options);
+  $('stickerText').setAttribute('aria-invalid', String(enabled && !options.text));
+  $('stickerStart').setAttribute('aria-invalid', String(custom && !valid));
+  $('stickerEnd').setAttribute('aria-invalid', String(custom && !valid));
+  $('confirmRunBtn').disabled = !valid;
+}
+
+function applyStickerToForm(value) {
+  const options = normalizeSticker(value);
+  $('stickerEnabled').checked = options.enabled;
+  $('stickerText').value = options.text;
+  setCheckedValue('stickerStyle', options.style);
+  setCheckedValue('stickerPosition', options.position);
+  setCheckedValue('stickerTiming', options.timing);
+  $('stickerStart').value = options.start;
+  $('stickerEnd').value = options.end;
+  updateStickerDesigner();
 }
 
 async function api(path, options = {}) {
@@ -108,6 +216,8 @@ function groupedItems(items) {
 function taskRow(item) {
   const scriptName = basename(item.script_dir);
   const clips = (item.video_paths || []).length;
+  const sticker = normalizeSticker(item.sticker);
+  const stickerMeta = sticker.enabled ? ` · 贴纸 ${stickerStyleLabels[sticker.style]}` : '';
   const cleanupMode = item.status === 'done' && item.cleanup_eligible;
   const selectable = item.status === 'missing' || cleanupMode;
   const selectedAttr = (cleanupMode ? cleanupSelected : selected).has(item.script_dir) ? 'checked' : '';
@@ -116,7 +226,7 @@ function taskRow(item) {
     : '';
   const issue = (item.issues || []).join('、');
   const meta = item.status === 'missing'
-    ? `${clips} 个片段 · ${basename(item.md_path)}`
+    ? `${clips} 个片段 · ${basename(item.md_path)}${stickerMeta}`
     : item.status === 'done'
       ? `${basename(item.output_path)}${item.cleanup_eligible ? ` · 待清理 ${item.cleanup_file_count} 个文件 / ${formatBytes(item.cleanup_bytes)}` : ''}`
       : item.status === 'archived'
@@ -286,8 +396,9 @@ function openConfirmModal() {
   }
   $('confirmCount').textContent = selected.size;
   $('confirmOutputPath').textContent = state.report?.output_root || '';
+  applyStickerToForm(selectedStickerConfig());
   $('confirmModal').hidden = false;
-  $('confirmRunBtn').focus();
+  ($('stickerEnabled').checked ? $('stickerText') : $('confirmRunBtn')).focus();
 }
 
 function closeConfirmModal() {
@@ -342,6 +453,11 @@ async function cleanupMedia() {
 }
 
 async function startAssembly() {
+  const sticker = stickerFromForm();
+  if (!stickerFormIsValid(sticker)) {
+    showToast(sticker.text ? '自定义显示时间至少需要 0.4 秒' : '请输入贴纸文字', true);
+    return;
+  }
   $('confirmRunBtn').disabled = true;
   try {
     const data = await api('/api/assemble', {
@@ -350,6 +466,7 @@ async function startAssembly() {
         confirmed: true,
         scan_id: state.report?.scan_id || '',
         script_dirs: [...selected],
+        sticker,
       }),
     });
     state.job = data.job;
@@ -361,7 +478,7 @@ async function startAssembly() {
   } catch (error) {
     showToast(error.message, true);
   } finally {
-    $('confirmRunBtn').disabled = false;
+    if (!$('confirmModal').hidden) updateStickerDesigner();
   }
 }
 
@@ -463,6 +580,13 @@ $('closeModalBtn').addEventListener('click', closeConfirmModal);
 $('cancelModalBtn').addEventListener('click', closeConfirmModal);
 $('confirmRunBtn').addEventListener('click', startAssembly);
 $('confirmModal').addEventListener('click', (event) => { if (event.target === $('confirmModal')) closeConfirmModal(); });
+$('stickerEnabled').addEventListener('change', updateStickerDesigner);
+$('stickerText').addEventListener('input', updateStickerDesigner);
+$('stickerStart').addEventListener('input', updateStickerDesigner);
+$('stickerEnd').addEventListener('input', updateStickerDesigner);
+document.querySelectorAll('input[name="stickerStyle"], input[name="stickerPosition"], input[name="stickerTiming"]').forEach((input) => {
+  input.addEventListener('change', updateStickerDesigner);
+});
 $('closeCleanupModalBtn').addEventListener('click', closeCleanupModal);
 $('cancelCleanupModalBtn').addEventListener('click', closeCleanupModal);
 $('cleanupVerified').addEventListener('change', (event) => { $('confirmCleanupBtn').disabled = !event.target.checked; });

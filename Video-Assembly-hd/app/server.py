@@ -59,7 +59,18 @@ def read_report() -> dict[str, Any]:
 def scan_now() -> dict[str, Any]:
     if not core.PENDING_ROOT.exists():
         raise RuntimeError(f"待拼接目录不存在：{core.PENDING_ROOT}")
-    payload = core.report_payload(core.scan_items())
+    previous = {
+        item.get("script_dir"): item.get("sticker")
+        for item in read_report().get("items", [])
+        if item.get("script_dir")
+    }
+    items = core.scan_items()
+    for item in items:
+        try:
+            item.sticker = core.normalize_sticker_options(previous.get(item.script_dir))
+        except ValueError:
+            item.sticker = core.normalize_sticker_options(None)
+    payload = core.report_payload(items)
     write_json(core.REPORT_PATH, payload)
     return payload
 
@@ -273,7 +284,11 @@ class AssemblyJob:
 JOB = AssemblyJob()
 
 
-def confirmed_report(scan_id: str, script_dirs: list[str]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def confirmed_report(
+    scan_id: str,
+    script_dirs: list[str],
+    sticker: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     report = read_report()
     if not scan_id or report.get("scan_id") != scan_id:
         raise ValueError("扫描结果已变化，请重新扫描后再确认")
@@ -288,6 +303,13 @@ def confirmed_report(scan_id: str, script_dirs: list[str]) -> tuple[dict[str, An
     unknown = [path for path in selected_paths if path not in missing]
     if unknown:
         raise ValueError("选择项不属于本次扫描，请重新扫描")
+    if sticker is not None and not isinstance(sticker, dict):
+        raise ValueError("文字贴纸设置格式无效")
+    sticker_options = core.normalize_sticker_options(sticker)
+    for item in report.get("items", []):
+        if item.get("script_dir") in selected_paths:
+            item["sticker"] = copy.deepcopy(sticker_options)
+    write_json(core.REPORT_PATH, report)
     selected = [missing[path] for path in selected_paths]
     payload = copy.deepcopy(report)
     selected_set = set(selected_paths)
@@ -417,6 +439,7 @@ class Handler(BaseHTTPRequestHandler):
                 report, selected = confirmed_report(
                     str(payload.get("scan_id") or ""),
                     [str(path) for path in payload.get("script_dirs", [])],
+                    payload.get("sticker"),
                 )
                 self._json(202, {"job": JOB.start(report, selected)})
             elif parsed.path == "/api/cleanup":
