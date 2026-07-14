@@ -194,8 +194,8 @@ def analyze_one_video(video_path, settings, args, prompt, output_dir):
     if not api_key:
         raise SystemExit("缺少 api_key：请在 config/settings.local.json 中填写，或设置 VIDEO_TEARDOWN_AGENT_API_KEY。")
 
-    model = args.model or str(settings.get("model") or "google/gemini-3-flash")
-    base_url = args.base_url or str(settings.get("base_url") or "https://router.shengsuanyun.com/api")
+    model = args.model or str(settings.get("model") or "gemini-3.5-flash")
+    base_url = args.base_url or str(settings.get("base_url") or "https://zexapi.com")
     timeout = int(args.timeout or settings.get("timeout_seconds") or 240)
     max_output_tokens = int(args.max_output_tokens or settings.get("max_output_tokens") or 32768)
     temperature = float(args.temperature if args.temperature is not None else settings.get("temperature", 0.2))

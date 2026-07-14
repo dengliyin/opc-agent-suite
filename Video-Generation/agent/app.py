@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .config import Settings, load_settings, mask_secrets, update_env_values
+from .config import ENV_PATH, SETTINGS_PATH, Settings, load_settings, mask_secrets, update_env_values
 from .exporter import export_completed_scripts, restore_exported_scripts
 from .files import scan_scripts, script_to_dict, summarize_catalog
 from .product_lock import storyboard_meta_path
@@ -825,7 +825,8 @@ def save_path_settings(request: PathSettingsRequest) -> Dict[str, Any]:
 def save_api_settings(request: Dict[str, Any]) -> Dict[str, Any]:
     if _active_jobs():
         raise HTTPException(status_code=409, detail="有任务正在运行，请等待任务结束后再保存 API 设置")
-    updates: Dict[str, str] = {}
+    shared_updates: Dict[str, str] = {}
+    secret_updates: Dict[str, str] = {}
     payload_env_map = {
         "omni_character_api_model": "OMNI_CHARACTER_API_MODEL",
         "omni_storyboard_api_model": "OMNI_STORYBOARD_API_MODEL",
@@ -857,14 +858,17 @@ def save_api_settings(request: Dict[str, Any]) -> Dict[str, Any]:
     for payload_key, env_key in payload_env_map.items():
         value = _payload_text(request, payload_key, required=False)
         if value:
-            updates[env_key] = value
+            shared_updates[env_key] = value
     if _payload_text(request, "otu_api_key", required=False):
-        updates["OTU_API_KEY"] = _payload_text(request, "otu_api_key", required=False)
+        secret_updates["OTU_API_KEY"] = _payload_text(request, "otu_api_key", required=False)
     if _payload_text(request, "grok_api_key", required=False):
-        updates["GROK_API_KEY"] = _payload_text(request, "grok_api_key", required=False)
+        secret_updates["GROK_API_KEY"] = _payload_text(request, "grok_api_key", required=False)
     try:
-        if updates:
-            update_env_values(updates)
+        if shared_updates:
+            update_env_values(shared_updates, SETTINGS_PATH)
+        if secret_updates:
+            update_env_values(secret_updates, ENV_PATH)
+        if shared_updates or secret_updates:
             _reload_runtime_settings()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=_safe(str(exc)))

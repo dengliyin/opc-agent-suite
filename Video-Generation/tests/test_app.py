@@ -99,3 +99,25 @@ def test_media_cleanup_route_is_owned_by_assembly_agent():
     assert "/api/clear-archived-media" not in paths
     assert "/omni/api/clear-archived-media" not in paths
     assert "/grok/api/clear-archived-media" not in paths
+
+
+def test_api_settings_save_shared_models_and_local_keys_separately(monkeypatch, tmp_path):
+    calls = []
+    shared = tmp_path / "agent_settings.env"
+    local = tmp_path / ".env"
+    monkeypatch.setattr(app_module, "SETTINGS_PATH", shared)
+    monkeypatch.setattr(app_module, "ENV_PATH", local)
+    monkeypatch.setattr(app_module, "update_env_values", lambda updates, path: calls.append((updates, path)))
+    monkeypatch.setattr(app_module, "_reload_runtime_settings", lambda: None)
+
+    app_module.save_api_settings(
+        {
+            "omni_character_api_model": "otu:shared-model",
+            "otu_api_key": "local-secret",
+        }
+    )
+
+    assert calls == [
+        ({"OMNI_CHARACTER_API_MODEL": "otu:shared-model"}, shared),
+        ({"OTU_API_KEY": "local-secret"}, local),
+    ]

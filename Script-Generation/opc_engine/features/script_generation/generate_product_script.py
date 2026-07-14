@@ -37,6 +37,7 @@ FEATURE_DIR = Path(__file__).resolve().parent
 CONFIG_DIR = FEATURE_DIR / "config"
 LOCAL_INPUTS_PATH = CONFIG_DIR / "inputs.json"
 SCRIPT_INPUTS_PATH = Path(os.environ.get("SCRIPT_GENERATION_INPUTS_PATH", str(LOCAL_INPUTS_PATH))).expanduser()
+SHARED_MODEL_SETTINGS_PATH = CONFIG_DIR / "model_defaults.json"
 LOCAL_MODEL_SETTINGS_PATH = CONFIG_DIR / "model_settings.json"
 VAULT_ROOT = Path(
     os.environ.get("OPC_VAULT_ROOT", str(Path.home() / "Documents" / "Obsidian Vault"))
@@ -348,8 +349,10 @@ def read_json_config(path):
 
 
 def load_script_generation_config():
-    config = {}
-    config.update(read_json_config(LOCAL_MODEL_SETTINGS_PATH))
+    config = read_json_config(SHARED_MODEL_SETTINGS_PATH)
+    local_model = read_json_config(LOCAL_MODEL_SETTINGS_PATH)
+    if local_model.get("modelmesh_api_key"):
+        config["modelmesh_api_key"] = local_model["modelmesh_api_key"]
     config.update(read_json_config(SCRIPT_INPUTS_PATH))
     return config
 

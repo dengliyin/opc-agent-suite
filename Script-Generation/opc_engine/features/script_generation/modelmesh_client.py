@@ -8,8 +8,8 @@ import urllib.parse
 import urllib.request
 
 
-DEFAULT_MODEL = "google/gemini-3-flash"
-DEFAULT_BASE_URL = "https://router.shengsuanyun.com/api"
+DEFAULT_MODEL = "deepseek-v4-pro"
+DEFAULT_BASE_URL = "https://api.deepseek.com"
 
 
 def get_api_key(config: dict) -> str:

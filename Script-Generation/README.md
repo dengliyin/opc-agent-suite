@@ -39,11 +39,9 @@ python3 -m opc_engine.features.script_generation.script_generation_agent_web --p
 ```bash
 cp opc_engine/features/script_generation/config/inputs.example.json \
   opc_engine/features/script_generation/config/inputs.json
-cp opc_engine/features/script_generation/config/model_settings.example.json \
-  opc_engine/features/script_generation/config/model_settings.json
 ```
 
-真实产品路径、API Key 和模型设置只保存在本机，不提交 Git。API Key 也可以通过以下环境变量提供：
+Base URL、模型和运行参数保存在受 Git 跟踪的 `config/model_defaults.json`。真实产品路径和 API Key 只保存在本机，不提交 Git；API Key 可以在 Web 页面填写，也可以通过以下环境变量提供：
 
 ```bash
 export MODELMESH_API_KEY="your_key"
