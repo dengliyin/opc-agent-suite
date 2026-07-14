@@ -33,9 +33,9 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-button, input { font: inherit; letter-spacing: 0; }
+button, input, select { font: inherit; letter-spacing: 0; }
 button { color: var(--ink); }
-button:focus-visible, input:focus-visible { outline: 3px solid rgba(179, 220, 60, .55); outline-offset: 2px; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid rgba(179, 220, 60, .55); outline-offset: 2px; }
 
 header {
   height: 72px;
@@ -290,6 +290,19 @@ label, .ruleTitle {
 .stickerToggleRow { min-height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 0 10px; border-bottom: 1px solid var(--line-soft); }
 .stickerToggleRow strong { display: block; font-size: 12px; }
 .stickerToggleRow > div span { display: block; margin-top: 3px; color: var(--subtle); font-size: 10px; }
+.stickerLibraryPanel { margin-top: 11px; padding: 9px; border: 1px solid var(--line); background: var(--surface-soft); }
+.stickerLibraryHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.stickerLibraryHead span { color: var(--muted); font-size: 10px; font-weight: 800; text-transform: uppercase; }
+.stickerLibraryHead strong { min-width: 0; overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.stickerLibrarySelectors { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 8px; margin-top: 8px; }
+.stickerLibrarySelectors > label > span, .stickerPresetHead label { display: block; color: var(--subtle); font-size: 9px; font-weight: 760; }
+.stickerLibrarySelectors > label > span { margin-bottom: 4px; }
+.stickerPresetHead { min-height: 19px; display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.stickerPresetHead button { min-height: 18px; padding: 2px 6px; box-shadow: none; font-size: 9px; }
+.stickerPresetHead button.active { background: var(--accent); }
+.stickerLibrarySelectors select { width: 100%; height: 34px; padding: 5px 7px; border: 1px solid var(--line); border-radius: 0; background: #fff; color: var(--ink); font-size: 10px; }
+.stickerLibrarySelectors select:disabled { opacity: .5; }
+#stickerPresetTranslation { min-height: 15px; margin: 7px 0 0; color: var(--muted); font-size: 10px; line-height: 1.4; }
 .switchControl { display: inline-flex; cursor: pointer; }
 .switchControl input { position: absolute; opacity: 0; pointer-events: none; }
 .switchTrack { width: 42px; height: 23px; display: flex; align-items: center; padding: 2px; border: 1px solid var(--line); background: #d8d5cc; transition: background .16s ease; }
@@ -302,7 +315,7 @@ label, .ruleTitle {
 .stickerField small { color: var(--subtle); font-size: 9px; font-weight: 680; }
 .stickerField > input { width: 100%; height: 36px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 0; background: #fff; color: var(--ink); font-size: 12px; }
 .stickerField:disabled, .stickerField > input:disabled { opacity: .46; }
-.styleSegments { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--line); }
+.styleSegments { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--line); }
 .styleSegments label { min-width: 0; cursor: pointer; }
 .styleSegments input, .compactSegments input { position: absolute; opacity: 0; pointer-events: none; }
 .styleSegments label > span { min-height: 60px; display: flex; align-items: center; gap: 7px; padding: 7px; border-right: 1px solid var(--line); background: #fff; }
@@ -311,9 +324,10 @@ label, .ruleTitle {
 .styleSegments input:focus-visible + span, .compactSegments input:focus-visible + span { outline: 3px solid rgba(179, 220, 60, .55); outline-offset: -3px; }
 .styleSegments b { min-width: 0; font-size: 9px; line-height: 1.25; }
 .styleSwatch { width: 28px; height: 28px; flex: 0 0 28px; display: grid; place-items: center; border: 1px solid #111; font-style: normal; font-size: 13px; font-weight: 850; }
-.styleSwatch.dark { background: #111; color: #fff; }
-.styleSwatch.highlight { background: #f3e64d; color: #111; box-shadow: 2px 2px 0 #111; }
-.styleSwatch.outline { border-color: #777; background: #888; color: #fff; -webkit-text-stroke: 1px #111; }
+.styleSwatch.serif { border: 0; color: #3b2b1f; font-family: Georgia, "Songti SC", serif; }
+.styleSwatch.bubbly { border: 0; border-radius: 50%; background: #ff6fae; color: #fff; font-family: "Arial Rounded MT Bold", "SF Pro Rounded", sans-serif; box-shadow: 0 2px 0 #b72f70; }
+.styleSwatch.tiktok { background: #111; color: #fff; font-family: "TikTok Sans", "Avenir Next", Arial, sans-serif; }
+.styleSwatch.cinematic { border-color: #777; background: #888; color: #fff; font-family: "Avenir Next Condensed", "Arial Narrow", sans-serif; -webkit-text-stroke: 1px #111; }
 .compactSegments { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--line); }
 .compactSegments.timingSegments { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .compactSegments label { cursor: pointer; }
@@ -335,9 +349,10 @@ label, .ruleTitle {
 .stickerPreviewText.preview-top { top: 17%; }
 .stickerPreviewText.preview-center { top: 44%; }
 .stickerPreviewText.preview-bottom { bottom: 25%; }
-.stickerPreviewText.preview-dark { border: 1px solid rgba(255, 255, 255, .9); border-radius: 3px; background: rgba(10, 10, 10, .84); box-shadow: 0 3px 7px rgba(0, 0, 0, .28); }
-.stickerPreviewText.preview-highlight { border: 2px solid #111; border-radius: 2px; background: #f3e64d; color: #111; box-shadow: 3px 3px 0 #111; }
-.stickerPreviewText.preview-outline { padding: 4px; color: #fff; -webkit-text-stroke: 1px #111; text-shadow: 0 2px 4px rgba(0, 0, 0, .65); }
+.stickerPreviewText.preview-serif { padding: 4px; color: #fff8e8; font-family: Georgia, "Songti SC", serif; font-weight: 700; letter-spacing: .02em; text-shadow: 0 2px 4px rgba(0, 0, 0, .8); }
+.stickerPreviewText.preview-bubbly { padding: 4px; color: #ff78b4; font-family: "Arial Rounded MT Bold", "SF Pro Rounded", "PingFang SC", sans-serif; -webkit-text-stroke: 1px #fff; text-shadow: 0 2px 4px rgba(0, 0, 0, .58); }
+.stickerPreviewText.preview-tiktok { padding: 4px; color: #fff; font-family: "TikTok Sans", "Avenir Next", "PingFang SC", Arial, sans-serif; -webkit-text-stroke: 1px #111; text-shadow: 0 2px 4px rgba(0, 0, 0, .82); }
+.stickerPreviewText.preview-cinematic { padding: 4px; color: #fff; font-family: "Avenir Next Condensed", "Arial Narrow", "PingFang SC", sans-serif; letter-spacing: .035em; -webkit-text-stroke: 1px #111; text-shadow: 0 2px 4px rgba(0, 0, 0, .75); }
 .cleanupVerify { display: flex; align-items: flex-start; gap: 9px; margin: 14px 0 0; padding: 11px; border: 1px solid var(--line); background: #fff8f7; color: var(--ink); text-transform: none; line-height: 1.4; }
 .cleanupVerify input { width: 17px; height: 17px; flex: 0 0 auto; margin: 0; accent-color: var(--red); }
 .cleanupVerify span { font-size: 11px; font-weight: 760; }

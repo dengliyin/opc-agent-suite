@@ -29,6 +29,7 @@
 Video-Collection/config.json
 Script-Generation/app_config.json
 Script-Generation/fastmoss_config.json
+OPC-Console/runtime/
 Script-Generation/opc_engine/features/script_generation/config/inputs.json
 Script-Generation/opc_engine/features/script_generation/config/model_settings.json
 Script-Generation/workflow_configs/**/config/inputs.json

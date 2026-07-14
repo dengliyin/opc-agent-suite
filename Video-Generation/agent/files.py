@@ -31,6 +31,7 @@ class ScriptFile:
     md_path: Path
     reference_image: Optional[Path]
     segments: List[Segment]
+    reference_images: tuple[Path, ...] = ()
     batch_id: str = ""
     batch_label: str = ""
     batch_source: str = ""
@@ -60,7 +61,8 @@ def _scan_script_root(settings: Settings, root: Path, exported: bool) -> List[Sc
             if product_dir is None:
                 continue
             product_name = product_dir.name
-            reference_image = find_product_reference(settings.reference_root, product_name)
+            reference_images = find_product_references(settings.reference_root, product_name)
+            reference_image = reference_images[0] if len(reference_images) == 1 else None
             markdown = md_path.read_text(encoding="utf-8")
             segments = parse_segments(markdown)
             scripts.append(
@@ -70,6 +72,7 @@ def _scan_script_root(settings: Settings, root: Path, exported: bool) -> List[Sc
                     md_path=md_path,
                     reference_image=reference_image,
                     segments=segments,
+                    reference_images=tuple(reference_images),
                     exported=True,
                 )
             )
@@ -86,7 +89,8 @@ def _scan_script_root(settings: Settings, root: Path, exported: bool) -> List[Sc
         ]
         if not md_paths:
             continue
-        reference_image = find_product_reference(settings.reference_root, product_dir.name)
+        reference_images = find_product_references(settings.reference_root, product_dir.name)
+        reference_image = reference_images[0] if len(reference_images) == 1 else None
         for md_path in md_paths:
             markdown = md_path.read_text(encoding="utf-8")
             segments = parse_segments(markdown)
@@ -97,6 +101,7 @@ def _scan_script_root(settings: Settings, root: Path, exported: bool) -> List[Sc
                     md_path=md_path,
                     reference_image=reference_image,
                     segments=segments,
+                    reference_images=tuple(reference_images),
                     exported=exported,
                 )
             )
@@ -213,27 +218,46 @@ def _safe_key(value: str) -> str:
 
 
 def find_product_reference(reference_root: Path, product_name: str) -> Optional[Path]:
+    references = find_product_references(reference_root, product_name)
+    return references[0] if references else None
+
+
+def find_product_references(reference_root: Path, product_name: str) -> List[Path]:
+    matches: List[Path] = []
+
+    def add(candidate: Path) -> None:
+        if candidate.is_file() and candidate.suffix.lower() in IMAGE_EXTENSIONS and candidate not in matches:
+            matches.append(candidate)
+
     for ext in IMAGE_EXTENSIONS:
         candidate = reference_root / f"{product_name}{ext}"
         if candidate.exists():
-            return candidate
+            add(candidate)
+
+    for candidate in sorted(reference_root.glob(f"{product_name}-*")):
+        add(candidate)
 
     product_folder = reference_root / product_name
     if product_folder.is_dir():
         for candidate in sorted(product_folder.iterdir()):
-            if candidate.is_file() and candidate.suffix.lower() in IMAGE_EXTENSIONS:
-                return candidate
+            add(candidate)
 
-    for candidate in sorted(reference_root.glob(f"{product_name}*")):
-        if candidate.is_file() and candidate.suffix.lower() in IMAGE_EXTENSIONS:
-            return candidate
+    if matches:
+        return matches
 
     for candidate in sorted(reference_root.iterdir()):
-        if not candidate.is_file() or candidate.suffix.lower() not in IMAGE_EXTENSIONS:
-            continue
         if candidate.stem.endswith(f"-{product_name}"):
-            return candidate
-    return None
+            add(candidate)
+    return matches
+
+
+def product_reference_label(product_name: str, reference: Path) -> str:
+    prefix = f"{product_name}-"
+    if reference.stem.startswith(prefix):
+        return reference.stem[len(prefix):]
+    if reference.parent.name == product_name:
+        return reference.stem
+    return reference.stem
 
 
 def md_stem(md_path: Path) -> str:
@@ -383,6 +407,9 @@ def script_to_dict(settings: Settings, script: ScriptFile) -> Dict[str, object]:
         bool(segment["character_exists"]) and bool(segment["storyboard_exists"]) and bool(segment["video_exists"])
         for segment in segments
     )
+    reference_images = getattr(script, "reference_images", ())
+    if not reference_images and script.reference_image is not None:
+        reference_images = (script.reference_image,)
     return {
         "product_name": script.product_name,
         "product_dir": str(script.product_dir),
@@ -390,6 +417,15 @@ def script_to_dict(settings: Settings, script: ScriptFile) -> Dict[str, object]:
         "md_name": script.md_path.name,
         "reference_image": str(script.reference_image) if script.reference_image else None,
         "reference_url": artifact_url(script.reference_image, settings.api_base_path) if script.reference_image else None,
+        "reference_images": [
+            {
+                "path": str(reference),
+                "name": reference.name,
+                "label": product_reference_label(script.product_name, reference),
+                "url": artifact_url(reference, settings.api_base_path),
+            }
+            for reference in reference_images
+        ],
         "batch_id": getattr(script, "batch_id", ""),
         "batch_label": getattr(script, "batch_label", ""),
         "batch_source": getattr(script, "batch_source", ""),
@@ -421,7 +457,7 @@ def segment_to_dict(settings: Settings, script: ScriptFile, segment: Segment, ma
         or original_storyboard_path
     )
     character_current = image_output_current(settings, character_path)
-    storyboard_product_lock_current = has_current_storyboard_product_lock(storyboard_path, script.product_name)
+    storyboard_product_lock_current = has_current_storyboard_product_lock(storyboard_path, script.product_name, script.reference_image)
     storyboard_current = (
         storyboard_product_lock_current
         and image_output_current(settings, storyboard_path)
@@ -461,7 +497,7 @@ def summarize_catalog(settings: Settings, scripts: Iterable[ScriptFile]) -> Dict
         product_names.add(script.product_name)
         script_count += 1
         segment_count += len(script.segments)
-        if script.reference_image is None:
+        if not getattr(script, "reference_images", ()) and script.reference_image is None:
             missing_references += 1
         if script_is_complete(settings, script):
             complete_scripts += 1
@@ -507,7 +543,7 @@ def missing_assets_for_script(settings: Settings, script: ScriptFile) -> List[st
             or original_storyboard_path
         )
         storyboard_current = (
-            has_current_storyboard_product_lock(storyboard_path, script.product_name)
+            has_current_storyboard_product_lock(storyboard_path, script.product_name, script.reference_image)
             and image_output_current(settings, storyboard_path)
         )
         if not storyboard_current:

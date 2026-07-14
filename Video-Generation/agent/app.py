@@ -79,6 +79,7 @@ class RunRequest(BaseModel):
     overwrite: Optional[bool] = False
     script_paths: Optional[List[str]] = None
     script_concurrency: Optional[int] = Field(None, ge=1, le=20)
+    reference_images: Optional[Dict[str, str]] = None
 
 
 class CancelRequest(BaseModel):
@@ -678,6 +679,7 @@ def _run_pipeline(provider: str, request: RunRequest) -> Dict[str, Any]:
             overwrite=request.overwrite,
             script_paths=request.script_paths,
             script_concurrency=request.script_concurrency,
+            reference_images=request.reference_images,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=_safe(str(exc)))

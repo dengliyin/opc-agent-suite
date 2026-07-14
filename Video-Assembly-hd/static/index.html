@@ -42,7 +42,7 @@
           <div><dt>字幕</dt><dd>不生成</dd></div>
           <div><dt>排序</dt><dd>按“片段N”</dd></div>
           <div><dt>超时</dt><dd>超过目标 8% 进入判断</dd></div>
-          <div><dt>语速</dt><dd>有效尾音自动加速，最高 1.6×</dd></div>
+          <div><dt>语速</dt><dd>有效尾音保留原速</dd></div>
           <div><dt>收尾</dt><dd>静音尾帧裁切</dd></div>
         </dl>
       </div>
@@ -152,6 +152,31 @@
               </label>
             </div>
 
+            <div class="stickerLibraryPanel">
+              <div class="stickerLibraryHead">
+                <span>产品文案库</span>
+                <strong id="stickerLibraryProduct">待读取</strong>
+              </div>
+              <div class="stickerLibrarySelectors">
+                <label for="stickerCountry">
+                  <span>销售国家</span>
+                  <select id="stickerCountry" disabled>
+                    <option value="">请先选择同一产品</option>
+                  </select>
+                </label>
+                <div class="stickerPresetField">
+                  <div class="stickerPresetHead">
+                    <label for="stickerPreset">文案预设</label>
+                    <button id="randomStickerBtn" type="button" disabled>随机分配</button>
+                  </div>
+                  <select id="stickerPreset" disabled>
+                    <option value="">手动输入</option>
+                  </select>
+                </div>
+              </div>
+              <p id="stickerPresetTranslation">选择预设后显示中文释义</p>
+            </div>
+
             <label class="stickerField" for="stickerText">
               <span>贴纸文字 <small id="stickerTextCount">0 / 36</small></span>
               <input id="stickerText" type="text" maxlength="36" placeholder="例如：立即入手" disabled />
@@ -161,16 +186,20 @@
               <legend>文字风格</legend>
               <div class="styleSegments" role="radiogroup" aria-label="文字风格">
                 <label>
-                  <input type="radio" name="stickerStyle" value="dark" checked />
-                  <span><i class="styleSwatch dark">字</i><b>黑底白字</b></span>
+                  <input type="radio" name="stickerStyle" value="serif" />
+                  <span><i class="styleSwatch serif">Aa</i><b>粗体衬线</b></span>
                 </label>
                 <label>
-                  <input type="radio" name="stickerStyle" value="highlight" />
-                  <span><i class="styleSwatch highlight">字</i><b>黄底黑字</b></span>
+                  <input type="radio" name="stickerStyle" value="bubbly" />
+                  <span><i class="styleSwatch bubbly">Aa</i><b>气泡卡通</b></span>
                 </label>
                 <label>
-                  <input type="radio" name="stickerStyle" value="outline" />
-                  <span><i class="styleSwatch outline">字</i><b>白字描边</b></span>
+                  <input type="radio" name="stickerStyle" value="tiktok" checked />
+                  <span><i class="styleSwatch tiktok">Aa</i><b>TikTok Sans</b></span>
+                </label>
+                <label>
+                  <input type="radio" name="stickerStyle" value="cinematic" />
+                  <span><i class="styleSwatch cinematic">Aa</i><b>电影字幕</b></span>
                 </label>
               </div>
             </fieldset>
@@ -199,10 +228,10 @@
           </div>
 
           <div class="stickerPreviewPanel">
-            <div class="stickerPreviewHead"><span>9:16 预览</span><strong id="stickerPreviewStyle">黑底白字</strong></div>
+            <div class="stickerPreviewHead"><span>9:16 预览</span><strong id="stickerPreviewStyle">TikTok Sans</strong></div>
             <div class="stickerPreviewFrame" id="stickerPreviewFrame">
               <div class="stickerPreviewSafe" aria-hidden="true"></div>
-              <div class="stickerPreviewText preview-dark preview-top" id="stickerPreviewText">文字贴纸</div>
+              <div class="stickerPreviewText preview-tiktok preview-top" id="stickerPreviewText">文字贴纸</div>
             </div>
           </div>
         </div>

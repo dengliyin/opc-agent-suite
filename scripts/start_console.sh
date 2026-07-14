@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${OPC_ENV_FILE:-${ROOT_DIR}/.env}"
-PYTHON_BIN="$ROOT_DIR/Script-Generation/.venv/bin/python"
+PYTHON_BIN="$ROOT_DIR/OPC-Console/.venv/bin/python"
 LOG_DIR="$ROOT_DIR/.runtime/logs"
 PID_FILE="$ROOT_DIR/.runtime/console.pid"
 
@@ -12,7 +12,7 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 if [ ! -x "$PYTHON_BIN" ]; then
-  echo "Missing Script-Generation virtual environment. Run scripts/bootstrap_macos.sh first." >&2
+  echo "Missing OPC-Console virtual environment. Run scripts/bootstrap_macos.sh first." >&2
   exit 1
 fi
 
@@ -43,15 +43,20 @@ if command -v lsof >/dev/null 2>&1 && lsof -tiTCP:"$PORT" -sTCP:LISTEN >/dev/nul
   exit 1
 fi
 
+LAUNCH_AGENT_PLIST="$HOME/Library/LaunchAgents/com.kesai.opc-console.plist"
+if command -v launchctl >/dev/null 2>&1 && [ -f "$LAUNCH_AGENT_PLIST" ]; then
+  exec "$ROOT_DIR/scripts/install_console_launchagent.sh"
+fi
+
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/console-${PORT}.log"
 SESSION_NAME="opc-agent-suite-${PORT}"
 
 if command -v screen >/dev/null 2>&1; then
   screen -S "$SESSION_NAME" -X quit >/dev/null 2>&1 || true
-  screen -dmS "$SESSION_NAME" bash -lc "cd '$ROOT_DIR/Script-Generation' && exec env KESAI_APP_NO_OPEN=1 PYTHONUNBUFFERED=1 '$PYTHON_BIN' kesai_app.py >>'$LOG_FILE' 2>&1"
+  screen -dmS "$SESSION_NAME" bash -lc "cd '$ROOT_DIR/OPC-Console' && exec env KESAI_APP_NO_OPEN=1 PYTHONUNBUFFERED=1 '$PYTHON_BIN' kesai_app.py >>'$LOG_FILE' 2>&1"
 else
-  cd "$ROOT_DIR/Script-Generation"
+  cd "$ROOT_DIR/OPC-Console"
   nohup env KESAI_APP_NO_OPEN=1 PYTHONUNBUFFERED=1 \
     "$PYTHON_BIN" kesai_app.py >"$LOG_FILE" 2>&1 </dev/null &
 fi

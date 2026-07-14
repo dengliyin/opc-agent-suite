@@ -30,6 +30,41 @@ class CoreTests(unittest.TestCase):
         self.assertEqual([segment.target_duration for segment in segments], [9.5, 7.5])
         self.assertEqual(segments[1].audio_text, "第二段")
 
+    def test_prepare_project_keeps_active_tail_at_original_speed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            script_dir = root / "script"
+            script_dir.mkdir()
+            md_path = script_dir / "script.md"
+            source = script_dir / "片段1.mp4"
+            md_path.write_text("# Segment 1：0 - 5\n**[音频文案]** 完整口播\n", encoding="utf-8")
+            source.touch()
+            vendor_root = root / "vendor"
+            vendor_root.mkdir()
+            (vendor_root / "gsap.min.js").write_text("", encoding="utf-8")
+            item = core.ScriptItem(
+                model="omni",
+                date="2026-07-14",
+                product="产品",
+                script_dir=str(script_dir),
+                md_path=str(md_path),
+                video_paths=[str(source)],
+                output_path=str(root / "output.mp4"),
+                status="missing",
+            )
+            with (
+                patch.object(core, "WORK_ROOT", root / "work"),
+                patch.object(core, "VENDOR_ROOT", vendor_root),
+                patch.object(core, "media_duration", return_value=6.0),
+                patch.object(core, "tail_audio_is_active", return_value=True),
+            ):
+                project_dir, clips = core.prepare_project(item)
+                self.assertTrue((project_dir / "media" / "segment_01.mp4").exists())
+
+        self.assertEqual(clips[0]["duration"], 6.0)
+        self.assertEqual(clips[0]["action"], "keep_active_tail")
+        self.assertEqual(clips[0]["speed"], 1.0)
+
     def test_scan_classifies_all_four_states(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -138,8 +173,8 @@ class CoreTests(unittest.TestCase):
         self.assertNotIn("http://", html)
         self.assertNotIn("https://", html)
 
-    def test_sticker_options_support_three_styles_and_reject_invalid_text(self) -> None:
-        self.assertEqual(set(core.STICKER_STYLES), {"dark", "highlight", "outline"})
+    def test_sticker_options_support_four_styles_and_reject_invalid_text(self) -> None:
+        self.assertEqual(set(core.STICKER_STYLES), {"serif", "bubbly", "tiktok", "cinematic"})
         for style in core.STICKER_STYLES:
             options = core.normalize_sticker_options(
                 {"enabled": True, "text": "立即入手", "style": style, "position": "top", "timing": "full"}
@@ -151,6 +186,59 @@ class CoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "36"):
             core.normalize_sticker_options({"enabled": True, "text": "字" * 37})
 
+    def test_sticker_library_loads_presets_by_product_and_country(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "CAR-车载吸尘器.md").write_text(
+                "## 国家：英国 (UK)\n\n"
+                "### UK-001\n\n- 文案：Clean every corner\n- 中文释义：清洁每个角落\n\n"
+                "## 国家：法国 (FR)\n\n"
+                "### FR-001\n\n- 文案：Nettoyez chaque recoin\n- 中文释义：清洁每个缝隙\n",
+                encoding="utf-8",
+            )
+            library = core.load_sticker_library("CAR-车载吸尘器", root)
+            missing = core.load_sticker_library("不存在的产品", root)
+
+        self.assertTrue(library["available"])
+        self.assertEqual([country["code"] for country in library["countries"]], ["UK", "FR"])
+        self.assertEqual(library["countries"][1]["presets"][0]["text"], "Nettoyez chaque recoin")
+        self.assertEqual(library["countries"][1]["presets"][0]["translation"], "清洁每个缝隙")
+        self.assertFalse(missing["available"])
+
+    def test_sticker_library_selection_requires_one_product(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            report_path = Path(temporary) / "scan.json"
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "scan_id": "current",
+                        "items": [
+                            {"script_dir": "/one", "status": "missing", "product": "CAR-车载吸尘器"},
+                            {"script_dir": "/two", "status": "missing", "product": "CAR-车载吸尘器"},
+                            {"script_dir": "/three", "status": "missing", "product": "DRN-E99Pro无人机"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            loaded = {
+                "available": True,
+                "product": "CAR-车载吸尘器",
+                "path": "/library/CAR-车载吸尘器.md",
+                "countries": [{"name": "英国", "code": "UK", "presets": []}],
+            }
+            with (
+                patch.object(server.core, "REPORT_PATH", report_path),
+                patch.object(server.core, "load_sticker_library", return_value=loaded) as loader,
+            ):
+                library = server.sticker_library_for_selection("current", ["/one", "/two"])
+                mixed = server.sticker_library_for_selection("current", ["/one", "/three"])
+
+        loader.assert_called_once_with("CAR-车载吸尘器")
+        self.assertEqual(library["countries"][0]["code"], "UK")
+        self.assertFalse(mixed["available"])
+        self.assertIn("多个产品", mixed["reason"])
+
     def test_generated_composition_renders_escaped_timed_sticker(self) -> None:
         html = core.build_index_html(
             [{"duration": 5.0, "media_name": "segment_01.mp4"}],
@@ -158,7 +246,7 @@ class CoreTests(unittest.TestCase):
             sticker={
                 "enabled": True,
                 "text": "立即 <入手>",
-                "style": "highlight",
+                "style": "bubbly",
                 "position": "bottom",
                 "timing": "custom",
                 "start": 1,
@@ -168,7 +256,15 @@ class CoreTests(unittest.TestCase):
 
         self.assertIn('id="text-sticker"', html)
         self.assertIn('class="clip text-sticker-slot position-bottom"', html)
-        self.assertIn('class="text-sticker-body style-highlight"', html)
+        self.assertIn('class="text-sticker-body style-bubbly"', html)
+        for style in core.STICKER_STYLES:
+            self.assertIn(f".text-sticker-body.style-{style}", html)
+            block = re.search(rf"\.text-sticker-body\.style-{style} \{{(.*?)\n      \}}", html, re.S).group(1)
+            self.assertNotIn("background:", block)
+            self.assertNotIn("border:", block)
+            self.assertNotIn("box-shadow:", block)
+        self.assertIn('font-family: Georgia, "Songti SC", "STSong", serif', html)
+        self.assertIn('font-family: "TikTok Sans", "Avenir Next", "PingFang SC", Arial, sans-serif', html)
         self.assertIn('data-start="1.000" data-duration="2.500" data-track-index="7"', html)
         self.assertIn("data-layout-allow-occlusion", html)
         self.assertIn('src: local("PingFang SC")', html)
@@ -195,14 +291,59 @@ class CoreTests(unittest.TestCase):
                 confirmed, selected = server.confirmed_report(
                     "current",
                     ["/one"],
-                    {"enabled": True, "text": "新品上市", "style": "outline", "position": "center", "timing": "full"},
+                    {"enabled": True, "text": "新品上市", "style": "cinematic", "position": "center", "timing": "full"},
                 )
             persisted = json.loads(report_path.read_text(encoding="utf-8"))
 
-        self.assertEqual(selected[0]["sticker"]["style"], "outline")
+        self.assertEqual(selected[0]["sticker"]["style"], "cinematic")
         self.assertEqual(confirmed["items"][0]["sticker"]["text"], "新品上市")
         self.assertEqual(persisted["items"][0]["sticker"]["position"], "center")
         self.assertNotIn("sticker", persisted["items"][1])
+
+    def test_confirmation_randomizes_distinct_sticker_texts_per_video(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            report_path = Path(temporary) / "scan.json"
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "scan_id": "current",
+                        "items": [
+                            {"script_dir": "/one", "status": "missing", "product": "CAR-车载吸尘器"},
+                            {"script_dir": "/two", "status": "missing", "product": "CAR-车载吸尘器"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            library = {
+                "available": True,
+                "product": "CAR-车载吸尘器",
+                "path": "/library/CAR-车载吸尘器.md",
+                "countries": [
+                    {
+                        "name": "英国",
+                        "code": "UK",
+                        "presets": [
+                            {"id": "UK-001", "text": "Clean every corner", "translation": "清洁每个角落"},
+                            {"id": "UK-002", "text": "Crumbs disappear fast", "translation": "碎屑快速消失"},
+                        ],
+                    }
+                ],
+            }
+            with (
+                patch.object(server.core, "REPORT_PATH", report_path),
+                patch.object(server.core, "load_sticker_library", return_value=library),
+            ):
+                _, selected = server.confirmed_report(
+                    "current",
+                    ["/one", "/two"],
+                    {"enabled": True, "text": "preview", "style": "tiktok", "position": "top", "timing": "full"},
+                    "UK",
+                )
+
+        texts = [item["sticker"]["text"] for item in selected]
+        self.assertEqual(set(texts), {"Clean every corner", "Crumbs disappear fast"})
+        self.assertTrue(all(item["sticker"]["style"] == "tiktok" for item in selected))
 
     def test_scan_preserves_saved_sticker_settings(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -219,7 +360,7 @@ class CoreTests(unittest.TestCase):
                                 "sticker": {
                                     "enabled": True,
                                     "text": "限时优惠",
-                                    "style": "highlight",
+                                    "style": "serif",
                                     "position": "bottom",
                                     "timing": "full",
                                 },
@@ -247,16 +388,21 @@ class CoreTests(unittest.TestCase):
                 payload = server.scan_now()
 
         self.assertEqual(payload["items"][0]["sticker"]["text"], "限时优惠")
-        self.assertEqual(payload["items"][0]["sticker"]["style"], "highlight")
+        self.assertEqual(payload["items"][0]["sticker"]["style"], "serif")
 
     def test_ui_contract_includes_output_panel_and_modal_sticker_designer(self) -> None:
         html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
         javascript = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+        css = (ROOT / "static" / "styles.css").read_text(encoding="utf-8")
         ids = re.findall(r'\bid="([^"]+)"', html)
 
         self.assertEqual(len(ids), len(set(ids)))
         for required in (
             "stickerEnabled",
+            "stickerCountry",
+            "stickerPreset",
+            "stickerPresetTranslation",
+            "randomStickerBtn",
             "stickerText",
             "stickerStyleField",
             "stickerPositionField",
@@ -268,6 +414,11 @@ class CoreTests(unittest.TestCase):
             self.assertIn(required, ids)
             self.assertIn(required, javascript)
         self.assertEqual(set(re.findall(r'name="stickerStyle" value="([^"]+)"', html)), set(core.STICKER_STYLES))
+        for style in core.STICKER_STYLES:
+            preview = re.search(rf"\.stickerPreviewText\.preview-{style} \{{([^}}]+)\}}", css).group(1)
+            self.assertNotIn("background:", preview)
+            self.assertNotIn("border:", preview)
+            self.assertNotIn("box-shadow:", preview)
         self.assertGreater(html.index('id="stickerEnabled"'), html.index('id="confirmModal"'))
 
     def test_cleanup_keeps_script_marker_and_finished_video(self) -> None:

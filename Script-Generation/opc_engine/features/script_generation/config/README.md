@@ -13,7 +13,7 @@
 
 下面这些文件可以放在本目录里，但已被 `.gitignore` 忽略：
 
-- `inputs.json`：本机当前要跑的产品文档、竞品脚本、国家、语言、时长等输入。
+- `inputs.json`：本机当前要跑的产品文档、竞品脚本、时长和裂变选项等输入。
 - `model_settings.json`：本机 ModelMesh/Gemini API Key、Base URL、模型名等连接参数。
 - `imported_inputs/`：可视化界面选择本机 Markdown 后自动导入的任务输入副本，避免手动填写路径出错。
 - `*.local.json`：临时实验配置。

@@ -338,7 +338,7 @@ def daily_kpis_payload(date_value: str = "") -> dict[str, Any]:
     try:
         live_profiles = list_bitbrowser_profiles().get("profiles", [])
     except Exception as exc:
-        live_profiles = []
+        live_profiles = None
         warning = f"读取比特浏览器窗口失败，当前显示已保存账号和历史账号：{exc}"
 
     profiles_by_id: dict[str, dict[str, Any]] = {}
@@ -362,24 +362,25 @@ def daily_kpis_payload(date_value: str = "") -> dict[str, Any]:
         if profile_id not in profiles_by_id or live:
             profiles_by_id[profile_id] = row
 
-    for profile in live_profiles:
+    for profile in live_profiles or []:
         add_profile(str(profile.get("id", "")), profile, True)
-    for profile_id, account in (config.get("accounts") or {}).items():
-        if isinstance(account, dict):
-            add_profile(str(profile_id), account, False)
-    for record in records:
-        if not isinstance(record, dict):
-            continue
-        add_profile(
-            str(record.get("profile_id", "")),
-            {
-                "name": record.get("account_name", ""),
-                "country": record.get("country", ""),
-                "store_name": record.get("store_name", ""),
-                "account_type": record.get("account_type", ""),
-            },
-            False,
-        )
+    if live_profiles is None:
+        for profile_id, account in (config.get("accounts") or {}).items():
+            if isinstance(account, dict):
+                add_profile(str(profile_id), account, False)
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            add_profile(
+                str(record.get("profile_id", "")),
+                {
+                    "name": record.get("account_name", ""),
+                    "country": record.get("country", ""),
+                    "store_name": record.get("store_name", ""),
+                    "account_type": record.get("account_type", ""),
+                },
+                False,
+            )
 
     target = daily_kpi_target(config)
     result = build_daily_kpi_rows(list(profiles_by_id.values()), records, selected_date, target)
@@ -2438,7 +2439,7 @@ HTML = r"""<!doctype html>
       }).join('');
       if (bitProfiles.some(profile => profile.id === current)) select.value = current;
       onBitProfileChange();
-      setPublishStatus(`已读取 ${bitProfiles.length} 个比特浏览器窗口`, 'ok');
+      setPublishStatus(`已读取当前比特浏览器子账号可见的 ${bitProfiles.length} 个窗口`, 'ok');
     }
 
     function onBitProfileChange() {

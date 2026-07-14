@@ -100,35 +100,41 @@ def settings_for(tmp_path: Path) -> Settings:
     )
 
 
-def test_start_runs_multiple_jobs_for_same_agent_in_parallel(tmp_path: Path) -> None:
+def test_start_queues_multiple_jobs_for_same_agent_in_order(tmp_path: Path) -> None:
     manager = JobManager(settings_for(tmp_path))
     started = []
-    started_lock = threading.Lock()
-    both_started = threading.Event()
-    release = threading.Event()
+    first_started = threading.Event()
+    second_started = threading.Event()
+    release_first = threading.Event()
+    release_second = threading.Event()
 
     def blocking_pipeline(job_id: str) -> None:
-        with started_lock:
-            started.append(job_id)
-            if len(started) == 2:
-                both_started.set()
-        release.wait(timeout=3)
+        started.append(job_id)
+        if len(started) == 1:
+            first_started.set()
+            release_first.wait(timeout=3)
+        else:
+            second_started.set()
+            release_second.wait(timeout=3)
 
     manager._run_pipeline = blocking_pipeline
 
     first = manager.start("characters", overwrite=False, script_paths=["/tmp/a.md"], script_concurrency=2)
+    assert first_started.wait(timeout=2)
     second = manager.start("direct_videos", overwrite=False, script_paths=["/tmp/b.md"], script_concurrency=3)
 
-    assert both_started.wait(timeout=2)
     assert manager.get(first["id"])["status"] == "running"
-    assert manager.get(second["id"])["status"] == "running"
+    assert manager.get(second["id"])["status"] == "queued"
     assert first["queued_ahead"] == 0
-    assert first["parallel_jobs_at_start"] == 0
-    assert second["queued_ahead"] == 0
-    assert second["parallel_jobs_at_start"] == 1
-    assert any("并行执行" in entry["message"] for entry in manager.get(second["id"])["logs"])
+    assert second["queued_ahead"] == 1
+    assert not second_started.is_set()
+    assert any("已加入队列，前方 1 个任务" in entry["message"] for entry in manager.get(second["id"])["logs"])
 
-    release.set()
+    release_first.set()
+    assert second_started.wait(timeout=2)
+    assert started == [first["id"], second["id"]]
+    assert manager.get(second["id"])["status"] == "running"
+    release_second.set()
     deadline = time.time() + 2
     while time.time() < deadline:
         if manager.get(first["id"])["status"] == "completed" and manager.get(second["id"])["status"] == "completed":
@@ -136,6 +142,64 @@ def test_start_runs_multiple_jobs_for_same_agent_in_parallel(tmp_path: Path) -> 
         time.sleep(0.01)
     assert manager.get(first["id"])["status"] == "completed"
     assert manager.get(second["id"])["status"] == "completed"
+
+
+def test_cancel_removes_waiting_job_from_queue(tmp_path: Path) -> None:
+    manager = JobManager(settings_for(tmp_path))
+    first_started = threading.Event()
+    release_first = threading.Event()
+    started = []
+
+    def blocking_pipeline(job_id: str) -> None:
+        started.append(job_id)
+        first_started.set()
+        release_first.wait(timeout=3)
+
+    manager._run_pipeline = blocking_pipeline
+    first = manager.start("characters", script_paths=["/tmp/a.md"])
+    assert first_started.wait(timeout=2)
+    second = manager.start("characters", script_paths=["/tmp/b.md"])
+
+    canceled = manager.cancel(second["id"])
+
+    assert canceled[0]["status"] == "canceled"
+    assert any("已取消排队任务" in entry["message"] for entry in manager.get(second["id"])["logs"])
+    release_first.set()
+    deadline = time.time() + 2
+    while time.time() < deadline and manager.get(first["id"])["status"] != "completed":
+        time.sleep(0.01)
+    assert started == [first["id"]]
+
+
+def test_start_requires_and_records_product_sku_selection(tmp_path: Path) -> None:
+    settings = settings_for(tmp_path)
+    product_dir = settings.script_root / "LUX-轻奢戒指"
+    product_dir.mkdir(parents=True)
+    settings.reference_root.mkdir(parents=True)
+    first = settings.reference_root / "LUX-轻奢戒指-RG001.png"
+    second = settings.reference_root / "LUX-轻奢戒指-RG002.png"
+    first.write_bytes(b"image")
+    second.write_bytes(b"image")
+    md_path = product_dir / "script.md"
+    md_path.write_text(
+        "# Segment 1：00:00 - 00:10\n"
+        "## A. 人物造型参考板提示词\n人物\n"
+        "## B. 故事板图片提示词\n故事\n",
+        encoding="utf-8",
+    )
+    manager = JobManager(settings)
+    manager._submit_job = lambda _job_id: object()
+
+    with pytest.raises(ValueError, match="请先选择本次使用的 SKU"):
+        manager.start("storyboards", script_paths=[str(md_path)])
+
+    job = manager.start(
+        "storyboards",
+        script_paths=[str(md_path)],
+        reference_images={"LUX-轻奢戒指": str(second)},
+    )
+
+    assert job["reference_images"] == {"LUX-轻奢戒指": str(second.resolve())}
 
 
 def test_process_character_logs_progress_with_job_id(tmp_path: Path) -> None:

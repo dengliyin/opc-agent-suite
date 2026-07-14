@@ -1,6 +1,6 @@
 # OPC Agent Suite
 
-这是 OPC 本地控制台和 8 个独立 Agent 的可迁移副本。控制台运行在 `8888`，Agent 运行在 `9991` 到 `9998`。
+这是 OPC 独立本地控制台和 8 个独立 Agent 的可迁移副本。控制台运行在 `8888`，Agent 运行在 `9991` 到 `9998`。
 
 本目录是迁移改造区。原运行目录 `/Users/kesai1/Documents/带货视频产出` 没有被安装脚本修改，仍可继续提供当前服务。
 
@@ -8,7 +8,7 @@
 
 | 端口 | 目录 | 功能 |
 |---|---|---|
-| 8888 | `Script-Generation` | OPC 集合控制台 |
+| 8888 | `OPC-Console` | OPC 集合控制台 |
 | 9991 | `Video-Collection` | 视频采集 |
 | 9992 | `Script-Analysis` | 脚本解析 |
 | 9993 | `Script-Generation` | 脚本产出 |
@@ -51,6 +51,22 @@ export OPC_VIDEO_ASSEMBLY_RUNTIME_SOURCE="/path/to/Video-Assembly-hd/runtime"
 
 打开 `http://127.0.0.1:8888/`。其余 Agent 由控制台上的“启动/检测”按钮按需启动。
 
+### 让控制台在 macOS 常驻
+
+控制台需要调用宿主机上的 8 个独立 Agent，因此不单独放入 Docker。安装 LaunchAgent 后，`8888` 会在用户登录时自动启动，并在异常退出后自动拉起；`9991` 到 `9998` 仍按需启动：
+
+```bash
+./scripts/install_console_launchagent.sh
+```
+
+取消常驻：
+
+```bash
+./scripts/uninstall_console_launchagent.sh
+```
+
+本仓库位于 macOS 的 `Documents` 目录时，需要先在“系统设置 → 隐私与安全性 → 完全磁盘访问权限”中允许 `/bin/bash`，后台 LaunchAgent 才能读取并启动仓库文件。
+
 检查服务：
 
 ```bash
@@ -68,8 +84,8 @@ export OPC_VIDEO_ASSEMBLY_RUNTIME_SOURCE="/path/to/Video-Assembly-hd/runtime"
 
 ## 依赖策略
 
-- 所有 Agent 统一使用 Python 3.12。
-- 每个 Agent 保留独立 `.venv`，避免 Playwright、FastAPI 和视频工具相互污染。
+- 控制台和所有 Agent 统一使用 Python 3.12。
+- `OPC-Console` 和每个 Agent 均保留独立 `.venv`，避免控制台、Playwright、FastAPI 和视频工具相互污染。
 - 每个目录的 `requirements.lock.txt` 固定直接依赖和传递依赖版本。
 - `requirements.txt` 只转发到对应锁文件，旧安装命令也会得到相同版本。
 - `bootstrap_macos.sh` 负责一次性创建并验证全部环境。

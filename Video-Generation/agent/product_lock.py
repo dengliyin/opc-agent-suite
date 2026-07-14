@@ -51,7 +51,11 @@ def write_storyboard_product_lock_meta(
     storyboard_meta_path(storyboard_path).write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def has_current_storyboard_product_lock(storyboard_path: Path, product_name: Optional[str] = None) -> bool:
+def has_current_storyboard_product_lock(
+    storyboard_path: Path,
+    product_name: Optional[str] = None,
+    product_reference: Optional[Path] = None,
+) -> bool:
     if not storyboard_path.exists():
         return False
     meta_path = storyboard_meta_path(storyboard_path)
@@ -64,5 +68,7 @@ def has_current_storyboard_product_lock(storyboard_path: Path, product_name: Opt
     if metadata.get("product_lock_version") != PRODUCT_LOCK_VERSION:
         return False
     if product_name and metadata.get("product_name") != product_name:
+        return False
+    if product_reference and Path(str(metadata.get("product_reference") or "")).resolve() != product_reference.resolve():
         return False
     return True
