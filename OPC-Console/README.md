@@ -40,7 +40,7 @@ OPC Agent Suite 的独立总控制台，默认运行在 `http://127.0.0.1:8888/`
 
 LaunchAgent 只常驻 `8888`，不会自动启动 `9991–9998`；Agent 仍由控制台按需启动。
 
-如果仓库位于 macOS 受保护的 `Documents` 目录，需要先在“系统设置 → 隐私与安全性 → 完全磁盘访问权限”中加入并允许 `/bin/bash`。否则 LaunchAgent 会收到 `Operation not permitted`，安装脚本会自动卸载失败服务，避免反复重启。
+LaunchAgent 直接使用控制台的 Python 环境加载 `.env` 并启动服务，因此不需要为 `/bin/bash` 授予 Documents 访问权限。
 
 ## 当前职责
 

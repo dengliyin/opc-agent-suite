@@ -8,14 +8,15 @@ DOMAIN="gui/$(id -u)"
 PLIST_DIR="$HOME/Library/LaunchAgents"
 PLIST_PATH="$PLIST_DIR/$LABEL.plist"
 TEMPLATE_PATH="$ROOT_DIR/scripts/launchd/$LABEL.plist.template"
-RUNNER_PATH="$ROOT_DIR/scripts/run_console_foreground.sh"
+PYTHON_PATH="$ROOT_DIR/OPC-Console/.venv/bin/python"
+LAUNCHER_PATH="$ROOT_DIR/scripts/run_console_foreground.py"
 LOG_DIR="$ROOT_DIR/.runtime/logs"
 
 if [ ! -f "$ENV_FILE" ]; then
   echo "Missing $ENV_FILE. Run scripts/bootstrap_macos.sh first." >&2
   exit 1
 fi
-if [ ! -x "$ROOT_DIR/OPC-Console/.venv/bin/python" ]; then
+if [ ! -x "$PYTHON_PATH" ]; then
   echo "Missing OPC-Console virtual environment. Run scripts/bootstrap_macos.sh first." >&2
   exit 1
 fi
@@ -45,14 +46,14 @@ sed_escape() {
   printf '%s' "$1" | sed 's/[&|]/\\&/g'
 }
 
-root_escaped="$(sed_escape "$ROOT_DIR")"
-runner_escaped="$(sed_escape "$RUNNER_PATH")"
+python_escaped="$(sed_escape "$PYTHON_PATH")"
+launcher_escaped="$(sed_escape "$LAUNCHER_PATH")"
 stdout_escaped="$(sed_escape "$LOG_DIR/console-launchd.out.log")"
 stderr_escaped="$(sed_escape "$LOG_DIR/console-launchd.err.log")"
 
 sed \
-  -e "s|__ROOT__|$root_escaped|g" \
-  -e "s|__RUNNER__|$runner_escaped|g" \
+  -e "s|__PYTHON__|$python_escaped|g" \
+  -e "s|__LAUNCHER__|$launcher_escaped|g" \
   -e "s|__STDOUT__|$stdout_escaped|g" \
   -e "s|__STDERR__|$stderr_escaped|g" \
   "$TEMPLATE_PATH" > "$PLIST_PATH"
@@ -79,5 +80,4 @@ tail -n 60 "$LOG_DIR/console-launchd.err.log" >&2 || true
 launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
 rm -f "$PLIST_PATH"
 echo "The failed LaunchAgent was removed to prevent a restart loop." >&2
-echo "If the repository is under Documents, grant /bin/bash Full Disk Access and rerun this installer." >&2
 exit 1
