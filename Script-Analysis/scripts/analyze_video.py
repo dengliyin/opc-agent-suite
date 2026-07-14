@@ -14,8 +14,8 @@ from pathlib import Path
 
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_SETTINGS_PATH = SKILL_ROOT / "config" / "settings.local.json"
-DEFAULT_EXAMPLE_SETTINGS_PATH = SKILL_ROOT / "config" / "settings.example.json"
+DEFAULT_SETTINGS_PATH = SKILL_ROOT / "config" / "settings.json"
+DEFAULT_SECRETS_PATH = SKILL_ROOT / "config" / "settings.local.json"
 
 
 def log(message):
@@ -24,16 +24,20 @@ def log(message):
 
 def load_settings(path):
     if not path.exists():
-        raise SystemExit(
-            f"缺少配置文件: {path}\n"
-            f"请复制 {DEFAULT_EXAMPLE_SETTINGS_PATH} 为 {DEFAULT_SETTINGS_PATH} 并填写 api_key。"
-        )
+        raise SystemExit(f"缺少配置文件: {path}")
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise SystemExit(f"配置文件 JSON 格式错误: {path}\n{exc}") from exc
     if not isinstance(data, dict):
         raise SystemExit(f"配置文件必须是 JSON object: {path}")
+    if path == DEFAULT_SETTINGS_PATH and DEFAULT_SECRETS_PATH.exists():
+        try:
+            local_settings = json.loads(DEFAULT_SECRETS_PATH.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"配置文件 JSON 格式错误: {DEFAULT_SECRETS_PATH}\n{exc}") from exc
+        if isinstance(local_settings, dict) and local_settings.get("api_key"):
+            data["api_key"] = local_settings["api_key"]
     return data
 
 
@@ -234,7 +238,7 @@ def analyze_one_video(video_path, settings, args, prompt, output_dir):
 def parse_args():
     parser = argparse.ArgumentParser(description="Use Script-Analysis local config to analyze MP4/MOV videos.")
     parser.add_argument("input", help="本地视频文件，或包含 MP4/MOV/M4V 的文件夹")
-    parser.add_argument("--settings", default=str(DEFAULT_SETTINGS_PATH), help="智能体本地配置文件")
+    parser.add_argument("--settings", default=str(DEFAULT_SETTINGS_PATH), help="智能体共享配置文件")
     parser.add_argument("--output-dir", default="", help="输出目录；留空则使用 settings.output_dir 下的本次运行目录")
     parser.add_argument("--api-key", default="", help="临时覆盖 api_key，不建议写入命令历史")
     parser.add_argument("--base-url", default="", help="临时覆盖 base_url")
