@@ -19,8 +19,9 @@ Do not read prompt, knowledge-base, API, model, or output-contract configuration
 
 ```text
 config/
-  settings.local.json              # local private API/model/runtime config
-  settings.example.json            # commented example config
+  settings.json                    # shared API endpoint/model/runtime config
+  settings.local.json              # local private API key only
+  settings.local.example.json      # API key template
   video_teardown_prompt.md         # video teardown prompt
   hot_content_knowledge_base.md    # teardown knowledge base
 references/
@@ -38,7 +39,7 @@ outputs/
   <run_timestamp>/                 # default teardown outputs
 ```
 
-`settings.local.json` is private. Do not print its API key. If the user gives a new API key, write it there and keep file permissions private.
+`settings.local.json` is private and stores only the API key. Do not print its API key. Shared Base URL, model, and runtime settings belong in tracked `settings.json`.
 
 ## Operating Principles
 
@@ -80,13 +81,14 @@ For a folder:
 The runner reads:
 
 ```text
+config/settings.json
 config/settings.local.json
 config/video_teardown_prompt.md
 config/hot_content_knowledge_base.md
 references/teardown-output-contract.md
 ```
 
-The default model is `google/gemini-3-flash`, configured in `config/settings.local.json`.
+The default model is `gemini-3.5-flash`, configured in tracked `config/settings.json`.
 
 The web UI must still call `scripts/analyze_video.py`; do not duplicate model-call logic in browser JavaScript.
 
@@ -94,13 +96,13 @@ The web UI must still call `scripts/analyze_video.py`; do not duplicate model-ca
 
 Before running, confirm internally that these files exist:
 
-- `config/settings.local.json`
+- `config/settings.json`
 - `config/video_teardown_prompt.md`
 - `config/hot_content_knowledge_base.md`
 - `references/teardown-output-contract.md`
 - `scripts/analyze_video.py`
 
-If `settings.local.json` is missing, create it from `config/settings.example.json` and fill local values. Keep all explanatory comments as `_说明` / `_字段说明` fields because JSON does not support comments.
+If `settings.local.json` is missing, create it from `config/settings.local.example.json` and fill only the API key. Keep shared non-secret settings in `config/settings.json` so they synchronize through Git.
 
 If the user says “this file is the prompt” or “this file is the knowledge base,” copy that file into the matching `config/` filename:
 

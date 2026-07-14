@@ -18,8 +18,9 @@
 
 ```text
 config/
-  settings.example.json
-  settings.local.json          # 本地私有配置，不提交
+  settings.json                # Base URL、模型和运行参数，提交到 Git
+  settings.local.example.json
+  settings.local.json          # 仅保存 API Key，本地私有配置，不提交
   paths.example.json
   paths.local.json             # 本地业务目录配置，不提交
   video_teardown_prompt.md
@@ -44,13 +45,13 @@ logs/                          # 本地日志，不提交
 
 ## 配置
 
-复制示例配置并填写自己的 API key：
+共享的 Base URL、模型和运行参数保存在 `config/settings.json`，随 Git 同步。每台电脑只需复制密钥配置并填写自己的 API Key：
 
 ```bash
-cp config/settings.example.json config/settings.local.json
+cp config/settings.local.example.json config/settings.local.json
 ```
 
-`settings.local.json` 只保存在本地，不要提交。
+也可以直接在 Web 界面填写 API Key。`settings.local.json` 只保存在本地，不要提交；网页中修改的其他模型参数会写入 `settings.json`，应正常提交。
 
 ## 启动 Web 界面
 

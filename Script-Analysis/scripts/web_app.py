@@ -20,7 +20,8 @@ WEB_ROOT = SKILL_ROOT / "web"
 CONFIG_DIR = SKILL_ROOT / "config"
 INPUTS_DIR = SKILL_ROOT / "inputs"
 OUTPUTS_DIR = SKILL_ROOT / "outputs"
-SETTINGS_PATH = CONFIG_DIR / "settings.local.json"
+SETTINGS_PATH = CONFIG_DIR / "settings.json"
+SECRETS_PATH = CONFIG_DIR / "settings.local.json"
 PATHS_PATH = CONFIG_DIR / "paths.local.json"
 ANALYZE_SCRIPT = SKILL_ROOT / "scripts" / "analyze_video.py"
 DEFAULT_VIDEO_SCAN_DIR = INPUTS_DIR
@@ -489,7 +490,7 @@ def cleanup_non_markdown_outputs(output_dir):
 
 def masked_settings():
     settings = read_json(SETTINGS_PATH)
-    api_key = str(settings.get("api_key") or "")
+    api_key = str(read_json(SECRETS_PATH).get("api_key") or "")
     return {
         "base_url": settings.get("base_url", ""),
         "model": settings.get("model", ""),
@@ -516,10 +517,14 @@ def update_settings(payload):
     for key in allowed_float:
         if key in payload and str(payload.get(key)).strip():
             settings[key] = float(payload[key])
+    settings.pop("api_key", None)
+    write_json(SETTINGS_PATH, settings)
+
     api_key = str(payload.get("api_key") or "").strip()
     if api_key:
-        settings["api_key"] = api_key
-    write_json(SETTINGS_PATH, settings)
+        secrets = read_json(SECRETS_PATH)
+        secrets["api_key"] = api_key
+        write_json(SECRETS_PATH, secrets)
 
 
 def set_job(job_id, **values):
@@ -798,7 +803,7 @@ class AgentHandler(SimpleHTTPRequestHandler):
                 return
             if path == "/api/file":
                 target = resolve_skill_file((query.get("path") or [""])[0])
-                if target == SETTINGS_PATH:
+                if target == SECRETS_PATH:
                     self.send_json({"error": "私有配置文件不允许预览"}, 403)
                     return
                 content_type = mimetypes.guess_type(str(target))[0] or "text/plain"

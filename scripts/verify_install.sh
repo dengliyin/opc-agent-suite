@@ -39,6 +39,7 @@ done
 "$ROOT_DIR/Video-Assembly-hd/.venv/bin/python" -m compileall -q "$ROOT_DIR/Video-Assembly-hd/app"
 
 (cd "$ROOT_DIR/OPC-Console" && .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -q)
+(cd "$ROOT_DIR/Script-Analysis" && .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -q)
 (cd "$ROOT_DIR/Script-Generation" && .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -q)
 (cd "$ROOT_DIR/Finished-Video-Manager" && .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -q)
 (cd "$ROOT_DIR/Video-Generation" && .venv/bin/python -m pytest -q)
