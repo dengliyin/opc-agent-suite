@@ -1,6 +1,6 @@
 # Omni 片段产出 Agent
 
-本地 Web agent，用按钮控制批量任务，并调用 OTU 的图片模型与 `omni_flash-10s` 生成图片和视频。图片默认优先尝试 `image-4k`，不可用时降级到 `image2`。
+本地 Web agent，用按钮控制批量任务，并调用 OTU 与 RunningHub 的图片、视频模型生成素材。共享的 Base URL、模型和生成参数由仓库统一配置。
 
 ## 启动
 
@@ -51,9 +51,9 @@ python3 -m venv .venv
 
 ## 配置
 
-复制 `.env.example` 为 `.env`，填写 `OTU_API_KEY`。
+共享的 Base URL、模型和生成参数保存在 `agent_settings.env`，随 Git 同步。复制 `.env.example` 为 `.env`，只填写 `OTU_API_KEY`、`GROK_API_KEY` 和必要的本机路径。
 
-`.env` 已被 `.gitignore` 忽略，后端日志会隐藏密钥。
+网页保存的模型与生成参数会写入 `agent_settings.env`，应正常提交；API Key 和本机路径写入 `.env`。`.env` 已被 `.gitignore` 忽略，后端日志会隐藏密钥。
 
 ## 输出
 

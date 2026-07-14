@@ -101,18 +101,20 @@ OPC_SKIP_PLAYWRIGHT_BROWSER_INSTALL=1 ./scripts/bootstrap_macos.sh
 可以进入 Git：
 
 - Python、HTML、CSS、JavaScript 源码。
-- 提示词、知识库和不含业务数据的示例配置。
+- 提示词、知识库和不含密钥的共享配置，包括 Base URL、模型、端口和运行参数。
 - `requirements.lock.txt`、安装脚本和文档。
 - `Video-Assembly-hd/vendor/gsap.min.js`。
 
 不能进入 Git：
 
-- `.env`、API Key、FastMoss 密码和本机 `*.local.json`。
+- `.env`、API Key、Token、登录账号密码和本机 `*.local.json`。
 - Vault 内容、视频、图片、日志、SQLite、浏览器 profile 和运行输出。
 - 各 Agent 的 `.venv`。
 - `Video-Assembly-hd/runtime`。该目录约 832 MB，并包含超过 GitHub 单文件限制的二进制。
 
 Vault 根目录统一由 `OPC_VAULT_ROOT` 提供。代码中不再依赖固定用户名路径。
+
+模型配置统一规则：视频拆解使用 `Script-Analysis/config/settings.json`，脚本产出使用 `Script-Generation/opc_engine/features/script_generation/config/model_defaults.json`，脚本适配和产品脚本改写使用各自的 `agent_settings.json`，视频生成使用 `Video-Generation/agent_settings.env`。这些文件随 Git 同步；另一台电脑只需填写各 Agent 的 API Key 和本机路径。
 
 ## 9998 离线运行时
 

@@ -33,6 +33,7 @@ from opc_engine.features.script_generation.generate_product_script import (
     LOCAL_INPUTS_PATH,
     LOCAL_MODEL_SETTINGS_PATH,
     ROOT,
+    SHARED_MODEL_SETTINGS_PATH,
     apply_cli_overrides,
     get_api_key,
     get_reference_path,
@@ -289,7 +290,7 @@ def library_payload(config: dict[str, Any] | None = None) -> dict[str, Any]:
 
 def state_payload() -> dict[str, Any]:
     inputs = read_json_config(LOCAL_INPUTS_PATH)
-    model = read_json_config(LOCAL_MODEL_SETTINGS_PATH)
+    model = read_json_config(SHARED_MODEL_SETTINGS_PATH)
     config = load_script_generation_config()
     prompt_path = resolve_root_path(config.get("script_generation_prompt_path") or DEFAULT_PROMPT_PATH)
     mutation_prompt_path = resolve_root_path(config.get("script_generation_mutation_prompt_path") or DEFAULT_MUTATION_PROMPT_PATH)
@@ -336,7 +337,7 @@ def state_payload() -> dict[str, Any]:
             "feature_dir": display_path(FEATURE_DIR),
             "config_dir": display_path(CONFIG_DIR),
             "inputs": display_path(LOCAL_INPUTS_PATH),
-            "model_settings": display_path(LOCAL_MODEL_SETTINGS_PATH),
+            "model_settings": display_path(SHARED_MODEL_SETTINGS_PATH),
         },
         "files": {
             "prompt": file_stat(prompt_path),
@@ -377,14 +378,15 @@ def save_state(payload: dict[str, Any]) -> dict[str, Any]:
         inputs["script_reference_analysis_path"] = reference_path
         inputs["script_reference_script_path"] = ""
 
-    model_existing = read_json_config(LOCAL_MODEL_SETTINGS_PATH)
+    model_existing = read_json_config(SHARED_MODEL_SETTINGS_PATH)
+    local_secrets = read_json_config(LOCAL_MODEL_SETTINGS_PATH)
     model: dict[str, Any] = {}
     for key in MODEL_KEYS:
         if key in payload:
             value = payload.get(key)
-            if key == "modelmesh_api_key" and not str(value or "").strip():
-                if model_existing.get(key):
-                    model[key] = model_existing[key]
+            if key == "modelmesh_api_key":
+                if str(value or "").strip():
+                    local_secrets = {"modelmesh_api_key": str(value).strip()}
                 continue
             if key in {"script_generation_timeout", "script_generation_max_output_tokens"}:
                 model[key] = int(value or (DEFAULT_TIMEOUT if key.endswith("timeout") else DEFAULT_MAX_OUTPUT_TOKENS))
@@ -435,7 +437,9 @@ def save_state(payload: dict[str, Any]) -> dict[str, Any]:
     merged_model = model_existing
     merged_model.update(model)
     write_json_file(LOCAL_INPUTS_PATH, merged_inputs, "脚本生成智能体本地输入配置。由可视化界面保存，已被 .gitignore 忽略。")
-    write_json_file(LOCAL_MODEL_SETTINGS_PATH, merged_model, "脚本生成智能体本地模型配置。请勿提交真实 API Key。")
+    write_json_file(SHARED_MODEL_SETTINGS_PATH, merged_model, "脚本生成智能体共享模型配置。除 API Key 外应提交到 Git。")
+    if local_secrets.get("modelmesh_api_key"):
+        write_json_file(LOCAL_MODEL_SETTINGS_PATH, {"modelmesh_api_key": local_secrets["modelmesh_api_key"]}, "脚本生成智能体本地 API Key。请勿提交。")
     return state_payload()
 
 
@@ -1591,9 +1595,9 @@ HTML_PAGE = r"""<!doctype html>
         <label>API Key</label>
         <input id="apiKey" type="password" placeholder="留空则保留本地已保存密钥或使用环境变量" />
         <label>Base URL</label>
-        <input id="baseUrl" placeholder="https://router.shengsuanyun.com/api" />
+        <input id="baseUrl" placeholder="https://api.deepseek.com" />
         <label>模型</label>
-        <input id="modelName" placeholder="google/gemini-3-flash" />
+        <input id="modelName" placeholder="deepseek-v4-pro" />
         <div class="grid2">
           <div>
             <label>超时秒数</label>
@@ -2022,8 +2026,8 @@ HTML_PAGE = r"""<!doctype html>
       $('enableMutation').checked = isTruthy(inputs.script_enable_mutation_rewrite);
       $('mutationVariants').value = inputs.script_mutation_variants || 3;
       $('outputDir').value = inputs.output_dir || outputDirForProduct($('productDoc').value);
-      $('baseUrl').value = model.modelmesh_base_url || 'https://router.shengsuanyun.com/api';
-      $('modelName').value = model.script_generation_model || 'google/gemini-3-flash';
+      $('baseUrl').value = model.modelmesh_base_url || 'https://api.deepseek.com';
+      $('modelName').value = model.script_generation_model || 'deepseek-v4-pro';
       $('timeout').value = model.script_generation_timeout || 240;
       $('maxTokens').value = model.script_generation_max_output_tokens || 32768;
       const files = data.files || {};

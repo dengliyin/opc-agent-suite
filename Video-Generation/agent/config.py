@@ -11,9 +11,11 @@ from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ENV_PATH = PROJECT_ROOT / ".env"
+SETTINGS_PATH = PROJECT_ROOT / "agent_settings.env"
 
 
 load_dotenv(ENV_PATH)
+load_dotenv(SETTINGS_PATH, override=True)
 
 
 DEFAULT_VAULT_ROOT = Path(
@@ -181,6 +183,7 @@ class Settings:
 
 
 def load_settings(provider: str = "omni") -> Settings:
+    load_dotenv(SETTINGS_PATH, override=True)
     provider = provider.strip().lower()
     if provider not in {"omni", "grok"}:
         raise ValueError(f"未知 provider：{provider}")
