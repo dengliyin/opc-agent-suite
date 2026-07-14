@@ -65,7 +65,7 @@ export OPC_VIDEO_ASSEMBLY_RUNTIME_SOURCE="/path/to/Video-Assembly-hd/runtime"
 ./scripts/uninstall_console_launchagent.sh
 ```
 
-本仓库位于 macOS 的 `Documents` 目录时，需要先在“系统设置 → 隐私与安全性 → 完全磁盘访问权限”中允许 `/bin/bash`，后台 LaunchAgent 才能读取并启动仓库文件。
+LaunchAgent 直接通过控制台的 Python 环境启动，不依赖 `/bin/bash` 读取 `Documents` 中的脚本。
 
 检查服务：
 

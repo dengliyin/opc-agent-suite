@@ -752,6 +752,48 @@ def build_index_html(
         font-style: normal;
         font-weight: 400 900;
       }}
+      @font-face {{
+        font-family: "Songti SC";
+        src: local("Songti SC");
+        font-style: normal;
+        font-weight: 400 900;
+      }}
+      @font-face {{
+        font-family: "STSong";
+        src: local("STSong");
+        font-style: normal;
+        font-weight: 400 900;
+      }}
+      @font-face {{
+        font-family: "Arial Rounded MT Bold";
+        src: local("Arial Rounded MT Bold");
+        font-style: normal;
+        font-weight: 400 900;
+      }}
+      @font-face {{
+        font-family: "PingFang SC";
+        src: local("PingFang SC");
+        font-style: normal;
+        font-weight: 400 900;
+      }}
+      @font-face {{
+        font-family: "TikTok Sans";
+        src: local("TikTok Sans");
+        font-style: normal;
+        font-weight: 400 900;
+      }}
+      @font-face {{
+        font-family: "Avenir Next Condensed";
+        src: local("Avenir Next Condensed");
+        font-style: normal;
+        font-weight: 400 900;
+      }}
+      @font-face {{
+        font-family: "Arial Narrow";
+        src: local("Arial Narrow");
+        font-style: normal;
+        font-weight: 400 900;
+      }}
       html, body {{
         margin: 0;
         width: 100%;
