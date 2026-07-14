@@ -45,6 +45,15 @@ class ConsoleBoundaryTests(unittest.TestCase):
         expected = WORKSPACE_ROOT / "Script-Generation" / ".venv" / "bin" / "python"
         self.assertEqual(Path(command[0]), expected)
 
+    def test_double_click_launcher_bootstraps_missing_environment(self):
+        launcher = (WORKSPACE_ROOT / "启动OPC集合控制台.command").read_text(encoding="utf-8")
+        bootstrap = launcher.index('"$ROOT_DIR/scripts/bootstrap_macos.sh"')
+        start = launcher.index('"$ROOT_DIR/scripts/start_console.sh"')
+
+        self.assertIn('! -f "$ROOT_DIR/.env"', launcher)
+        self.assertIn('! -x "$ROOT_DIR/OPC-Console/.venv/bin/python"', launcher)
+        self.assertLess(bootstrap, start)
+
 
 if __name__ == "__main__":
     unittest.main()
