@@ -3,6 +3,11 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${OPC_ENV_FILE:-${ROOT_DIR}/.env}"
+CONSOLE_LAUNCHD_LABEL="com.kesai.opc-console"
+
+if command -v launchctl >/dev/null 2>&1; then
+  launchctl bootout "gui/$(id -u)/$CONSOLE_LAUNCHD_LABEL" >/dev/null 2>&1 || true
+fi
 
 if [ -f "$ENV_FILE" ]; then
   set -a
@@ -11,7 +16,7 @@ if [ -f "$ENV_FILE" ]; then
   set +a
 fi
 
-PORTS="$($ROOT_DIR/Script-Generation/.venv/bin/python - <<'PY'
+PORTS="$($ROOT_DIR/OPC-Console/.venv/bin/python - <<'PY'
 import os
 from urllib.parse import urlparse
 
@@ -33,7 +38,8 @@ PY
 for port in $PORTS; do
   for pid in $(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true); do
     command_line="$(ps -p "$pid" -o command= 2>/dev/null || true)"
-    if [[ "$command_line" == *"$ROOT_DIR"* ]]; then
+    process_cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)"
+    if [[ "$command_line" == *"$ROOT_DIR"* || "$process_cwd" == "$ROOT_DIR" || "$process_cwd" == "$ROOT_DIR/"* ]]; then
       echo "Stopping isolated suite process $pid on port $port"
       kill "$pid" 2>/dev/null || true
     else
@@ -41,4 +47,3 @@ for port in $PORTS; do
     fi
   done
 done
-

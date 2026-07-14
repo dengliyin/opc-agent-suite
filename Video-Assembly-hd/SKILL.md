@@ -35,8 +35,11 @@ The right-side run panel contains the always-visible text sticker controls; the 
 
 Sticker rules:
 
-- manual text only, up to 36 characters and two rendered lines
-- three styles: `dark` (黑底白字), `highlight` (黄底黑字), and `outline` (白字描边)
+- load optional text presets by selected product and sales country from `wiki/视频/视频文字标签贴纸库`, or allow manual text input
+- preset selection fills only the sticker text; style, position, and timing remain manual
+- random assignment gives each selected video a separately shuffled text from the chosen product and country; avoid repeats until the pool is exhausted
+- up to 36 characters and two rendered lines
+- four styles: `serif` (粗体衬线), `bubbly` (气泡卡通), `tiktok` (TikTok Sans), and `cinematic` (电影字幕)
 - positions: top, center, or bottom within the TikTok-safe center column
 - timing: full video or a custom range of at least 0.4 seconds
 - dynamic font sizing and a short deterministic GSAP entrance/exit animation

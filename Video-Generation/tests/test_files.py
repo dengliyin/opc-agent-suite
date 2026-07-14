@@ -5,6 +5,7 @@ from agent.files import (
     character_image_path,
     export_marker_path,
     find_product_reference,
+    find_product_references,
     image_output_current,
     scan_scripts,
     script_to_dict,
@@ -59,6 +60,35 @@ def test_reference_matching_and_output_names(tmp_path: Path) -> None:
     assert character_image_path(md_path, 2, grok_settings.artifact_prefix).name == "demo-片段2-人物图.png"
     assert storyboard_image_path(md_path, 2, grok_settings.artifact_prefix).name == "demo-片段2-故事版.png"
     assert video_output_path(grok_settings, "SIMC染发棒", md_path, 2).name == "demo-片段2-grok.mp4"
+
+
+def test_reference_matching_returns_all_product_skus(tmp_path: Path) -> None:
+    reference_root = tmp_path / "refs"
+    reference_root.mkdir()
+    first = reference_root / "LUX-轻奢戒指-RG001-银色六爪.png"
+    second = reference_root / "LUX-轻奢戒指-RG002-玫瑰金排钻.jpg"
+    unrelated = reference_root / "LUX-轻奢项链-NK001.png"
+    for path in [first, second, unrelated]:
+        path.write_bytes(b"image")
+
+    assert find_product_references(reference_root, "LUX-轻奢戒指") == [first, second]
+
+
+def test_scan_scripts_requires_selection_when_product_has_multiple_references(tmp_path: Path) -> None:
+    settings = settings_for(tmp_path)
+    product_dir = settings.script_root / "LUX-轻奢戒指"
+    product_dir.mkdir(parents=True)
+    settings.reference_root.mkdir(parents=True)
+    first = settings.reference_root / "LUX-轻奢戒指-RG001.png"
+    second = settings.reference_root / "LUX-轻奢戒指-RG002.png"
+    first.write_bytes(b"image")
+    second.write_bytes(b"image")
+    (product_dir / "script.md").write_text("# Segment 1\n", encoding="utf-8")
+
+    script = scan_scripts(settings)[0]
+
+    assert script.reference_image is None
+    assert script.reference_images == (first, second)
 
 
 def test_scan_scripts_reads_product_md(tmp_path: Path) -> None:

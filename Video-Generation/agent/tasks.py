@@ -39,18 +39,10 @@ class JobCancelled(Exception):
     pass
 
 
-class _ThreadHandle:
-    def __init__(self, thread: threading.Thread) -> None:
-        self._thread = thread
-
-    def cancel(self) -> bool:
-        return False
-
-
 class JobManager:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self._executor: Optional[Any] = None
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"{settings.provider}-job-queue")
         self._lock = threading.Lock()
         self._jobs: Dict[str, Dict[str, Any]] = {}
         self._job_order: List[str] = []
@@ -62,11 +54,18 @@ class JobManager:
         overwrite: Optional[bool] = None,
         script_paths: Optional[List[str]] = None,
         script_concurrency: Optional[int] = None,
+        reference_images: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         if stage not in VALID_STAGES:
             raise ValueError(f"未知任务阶段：{stage}")
 
         selected_scripts = _normalize_script_paths(script_paths)
+        selected_references = _normalize_reference_images(reference_images)
+        if stage != "characters":
+            scripts = scan_scripts(self.settings)
+            if selected_scripts is not None:
+                scripts = [script for script in scripts if script.md_path.resolve() in selected_scripts]
+            _bind_script_references(scripts, selected_references, require_selection=True)
         selected_concurrency = _normalize_script_concurrency(script_concurrency, self.settings.script_concurrency)
         job_id = uuid.uuid4().hex[:12]
         now = time.time()
@@ -75,8 +74,9 @@ class JobManager:
             "stage": stage,
             "overwrite": self.settings.overwrite if overwrite is None else bool(overwrite),
             "script_paths": sorted(str(path) for path in selected_scripts) if selected_scripts is not None else None,
+            "reference_images": {key: str(path) for key, path in selected_references.items()},
             "script_concurrency": selected_concurrency,
-            "status": "running",
+            "status": "queued",
             "cancel_requested": False,
             "created_at": now,
             "started_at": None,
@@ -91,24 +91,21 @@ class JobManager:
             "result": None,
         }
         with self._lock:
-            parallel_jobs_at_start = sum(1 for item in self._jobs.values() if item.get("status") in {"queued", "running"})
-            job["queued_ahead"] = 0
-            job["parallel_jobs_at_start"] = parallel_jobs_at_start
+            queued_ahead = sum(1 for item in self._jobs.values() if item.get("status") in {"queued", "running"})
+            job["queued_ahead"] = queued_ahead
             self._jobs[job_id] = job
             self._job_order.append(job_id)
-        if parallel_jobs_at_start:
-            self._log(job_id, "info", f"任务已启动，将与当前 {parallel_jobs_at_start} 个任务并行执行")
+        if queued_ahead:
+            self._log(job_id, "info", f"任务已加入队列，前方 {queued_ahead} 个任务")
+        else:
+            self._log(job_id, "info", "任务已加入队列，等待调度")
         future = self._submit_job(job_id)
         with self._lock:
             self._futures[job_id] = future
         return self.get(job_id)
 
     def _submit_job(self, job_id: str) -> Any:
-        if self._executor is not None:
-            return self._executor.submit(self._run, job_id)
-        thread = threading.Thread(target=self._run, args=(job_id,), name=f"{self.settings.provider}-job-{job_id}", daemon=True)
-        thread.start()
-        return _ThreadHandle(thread)
+        return self._executor.submit(self._run, job_id)
 
     def cancel(self, job_id: Optional[str] = None) -> List[Dict[str, Any]]:
         now = time.time()
@@ -131,7 +128,11 @@ class JobManager:
                     break
 
         for target_id in target_ids:
-            self._log(target_id, "info", "已请求停止任务：当前 API 调用返回后不会继续处理后续片段")
+            target = self.get(target_id)
+            if target.get("started_at") is None:
+                self._log(target_id, "info", "已取消排队任务")
+            else:
+                self._log(target_id, "info", "已请求停止任务：当前 API 调用返回后不会继续处理后续片段")
         return [self.get(target_id) for target_id in target_ids]
 
     def update_concurrency(self, script_concurrency: int, job_id: Optional[str] = None) -> Dict[str, Any]:
@@ -211,7 +212,13 @@ class JobManager:
         stage = job["stage"]
         overwrite = job["overwrite"]
         selected_scripts = _normalize_script_paths(job.get("script_paths"))
+        selected_references = _normalize_reference_images(job.get("reference_images"))
         scripts = scan_scripts(self.settings)
+        if selected_scripts is not None:
+            scripts = [script for script in scripts if script.md_path.resolve() in selected_scripts]
+            if not scripts:
+                raise ValueError("没有匹配的已勾选脚本")
+        scripts = _bind_script_references(scripts, selected_references, require_selection=stage != "characters")
         if stage == "smart":
             if overwrite:
                 self._run_relay_pipeline(job_id, selected_scripts, scripts, overwrite)
@@ -800,7 +807,7 @@ class JobManager:
             _client, api, image_settings = self._image_client_for("storyboards")
             output = storyboard_image_path(script.md_path, segment.index, self.settings.artifact_prefix)
             return not (
-                has_current_storyboard_product_lock(output, script.product_name)
+                has_current_storyboard_product_lock(output, script.product_name, script.reference_image)
                 and _image_output_current_for_api(image_settings, output, api)
             )
         if stage == "videos":
@@ -1086,7 +1093,7 @@ class JobManager:
         image_settings = image_settings or self.settings
         image_api = image_api or ("grok" if self.settings.provider == "grok" else "otu")
         output = storyboard_image_path(script.md_path, segment.index, self.settings.artifact_prefix)
-        has_product_lock = has_current_storyboard_product_lock(output, script.product_name)
+        has_product_lock = has_current_storyboard_product_lock(output, script.product_name, script.reference_image)
         has_valid_aspect = _image_output_current_for_api(image_settings, output, image_api)
         if output.exists() and has_product_lock and has_valid_aspect and not overwrite:
             return "已存在，跳过"
@@ -1170,13 +1177,18 @@ class JobManager:
         video_settings = video_settings or self.settings
         video_api = video_api or ("grok" if self.settings.provider == "grok" else "otu")
         output = video_output_path(self.settings, script.product_name, script.md_path, segment.index)
-        if output.exists() and not overwrite:
+        output_matches_reference = len(getattr(script, "reference_images", (script.reference_image,))) <= 1 or has_current_storyboard_product_lock(
+            output, script.product_name, script.reference_image
+        )
+        if output.exists() and output_matches_reference and not overwrite:
             return "已存在，跳过"
+        if output.exists() and not output_matches_reference and not overwrite:
+            self._log(job_id, "info", f"片段{segment.index} {self.settings.video_display_label}：产品 SKU 已切换，自动重做")
         if output.exists() and overwrite:
             self._log(job_id, "info", f"片段{segment.index} {self.settings.video_display_label}：强制重跑，旧视频会保留到新视频成功覆盖")
 
         storyboard_path = storyboard_image_path(script.md_path, segment.index, self.settings.artifact_prefix)
-        if not has_current_storyboard_product_lock(storyboard_path, script.product_name):
+        if not has_current_storyboard_product_lock(storyboard_path, script.product_name, script.reference_image):
             raise RuntimeError("缺少通过产品锁生成的当前片段故事版图，请先重新运行功能2")
         _storyboard_client, storyboard_api, storyboard_settings = self._image_client_for("storyboards")
         if not _image_output_current_for_api(storyboard_settings, storyboard_path, storyboard_api):
@@ -1206,6 +1218,8 @@ class JobManager:
                 output,
                 progress=lambda message: self._log(job_id, "info", f"片段{segment.index} {self.settings.video_display_label}：{message}"),
             )
+        assert script.reference_image is not None
+        write_storyboard_product_lock_meta(output, script.product_name, script.reference_image, 1)
         return "已生成"
 
     def _process_direct_video(
@@ -1222,8 +1236,13 @@ class JobManager:
         video_api = video_api or ("grok" if self.settings.provider == "grok" else "otu")
 
         output = video_output_path(self.settings, script.product_name, script.md_path, segment.index)
-        if output.exists() and not overwrite:
+        output_matches_reference = len(getattr(script, "reference_images", (script.reference_image,))) <= 1 or has_current_storyboard_product_lock(
+            output, script.product_name, script.reference_image
+        )
+        if output.exists() and output_matches_reference and not overwrite:
             return "已存在，跳过"
+        if output.exists() and not output_matches_reference and not overwrite:
+            self._log(job_id, "info", f"片段{segment.index} 快速模式{self.settings.video_display_label}：产品 SKU 已切换，自动重做")
         if output.exists() and overwrite:
             self._log(job_id, "info", f"片段{segment.index} 快速模式{self.settings.video_display_label}：强制重跑，旧视频会保留到新视频成功覆盖")
 
@@ -1259,6 +1278,7 @@ class JobManager:
                 progress=lambda message: self._log(job_id, "info", f"片段{segment.index} 快速模式{self.settings.video_display_label}：{message}"),
                 reference_paths=[script.reference_image],
             )
+        write_storyboard_product_lock_meta(output, script.product_name, script.reference_image, 1)
         return "已生成"
 
     def _image_client_for(self, stage: str) -> tuple[Any, str, Settings]:
@@ -1340,7 +1360,17 @@ class JobManager:
         return mask_secrets(text, self.settings.secret_values())
 
     def _snapshot(self, job: Dict[str, Any]) -> Dict[str, Any]:
-        return json.loads(json.dumps(job, ensure_ascii=False, default=str))
+        payload = json.loads(json.dumps(job, ensure_ascii=False, default=str))
+        if job.get("status") == "queued":
+            target_index = self._job_order.index(job["id"])
+            payload["queued_ahead"] = sum(
+                1
+                for candidate_id in self._job_order[:target_index]
+                if self._jobs[candidate_id].get("status") in {"queued", "running"}
+            )
+        elif job.get("status") == "running":
+            payload["queued_ahead"] = 0
+        return payload
 
 
 def _expand_stages(stage: str) -> List[str]:
@@ -1367,6 +1397,43 @@ def _normalize_script_paths(script_paths: Optional[List[str]]) -> Optional[set[P
     if script_paths is None:
         return None
     return {Path(path).expanduser().resolve() for path in script_paths if path}
+
+
+def _normalize_reference_images(reference_images: Optional[Dict[str, str]]) -> Dict[str, Path]:
+    return {
+        str(product_name): Path(path).expanduser().resolve()
+        for product_name, path in (reference_images or {}).items()
+        if product_name and path
+    }
+
+
+def _bind_script_references(
+    scripts: List[ScriptFile],
+    selected_references: Dict[str, Path],
+    *,
+    require_selection: bool,
+) -> List[ScriptFile]:
+    bound: List[ScriptFile] = []
+    for script in scripts:
+        raw_options = getattr(script, "reference_images", ())
+        if not raw_options and getattr(script, "reference_image", None) is not None:
+            raw_options = (script.reference_image,)
+        options = tuple(path.resolve() for path in raw_options)
+        selected = selected_references.get(script.product_name)
+        if selected is not None and selected not in options:
+            raise ValueError(f"{script.product_name} 选择的产品参考图不属于该产品")
+        if selected is None and len(options) == 1:
+            selected = options[0]
+        if require_selection and not options:
+            raise ValueError(f"{script.product_name} 缺少产品参考图")
+        if require_selection and len(options) > 1 and selected is None:
+            raise ValueError(f"{script.product_name} 有 {len(options)} 张产品参考图，请先选择本次使用的 SKU")
+        if hasattr(script, "__dataclass_fields__"):
+            bound.append(replace(script, reference_image=selected))
+        else:
+            script.reference_image = selected
+            bound.append(script)
+    return bound
 
 
 def _normalize_script_concurrency(value: Optional[int], fallback: int) -> int:

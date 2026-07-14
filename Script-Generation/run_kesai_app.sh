@@ -3,7 +3,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 if [ -x ".venv/bin/python" ]; then
-  exec env KESAI_APP_PORT="${KESAI_APP_PORT:-8888}" .venv/bin/python kesai_app.py
+  exec .venv/bin/python -m opc_engine.features.script_generation.script_generation_agent_web \
+    --port "${KESAI_APP_PORT:-9993}"
 fi
 
-exec env KESAI_APP_PORT="${KESAI_APP_PORT:-8888}" python3 kesai_app.py
+exec python3 -m opc_engine.features.script_generation.script_generation_agent_web \
+  --port "${KESAI_APP_PORT:-9993}"

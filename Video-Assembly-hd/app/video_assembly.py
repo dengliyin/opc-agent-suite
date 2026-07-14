@@ -38,6 +38,12 @@ OUTPUT_ROOT = Path(
         str(VAULT_ROOT / "wiki" / "视频" / "成品视频"),
     )
 ).expanduser()
+STICKER_LIBRARY_ROOT = Path(
+    os.environ.get(
+        "VIDEO_ASSEMBLY_STICKER_LIBRARY_ROOT",
+        str(VAULT_ROOT / "wiki" / "视频" / "视频文字标签贴纸库"),
+    )
+).expanduser()
 WORK_ROOT = Path(os.environ.get("VIDEO_ASSEMBLY_WORK_ROOT", str(APP_ROOT)))
 REPORT_PATH = Path(
     os.environ.get("VIDEO_ASSEMBLY_REPORT_PATH", str(APP_ROOT / "data" / "latest-scan.json"))
@@ -46,13 +52,13 @@ REPORT_PATH = Path(
 VIDEO_EXTS = {".mp4", ".mov", ".m4v"}
 CLEANABLE_MEDIA_EXTS = VIDEO_EXTS | {".png", ".jpg", ".jpeg", ".webp", ".webm"}
 EXPORT_MARKER_SUFFIX = ".exported.json"
-STICKER_STYLES = ("dark", "highlight", "outline")
+STICKER_STYLES = ("serif", "bubbly", "tiktok", "cinematic")
 STICKER_POSITIONS = ("top", "center", "bottom")
 STICKER_TIMINGS = ("full", "custom")
 DEFAULT_STICKER = {
     "enabled": False,
     "text": "",
-    "style": "dark",
+    "style": "tiktok",
     "position": "top",
     "timing": "full",
     "start": 0.0,
@@ -100,6 +106,48 @@ def natural_segment_key(path: Path) -> tuple[int, str]:
     if match:
         return (int(match.group(1)), path.name)
     return (10_000, path.name)
+
+
+def load_sticker_library(product: str, root: Path = STICKER_LIBRARY_ROOT) -> dict:
+    if not product or Path(product).name != product:
+        raise ValueError("产品名称无效")
+    path = root / f"{product}.md"
+    if not path.is_file():
+        return {"available": False, "product": product, "path": str(path), "countries": []}
+
+    countries: list[dict] = []
+    current_country: dict | None = None
+    current_preset: dict | None = None
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        country_match = re.match(r"^##\s+国家：(.+?)\s+\(([A-Z]{2})\)\s*$", line)
+        if country_match:
+            current_country = {
+                "name": country_match.group(1).strip(),
+                "code": country_match.group(2),
+                "presets": [],
+            }
+            countries.append(current_country)
+            current_preset = None
+            continue
+        preset_match = re.match(r"^###\s+([A-Z]{2}-\d{3})\s*$", line)
+        if preset_match and current_country:
+            current_preset = {"id": preset_match.group(1), "text": "", "translation": ""}
+            current_country["presets"].append(current_preset)
+            continue
+        if current_preset and line.startswith("- 文案："):
+            current_preset["text"] = line.removeprefix("- 文案：").strip()
+        elif current_preset and line.startswith("- 中文释义："):
+            current_preset["translation"] = line.removeprefix("- 中文释义：").strip()
+
+    for country in countries:
+        country["presets"] = [preset for preset in country["presets"] if preset["text"]]
+    countries = [country for country in countries if country["presets"]]
+    return {
+        "available": bool(countries),
+        "product": product,
+        "path": str(path),
+        "countries": countries,
+    }
 
 
 def parse_timecode(value: str) -> float:
@@ -571,49 +619,6 @@ def tail_audio_is_active(path: Path, target_duration: float, actual_duration: fl
     return tail >= threshold
 
 
-def atempo_chain(speed: float) -> str:
-    factors: list[float] = []
-    remaining = speed
-    while remaining > 2.0:
-        factors.append(2.0)
-        remaining /= 2.0
-    while remaining < 0.5:
-        factors.append(0.5)
-        remaining /= 0.5
-    factors.append(remaining)
-    return ",".join(f"atempo={factor:.6f}" for factor in factors)
-
-
-def speed_up_clip(source: Path, dest: Path, speed: float) -> None:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    proc = run(
-        [
-            ffmpeg_path(),
-            "-y",
-            "-i",
-            str(source),
-            "-filter_complex",
-            f"[0:v]setpts=PTS/{speed:.6f}[v];[0:a]{atempo_chain(speed)}[a]",
-            "-map",
-            "[v]",
-            "-map",
-            "[a]",
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            "-movflags",
-            "+faststart",
-            str(dest),
-        ],
-        env=runtime_env(),
-    )
-    if proc.returncode != 0:
-        die(f"Failed to speed up clip: {source}\n{proc.stdout}")
-
-
 def safe_name(value: str) -> str:
     return re.sub(r"[^\w.\-\u4e00-\u9fff]+", "_", value).strip("_")[:180]
 
@@ -798,27 +803,43 @@ def build_index_html(
         -webkit-line-clamp: 2;
         will-change: transform, opacity;
       }}
-      .text-sticker-body.style-dark {{
-        padding: 16px 28px 18px;
-        border: 3px solid rgba(255, 255, 255, 0.9);
-        border-radius: 8px;
-        background: rgba(10, 10, 10, 0.84);
-        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+      .text-sticker-body.style-serif {{
+        padding: 12px 20px 15px;
+        color: #fff8e8;
+        font-family: Georgia, "Songti SC", "STSong", serif;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        text-shadow: 0 4px 12px rgba(0, 0, 0, 0.82);
       }}
-      .text-sticker-body.style-highlight {{
-        padding: 15px 28px 17px;
-        border: 4px solid #111111;
-        border-radius: 4px;
-        background: #f3e64d;
-        color: #111111;
-        box-shadow: 8px 8px 0 #111111;
+      .text-sticker-body.style-bubbly {{
+        padding: 10px 14px;
+        color: #ff78b4;
+        font-family: "Arial Rounded MT Bold", "SF Pro Rounded", "PingFang SC", sans-serif;
+        font-weight: 800;
+        letter-spacing: 0.01em;
+        -webkit-text-stroke: 2px #ffffff;
+        paint-order: stroke fill;
+        text-shadow: 0 4px 10px rgba(0, 0, 0, 0.58);
       }}
-      .text-sticker-body.style-outline {{
+      .text-sticker-body.style-tiktok {{
         padding: 10px 14px;
         color: #ffffff;
+        font-family: "TikTok Sans", "Avenir Next", "PingFang SC", Arial, sans-serif;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+        -webkit-text-stroke: 2px #111111;
+        paint-order: stroke fill;
+        text-shadow: 0 3px 8px rgba(0, 0, 0, 0.82);
+      }}
+      .text-sticker-body.style-cinematic {{
+        padding: 10px 14px;
+        color: #ffffff;
+        font-family: "Avenir Next Condensed", "Arial Narrow", "PingFang SC", sans-serif;
+        font-weight: 800;
+        letter-spacing: 0.035em;
         -webkit-text-stroke: 3px #111111;
         paint-order: stroke fill;
-        text-shadow: 0 5px 12px rgba(0, 0, 0, 0.62);
+        text-shadow: 0 6px 14px rgba(0, 0, 0, 0.78);
       }}
       .transition-wash {{
         position: absolute;
@@ -919,10 +940,9 @@ def prepare_project(item: ScriptItem) -> tuple[Path, list[dict]]:
         if target and target > 0:
             if actual > target * 1.08:
                 if segment.audio_text and tail_audio_is_active(source, target, actual):
-                    speed = min(actual / target, 1.6)
-                    speed_up_clip(source, dest, speed)
-                    duration = target
-                    action = f"speed_{speed:.3f}x"
+                    shutil.copy2(source, dest)
+                    duration = actual
+                    action = "keep_active_tail"
                 else:
                     shutil.copy2(source, dest)
                     duration = target

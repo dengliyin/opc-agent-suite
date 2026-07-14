@@ -8,10 +8,10 @@ class FakeManager:
         self.block_start = block_start
         self.started = []
 
-    def start(self, stage="all", overwrite=None, script_paths=None, script_concurrency=None):
+    def start(self, stage="all", overwrite=None, script_paths=None, script_concurrency=None, reference_images=None):
         if self.block_start:
             raise ValueError("当前 Agent 已有任务正在运行，请先停止或等待完成后再启动新任务")
-        self.started.append((stage, overwrite, script_paths, script_concurrency))
+        self.started.append((stage, overwrite, script_paths, script_concurrency, reference_images))
         return {
             "id": "fake_job",
             "stage": stage,
@@ -60,7 +60,7 @@ def test_run_lock_is_per_agent(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["id"] == "fake_job"
-    assert grok.started == [("characters", False, ["/tmp/a.md"], 8)]
+    assert grok.started == [("characters", False, ["/tmp/a.md"], 8, None)]
 
 
 def test_same_agent_run_is_accepted_for_manager_queue(monkeypatch):
@@ -76,7 +76,7 @@ def test_same_agent_run_is_accepted_for_manager_queue(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["status"] == "queued"
-    assert omni.started == [("characters", False, ["/tmp/a.md"], None)]
+    assert omni.started == [("characters", False, ["/tmp/a.md"], None, None)]
 
 
 def test_update_concurrency_is_per_agent(monkeypatch):

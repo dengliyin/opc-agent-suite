@@ -51,7 +51,8 @@ fi
 
 echo "Python: $PYTHON_BIN ($($PYTHON_BIN --version 2>&1))"
 
-AGENTS=(
+COMPONENTS=(
+  "OPC-Console"
   "Video-Collection"
   "Script-Analysis"
   "Script-Generation"
@@ -62,25 +63,25 @@ AGENTS=(
   "Video-Assembly-hd"
 )
 
-for agent in "${AGENTS[@]}"; do
-  agent_dir="$ROOT_DIR/$agent"
-  venv_dir="$agent_dir/.venv"
-  lock_file="$agent_dir/requirements.lock.txt"
+for component in "${COMPONENTS[@]}"; do
+  component_dir="$ROOT_DIR/$component"
+  venv_dir="$component_dir/.venv"
+  lock_file="$component_dir/requirements.lock.txt"
 
   if [ -x "$venv_dir/bin/python" ]; then
     venv_version="$($venv_dir/bin/python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
     if [ "$venv_version" != "3.12" ]; then
-      echo "Recreating $agent virtual environment (found Python $venv_version)."
+      echo "Recreating $component virtual environment (found Python $venv_version)."
       rm -rf "$venv_dir"
     fi
   fi
 
   if [ ! -x "$venv_dir/bin/python" ]; then
-    echo "Creating $agent/.venv"
+    echo "Creating $component/.venv"
     "$PYTHON_BIN" -m venv "$venv_dir"
   fi
 
-  echo "Installing $agent dependencies"
+  echo "Installing $component dependencies"
   PIP_DISABLE_PIP_VERSION_CHECK=1 "$venv_dir/bin/python" -m pip install --requirement "$lock_file"
   "$venv_dir/bin/python" -m pip check
 done

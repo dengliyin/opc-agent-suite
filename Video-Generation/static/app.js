@@ -11,6 +11,7 @@ const state = {
   showArchived: false,
   expansionMode: "",
   expandedProducts: new Set(),
+  selectedReferenceByProduct: new Map(),
 };
 
 const API_BASE = window.AGENT_API_BASE || "/api";
@@ -192,6 +193,7 @@ function renderGlobalStatus() {
 function renderCatalog() {
   const scripts = state.catalog?.scripts || [];
   syncSelectedScriptPaths(scripts);
+  syncProductReferenceSelections(scripts);
   const visibleScripts = visibleCatalogScripts(scripts);
   ensureSelectedScriptVisible(scripts, visibleScripts);
   ensureInitialExpansion(visibleScripts);
@@ -238,6 +240,15 @@ function renderCatalog() {
     });
   });
 
+  $$(".product-reference-select").forEach((select) => {
+    select.addEventListener("change", () => {
+      const productName = select.dataset.productName || "";
+      if (select.value) state.selectedReferenceByProduct.set(productName, select.value);
+      else state.selectedReferenceByProduct.delete(productName);
+      render();
+    });
+  });
+
   $$(".script-item").forEach((item) => {
     item.addEventListener("click", () => {
       state.selectedIndex = Number(item.dataset.index);
@@ -277,6 +288,16 @@ function renderProductGroup(product, scripts, runningContexts, scriptStatuses) {
   const checked = paths.length > 0 && paths.every((path) => state.selectedScriptPaths.has(path));
   const selected = paths.filter((path) => state.selectedScriptPaths.has(path)).length;
   const expanded = isProductExpanded(product.name);
+  const references = productReferenceOptions(product);
+  const selectedReference = state.selectedReferenceByProduct.get(product.name) || "";
+  const selectedOption = references.find((item) => item.path === selectedReference);
+  const referenceSummary = !references.length
+    ? "缺产品参考图"
+    : references.length === 1
+      ? `参考图：${references[0].label}（自动）`
+      : selectedOption
+        ? `SKU：${selectedOption.label}`
+        : `${references.length} 个 SKU · 待选择`;
   return `
     <div class="product-group ${expanded ? "expanded" : "collapsed"}">
       <div class="product-group-head">
@@ -286,9 +307,10 @@ function renderProductGroup(product, scripts, runningContexts, scriptStatuses) {
         </label>
         <div>
           <strong>${escapeHtml(product.name)}</strong>
-          <span>${product.scripts.length} 脚本 · ${product.segments} 片段 · 已选 ${selected}</span>
+          <span>${product.scripts.length} 脚本 · ${product.segments} 片段 · 已选 ${selected}<br>${escapeHtml(referenceSummary)}</span>
         </div>
       </div>
+      ${expanded ? renderProductReferencePicker(product.name, references, selectedReference) : ""}
       ${expanded ? `<div class="product-scripts">${product.scripts.map((script) => renderScriptCard(script, scripts, runningContexts, scriptStatuses)).join("")}</div>` : ""}
     </div>
   `;
@@ -304,8 +326,11 @@ function renderScriptCard(script, scripts, runningContexts, scriptStatuses) {
   const videos = segments.filter((segment) => segment.video_exists).length;
   const complete = isScriptComplete(script);
   const exported = isScriptExported(script);
-  const refClass = script.reference_image ? "ok" : "error";
-  const refLabel = script.reference_image ? "参考图" : "缺参考图";
+  const references = script.reference_images || [];
+  const selectedReference = state.selectedReferenceByProduct.get(script.product_name) || "";
+  const selectedOption = references.find((item) => item.path === selectedReference);
+  const refClass = references.length && (references.length === 1 || selectedOption) ? "ok" : references.length ? "warn" : "error";
+  const refLabel = !references.length ? "缺参考图" : references.length === 1 ? "参考图自动" : selectedOption ? `SKU ${selectedOption.label}` : "SKU待选择";
   const checked = state.selectedScriptPaths.has(script.md_path);
   const runningContext = contextForScript(script, runningContexts);
   const running = Boolean(runningContext);
@@ -409,6 +434,57 @@ function groupVisibleScripts(scripts) {
     product.segments += (script.segments || []).length;
   });
   return products;
+}
+
+function productReferenceOptions(product) {
+  return product.scripts[0]?.reference_images || [];
+}
+
+function syncProductReferenceSelections(scripts) {
+  const available = new Map();
+  scripts.forEach((script) => {
+    if (!available.has(script.product_name)) available.set(script.product_name, script.reference_images || []);
+  });
+  for (const [productName, references] of available.entries()) {
+    const selected = state.selectedReferenceByProduct.get(productName);
+    if (references.length === 1) {
+      state.selectedReferenceByProduct.set(productName, references[0].path);
+    } else if (selected && !references.some((item) => item.path === selected)) {
+      state.selectedReferenceByProduct.delete(productName);
+    }
+  }
+  for (const productName of Array.from(state.selectedReferenceByProduct.keys())) {
+    if (!available.has(productName)) state.selectedReferenceByProduct.delete(productName);
+  }
+}
+
+function renderProductReferencePicker(productName, references, selectedReference) {
+  if (!references.length) {
+    return `<div class="product-reference-picker error">没有找到与产品名匹配的参考图</div>`;
+  }
+  if (references.length === 1) {
+    const reference = references[0];
+    return `
+      <div class="product-reference-picker selected">
+        <img src="${escapeHtml(reference.url)}" alt="" />
+        <div><strong>本次产品参考图</strong><span>${escapeHtml(reference.label)}（唯一参考图，自动选择）</span></div>
+      </div>
+    `;
+  }
+  const selected = references.find((item) => item.path === selectedReference);
+  return `
+    <div class="product-reference-picker ${selected ? "selected" : "required"}">
+      ${selected ? `<img src="${escapeHtml(selected.url)}" alt="" />` : ""}
+      <div>
+        <strong>本批脚本使用的产品 SKU</strong>
+        <select class="product-reference-select" data-product-name="${escapeHtml(productName)}">
+          <option value="">请选择产品参考图</option>
+          ${references.map((reference) => `<option value="${escapeHtml(reference.path)}" ${reference.path === selectedReference ? "selected" : ""}>${escapeHtml(reference.label)}</option>`).join("")}
+        </select>
+        <span>${selected ? "本次所选脚本将统一使用此参考图" : `检测到 ${references.length} 张参考图，执行前必须选择`}</span>
+      </div>
+    </div>
+  `;
 }
 
 function renderArchiveControls() {
@@ -539,7 +615,7 @@ function renderJobs() {
 
   const percent = activeJob.total ? Math.round((activeJob.done / activeJob.total) * 100) : 0;
   const errorSuffix = activeJob.errors?.length ? ` · ${activeJob.errors.length} 错误` : "";
-  $("#jobState").textContent = `${statusLabel(activeJob.status)} · 处理 ${activeJob.done}/${activeJob.total} · ${percent}%${errorSuffix}`;
+  $("#jobState").textContent = `${jobStatusLabel(activeJob)} · 处理 ${activeJob.done}/${activeJob.total} · ${percent}%${errorSuffix}`;
   $("#jobProgress span").style.width = `${Math.min(100, percent)}%`;
   updateToolbarState(activeJob);
   const activeDetails = renderActiveJobDetails(activeJob);
@@ -549,7 +625,7 @@ function renderJobs() {
       (job) => `
         <div class="job-row ${job.status}">
           <span>${stageLabel(job.stage)}</span>
-          <strong>${statusLabel(job.status)}</strong>
+          <strong>${jobStatusLabel(job)}</strong>
           <span>${job.done}/${job.total}</span>
           <span>${job.errors?.length || 0} 错误</span>
         </div>
@@ -959,9 +1035,30 @@ async function runStage(stage) {
       alert("请先勾选要执行的未导出脚本");
       return;
     }
+    const selectedScripts = (state.catalog?.scripts || []).filter((script) => scriptPaths.includes(script.md_path));
+    const selectedProducts = [...new Set(selectedScripts.map((script) => script.product_name))];
+    const referenceImages = {};
+    if (stage !== "characters") {
+      for (const productName of selectedProducts) {
+        const script = selectedScripts.find((item) => item.product_name === productName);
+        const references = script?.reference_images || [];
+        if (!references.length) {
+          alert(`${productName} 缺少产品参考图`);
+          return;
+        }
+        const selectedReference = state.selectedReferenceByProduct.get(productName);
+        if (references.length > 1 && !selectedReference) {
+          state.expandedProducts.add(productExpansionKey(productName));
+          render();
+          alert(`${productName} 有 ${references.length} 张产品参考图，请先选择本批脚本使用的 SKU`);
+          return;
+        }
+        referenceImages[productName] = selectedReference || references[0].path;
+      }
+    }
     const job = await api("/run", {
       method: "POST",
-      body: JSON.stringify({ stage, overwrite, script_paths: scriptPaths, script_concurrency: selectedScriptConcurrency() }),
+      body: JSON.stringify({ stage, overwrite, script_paths: scriptPaths, script_concurrency: selectedScriptConcurrency(), reference_images: referenceImages }),
     });
     state.activeJobId = job.id;
     await refreshAll();
@@ -1152,6 +1249,12 @@ function statusLabel(status) {
     failed: "失败",
     canceled: "已停止",
   }[status] || status || "未知";
+}
+
+function jobStatusLabel(job) {
+  if (job?.status !== "queued") return statusLabel(job?.status);
+  const queuedAhead = Math.max(0, Number(job.queued_ahead) || 0);
+  return queuedAhead ? `排队中 · 前方 ${queuedAhead} 个` : "排队中 · 即将执行";
 }
 
 $("#refreshButton").addEventListener("click", refreshAll);

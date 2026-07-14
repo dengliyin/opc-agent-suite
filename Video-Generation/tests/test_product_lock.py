@@ -31,3 +31,5 @@ def test_storyboard_product_lock_metadata_marks_current_output(tmp_path: Path) -
 
     assert has_current_storyboard_product_lock(storyboard, "SIMC染发棒") is True
     assert has_current_storyboard_product_lock(storyboard, "Other") is False
+    assert has_current_storyboard_product_lock(storyboard, "SIMC染发棒", reference) is True
+    assert has_current_storyboard_product_lock(storyboard, "SIMC染发棒", tmp_path / "other.png") is False

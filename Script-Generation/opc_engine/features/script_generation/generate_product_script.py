@@ -15,7 +15,7 @@ import uuid
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
-from opc_engine.features.video_teardown.analyze_video_teardown import (
+from opc_engine.features.script_generation.modelmesh_client import (
     DEFAULT_BASE_URL,
     DEFAULT_MODEL,
     endpoint_variants,
@@ -76,6 +76,12 @@ COUNTRY_DEFAULT_LANGUAGE = {
     "德国": "德语",
     "germany": "德语",
     "de": "德语",
+    "越南": "越南语",
+    "vietnam": "越南语",
+    "vn": "越南语",
+    "菲律宾": "菲律宾语",
+    "philippines": "菲律宾语",
+    "ph": "菲律宾语",
     "马来西亚": "马来语",
     "malaysia": "马来语",
     "my": "马来语",
@@ -83,9 +89,6 @@ COUNTRY_DEFAULT_LANGUAGE = {
     "孟加拉国": "孟加拉语",
     "bangladesh": "孟加拉语",
     "bd": "孟加拉语",
-    "尼泊尔": "尼泊尔语",
-    "nepal": "尼泊尔语",
-    "np": "尼泊尔语",
     "爱尔兰": "英语",
     "ireland": "英语",
     "ie": "英语",
@@ -133,6 +136,12 @@ COUNTRY_FILENAME_CODE = {
     "義大利": "IT",
     "italy": "IT",
     "it": "IT",
+    "越南": "VN",
+    "vietnam": "VN",
+    "vn": "VN",
+    "菲律宾": "PH",
+    "philippines": "PH",
+    "ph": "PH",
     "墨西哥": "MX",
     "mexico": "MX",
     "mx": "MX",
@@ -1901,7 +1910,12 @@ def main():
     direct_file_mode = has_direct_file_inputs(config)
     has_project_context = product_project_ready(config)
     unified_direct_mode = bool(os.environ.get("OPC_APP_CONFIG_PATH") and direct_file_mode)
-    if not unified_direct_mode and (not direct_file_mode or (not args.output_dir and has_project_context)):
+    explicit_product_output_mode = bool(args.product_doc and args.output_dir)
+    if explicit_product_output_mode:
+        Path(args.output_dir).expanduser().resolve().mkdir(parents=True, exist_ok=True)
+    if not (unified_direct_mode or explicit_product_output_mode) and (
+        not direct_file_mode or (not args.output_dir and has_project_context)
+    ):
         require_product_project(config, "生成脚本")
         ensure_project_dirs(config)
     text, raw_response, endpoint_style, field_style = run_script_pipeline(config, args)
