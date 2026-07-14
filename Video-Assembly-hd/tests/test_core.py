@@ -268,6 +268,16 @@ class CoreTests(unittest.TestCase):
         self.assertIn('data-start="1.000" data-duration="2.500" data-track-index="7"', html)
         self.assertIn("data-layout-allow-occlusion", html)
         self.assertIn('src: local("PingFang SC")', html)
+        for font in (
+            "Songti SC",
+            "STSong",
+            "Arial Rounded MT Bold",
+            "PingFang SC",
+            "TikTok Sans",
+            "Avenir Next Condensed",
+            "Arial Narrow",
+        ):
+            self.assertRegex(html, rf'@font-face \{{\s+font-family: "{re.escape(font)}";\s+src: local\("{re.escape(font)}"\);')
         self.assertIn("立即 &lt;入手&gt;", html)
         self.assertNotIn("立即 <入手>", html)
         self.assertIn('tl.fromTo("#text-sticker-body"', html)
