@@ -1618,20 +1618,45 @@ def scan_finished_videos(libraries: dict[str, dict[str, Any]], records: list[dic
     if not FINISHED_VIDEO_ROOT.exists():
         return videos
     published_records = published_record_by_path(records)
-    for path in sorted(FINISHED_VIDEO_ROOT.rglob("*"), key=lambda item: item.as_posix().lower()):
-        if not path.is_file() or path.suffix.lower() not in VIDEO_EXTENSIONS:
-            continue
+    paths = sorted(
+        (
+            path
+            for path in FINISHED_VIDEO_ROOT.rglob("*")
+            if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS
+        ),
+        key=lambda item: item.as_posix().lower(),
+    )
+    flat_identities = {
+        (path.parent.name.casefold(), path.name.casefold())
+        for path in paths
+        if len(path.relative_to(FINISHED_VIDEO_ROOT).parts) == 2
+    }
+    published_by_identity: dict[tuple[str, str], dict[str, Any]] = {}
+    for path in paths:
+        record = published_records.get(path.as_posix())
+        if record:
+            published_by_identity.setdefault((path.parent.name.casefold(), path.name.casefold()), record)
+
+    for path in paths:
         product_key = path.parent.name
+        identity = (product_key.casefold(), path.name.casefold())
+        relative_parts = path.relative_to(FINISHED_VIDEO_ROOT).parts
+        is_flat_layout = len(relative_parts) == 2
+        if not is_flat_layout and identity in flat_identities:
+            continue
         library = libraries.get(product_key)
         if library is None and "-" in product_key:
             code = product_key.split("-", 1)[0]
             library = next((item for item in libraries.values() if item.get("code") == code), None)
         countries = extract_countries(path.name, product_key)
         stat = path.stat()
-        published_record = published_records.get(path.as_posix())
-        relative_parts = path.relative_to(FINISHED_VIDEO_ROOT).parts
+        published_record = published_records.get(path.as_posix()) or published_by_identity.get(identity)
         workflow = relative_parts[0] if len(relative_parts) > 3 else ""
-        date = relative_parts[1] if len(relative_parts) > 3 else ""
+        date = (
+            datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d")
+            if is_flat_layout
+            else relative_parts[1] if len(relative_parts) > 3 else ""
+        )
         stem_parts = path.stem.split("-")
         videos.append(
             {

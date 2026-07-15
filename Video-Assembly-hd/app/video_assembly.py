@@ -246,7 +246,12 @@ def scan_items(pending_root: Path = PENDING_ROOT, output_root: Path = OUTPUT_ROO
                     media_files = cleanup_candidates(script_dir, md_path, marker_path) if md_path else []
                     output_path = None
                     if md_path:
-                        output_path = output_root / model_dir.name / date_dir.name / product_dir.name / f"{md_path.stem}.mp4"
+                        output_path = output_root / product_dir.name / f"{md_path.stem}.mp4"
+                        legacy_output_path = (
+                            output_root / model_dir.name / date_dir.name / product_dir.name / f"{md_path.stem}.mp4"
+                        )
+                        if not output_path.exists() and legacy_output_path.exists():
+                            output_path = legacy_output_path
                     if output_path and output_path.exists():
                         status = "done"
                     elif md_path and videos:

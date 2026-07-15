@@ -77,7 +77,7 @@ class CoreTests(unittest.TestCase):
             done.mkdir()
             (done / "done.md").write_text("# Segment 1：0 - 1", encoding="utf-8")
             (done / "片段1.mp4").touch()
-            done_output = output / "omni" / "2026-07-11" / "产品"
+            done_output = output / "产品"
             done_output.mkdir(parents=True)
             (done_output / "done.mp4").touch()
 
@@ -101,6 +101,26 @@ class CoreTests(unittest.TestCase):
             status_by_name,
             {"done": "done", "missing": "missing", "archived": "archived", "invalid": "invalid"},
         )
+        missing_item = next(item for item in items if Path(item.script_dir).name == "missing")
+        self.assertEqual(Path(missing_item.output_path), output / "产品" / "missing.mp4")
+
+    def test_scan_recognizes_legacy_finished_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pending = root / "pending"
+            output = root / "output"
+            script_dir = pending / "omni" / "2026-07-11" / "产品" / "demo"
+            script_dir.mkdir(parents=True)
+            (script_dir / "demo.md").write_text("# Segment 1：0 - 1", encoding="utf-8")
+            (script_dir / "片段1.mp4").touch()
+            legacy_output = output / "omni" / "2026-07-11" / "产品" / "demo.mp4"
+            legacy_output.parent.mkdir(parents=True)
+            legacy_output.touch()
+
+            item = core.scan_items(pending, output)[0]
+
+        self.assertEqual(item.status, "done")
+        self.assertEqual(Path(item.output_path), legacy_output)
 
     def test_confirmation_rejects_stale_scan_and_filters_selection(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -465,7 +485,7 @@ class CoreTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            output_dir = output / "omni" / "2026-07-12" / "产品"
+            output_dir = output / "产品"
             output_dir.mkdir(parents=True)
             finished = output_dir / "demo.mp4"
             finished.write_bytes(b"finished")
@@ -498,7 +518,7 @@ class CoreTests(unittest.TestCase):
             pending = root / "pending"
             output = root / "output"
             product = pending / "omni" / "2026-07-12" / "产品"
-            output_product = output / "omni" / "2026-07-12" / "产品"
+            output_product = output / "产品"
             output_product.mkdir(parents=True)
             sources = []
             for name in ("one", "two"):
