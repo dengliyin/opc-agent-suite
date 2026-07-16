@@ -308,6 +308,17 @@ h2 {
   background: var(--teal-strong);
 }
 
+.mini-button.danger-mini {
+  border-color: #df9a94;
+  background: #fff3f0;
+  color: var(--red);
+}
+
+.mini-button.danger-mini:hover {
+  border-color: var(--red);
+  background: #ffe0dc;
+}
+
 .script-list {
   display: grid;
   gap: 8px;

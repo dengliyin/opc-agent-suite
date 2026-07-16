@@ -490,10 +490,15 @@ function renderProductReferencePicker(productName, references, selectedReference
 function renderArchiveControls() {
   const exportButton = $("#exportSelectedButton");
   const restoreButton = $("#restoreSelectedButton");
+  const deleteButton = $("#deleteSelectedScriptsButton");
   const completeButton = $("#selectCompletedScriptsButton");
   const archiveButton = $("#archiveToggleButton");
   if (exportButton) exportButton.hidden = state.showArchived;
   if (restoreButton) restoreButton.hidden = !state.showArchived;
+  if (deleteButton) {
+    deleteButton.hidden = state.showArchived;
+    deleteButton.disabled = state.selectedScriptPaths.size === 0;
+  }
   if (completeButton) completeButton.hidden = state.showArchived;
   if (archiveButton) archiveButton.textContent = state.showArchived ? "返回任务" : "查看归档";
 }
@@ -1155,6 +1160,43 @@ async function restoreSelectedArchived() {
   }
 }
 
+async function deleteSelectedScripts() {
+  const scripts = state.catalog?.scripts || [];
+  const scriptByPath = new Map(scripts.map((script) => [script.md_path, script]));
+  const deletePaths = Array.from(state.selectedScriptPaths).filter((path) => {
+    const script = scriptByPath.get(path);
+    return script && !isScriptExported(script);
+  });
+  if (!deletePaths.length) {
+    alert("请先勾选要删除的未归档脚本");
+    return;
+  }
+  const names = deletePaths
+    .slice(0, 8)
+    .map((path) => `• ${scriptByPath.get(path)?.md_name || path}`)
+    .join("\n");
+  const remaining = deletePaths.length > 8 ? `\n• 另有 ${deletePaths.length - 8} 个脚本` : "";
+  const ok = confirm(
+    `确定永久删除以下 ${deletePaths.length} 个脚本吗？\n\n${names}${remaining}\n\n将同步删除这些脚本的人物图、故事版图、视频和产物元数据；不会删除产品参考图。此操作无法撤销。`,
+  );
+  if (!ok) return;
+  const button = $("#deleteSelectedScriptsButton");
+  if (button) button.disabled = true;
+  try {
+    const result = await api("/scripts", {
+      method: "DELETE",
+      body: JSON.stringify({ script_paths: deletePaths }),
+    });
+    alert(`删除完成：${result.scripts_deleted || 0} 个脚本，共 ${result.files_deleted || 0} 个文件`);
+    state.selectedScriptPaths.clear();
+    await refreshAll();
+  } catch (error) {
+    alert(`删除失败：${error.message}`);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 async function pollJobs() {
   try {
     const [jobs, globalJobs] = await Promise.all([api("/jobs"), loadGlobalJobs()]);
@@ -1273,6 +1315,7 @@ $("#selectCompletedScriptsButton")?.addEventListener("click", () => {
 });
 $("#exportSelectedButton")?.addEventListener("click", exportSelectedCompleted);
 $("#restoreSelectedButton")?.addEventListener("click", restoreSelectedArchived);
+$("#deleteSelectedScriptsButton")?.addEventListener("click", deleteSelectedScripts);
 $("#archiveToggleButton")?.addEventListener("click", () => {
   state.showArchived = !state.showArchived;
   state.expansionMode = "";

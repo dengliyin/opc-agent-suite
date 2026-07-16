@@ -53,16 +53,20 @@ export OPC_VIDEO_ASSEMBLY_RUNTIME_SOURCE="/path/to/Video-Assembly-hd/runtime"
 
 ### 让控制台在 macOS 常驻
 
-控制台需要调用宿主机上的 8 个独立 Agent，因此不单独放入 Docker。安装 LaunchAgent 后，`8888` 会在用户登录时自动启动，并在异常退出后自动拉起；`9991` 到 `9998` 仍按需启动：
+控制台需要调用宿主机上的 8 个独立 Agent，因此不单独放入 Docker。安装后，`8888` 会在用户登录时自动启动并在异常退出后自动拉起；`9991` 到 `9998` 各自注册为独立 LaunchAgent，但保持按需启动：
 
 ```bash
 ./scripts/install_console_launchagent.sh
 ```
 
+8888 的“启动”按钮通过 `launchctl kickstart` 启动对应 Agent。Agent 不再是控制台子进程，因此重启 8888 不会带走已运行的 Agent；未点击启动的 Agent 也不会在登录时自动运行。
+LaunchAgent 的标准输出和错误日志位于 `~/Library/Logs/OPC-Agent-Suite/`，避免 macOS 阻止 launchd 在 `Documents` 下创建日志文件。
+
 取消常驻：
 
 ```bash
 ./scripts/uninstall_console_launchagent.sh
+./scripts/uninstall_agent_launchagents.sh
 ```
 
 LaunchAgent 直接通过控制台的 Python 环境启动，不依赖 `/bin/bash` 读取 `Documents` 中的脚本。

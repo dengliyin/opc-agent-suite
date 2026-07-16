@@ -3,8 +3,10 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
-from agent.app import ArtifactDeleteRequest, _delete_artifact
+from agent import app as app_module
+from agent.app import ArtifactDeleteRequest, ScriptDeleteRequest, _delete_artifact, _delete_scripts
 from agent.config import Settings
+from agent.files import character_image_path, storyboard_image_path, video_output_path
 from agent.product_lock import storyboard_meta_path
 
 
@@ -60,3 +62,68 @@ def test_delete_artifact_rejects_script_file(tmp_path: Path) -> None:
 
     assert exc.value.status_code == 403
     assert script.exists()
+
+
+class FakeManager:
+    def __init__(self, jobs=None):
+        self.jobs = jobs or []
+
+    def list_jobs(self):
+        return self.jobs
+
+
+def create_script_with_assets(settings: Settings) -> tuple[Path, list[Path]]:
+    script = settings.script_root / "P1" / "demo.md"
+    script.parent.mkdir(parents=True)
+    script.write_text(
+        "# Segment 1：00:00.000 - 00:10.000\n"
+        "## A. 人物造型参考板提示词\n人物\n"
+        "## B. 故事板图片提示词\n故事\n"
+        "### 镜头 1 (00:00.000 - 00:10.000)\n内容\n",
+        encoding="utf-8",
+    )
+    character = character_image_path(script, 1, settings.artifact_prefix)
+    storyboard = storyboard_image_path(script, 1, settings.artifact_prefix)
+    video = video_output_path(settings, "P1", script, 1)
+    video.parent.mkdir(parents=True)
+    for path in (character, storyboard, video):
+        path.write_bytes(b"asset")
+    storyboard_meta_path(storyboard).write_text("{}", encoding="utf-8")
+    storyboard_meta_path(video).write_text("{}", encoding="utf-8")
+    return script, [character, storyboard, storyboard_meta_path(storyboard), video, storyboard_meta_path(video)]
+
+
+def test_delete_scripts_removes_script_assets_and_metadata_only(monkeypatch, tmp_path: Path) -> None:
+    settings = settings_for(tmp_path)
+    script, assets = create_script_with_assets(settings)
+    reference = settings.reference_root / "P1.png"
+    reference.parent.mkdir(parents=True)
+    reference.write_bytes(b"reference")
+    sibling = script.parent / "keep.txt"
+    sibling.write_text("keep", encoding="utf-8")
+    monkeypatch.setattr(app_module, "_settings_for", lambda _provider: settings)
+    monkeypatch.setattr(app_module, "_manager_for", lambda _provider: FakeManager())
+
+    result = _delete_scripts("omni", ScriptDeleteRequest(script_paths=[str(script)]))
+
+    assert result["scripts_deleted"] == 1
+    assert result["files_deleted"] == 6
+    assert not script.exists()
+    assert all(not path.exists() for path in assets)
+    assert reference.exists()
+    assert sibling.exists()
+
+
+def test_delete_scripts_rejects_script_in_active_job(monkeypatch, tmp_path: Path) -> None:
+    settings = settings_for(tmp_path)
+    script, assets = create_script_with_assets(settings)
+    manager = FakeManager([{"status": "running", "script_paths": [str(script)]}])
+    monkeypatch.setattr(app_module, "_settings_for", lambda _provider: settings)
+    monkeypatch.setattr(app_module, "_manager_for", lambda _provider: manager)
+
+    with pytest.raises(HTTPException) as exc:
+        _delete_scripts("omni", ScriptDeleteRequest(script_paths=[str(script)]))
+
+    assert exc.value.status_code == 409
+    assert script.exists()
+    assert all(path.exists() for path in assets)

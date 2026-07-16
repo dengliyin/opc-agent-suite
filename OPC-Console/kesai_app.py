@@ -5,8 +5,6 @@ import html
 import json
 import os
 import subprocess
-import threading
-import time
 import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -18,9 +16,6 @@ ROOT = Path(__file__).resolve().parent
 WORKSPACE_ROOT = ROOT.parent
 HOST = os.environ.get("KESAI_APP_HOST", "127.0.0.1")
 PORT = int(os.environ.get("KESAI_APP_PORT", "8888"))
-LOG_DIR = ROOT / "runtime" / "portal_services"
-
-
 def service_url(env_name: str, default: str) -> str:
     return os.environ.get(env_name, default)
 
@@ -41,6 +36,7 @@ VIDEO_COLLECTION_DIR = WORKSPACE_ROOT / "Video-Collection"
 SCRIPT_ANALYSIS_DIR = WORKSPACE_ROOT / "Script-Analysis"
 SCRIPT_GENERATION_DIR = WORKSPACE_ROOT / "Script-Generation"
 SCRIPT_ADAPTATION_DIR = WORKSPACE_ROOT / "Script-Adaptation"
+SCRIPT_ADAPTATION_APP_DIR = SCRIPT_ADAPTATION_DIR / "software" / "Script-Adaptation-app"
 VIDEO_GENERATION_DIR = WORKSPACE_ROOT / "Video-Generation"
 FINISHED_VIDEO_MANAGER_DIR = WORKSPACE_ROOT / "Finished-Video-Manager"
 PRODUCT_SCRIPT_REWRITE_DIR = WORKSPACE_ROOT / "Product-Script-Rewrite"
@@ -58,7 +54,7 @@ def build_services() -> dict[str, dict]:
         "rewrite": service_url("OPC_PRODUCT_SCRIPT_REWRITE_URL", "http://127.0.0.1:9997/"),
         "compose": service_url("OPC_VIDEO_ASSEMBLY_AGENT_URL", "http://127.0.0.1:9998/"),
     }
-    return {
+    services = {
         "collect": {
             "label": "视频采集",
             "description": "采集 FastMoss 商品关联视频并下载 TikTok 素材",
@@ -85,7 +81,8 @@ def build_services() -> dict[str, dict]:
             "description": "生成视频模型需要的分镜、图片提示词和任务表",
             "url": urls["adapt"],
             "cwd": SCRIPT_ADAPTATION_DIR,
-            "command": ["bash", str(SCRIPT_ADAPTATION_DIR / "scripts" / "start_web.sh"), str(service_port(urls["adapt"], 9994))],
+            "launch_cwd": SCRIPT_ADAPTATION_APP_DIR,
+            "command": [agent_python(SCRIPT_ADAPTATION_DIR), "-m", "opc_engine.features.script_adaptation.script_adaptation_agent_web", "--port", str(service_port(urls["adapt"], 9994))],
         },
         "assemble": {
             "label": "视频产出",
@@ -116,11 +113,12 @@ def build_services() -> dict[str, dict]:
             "command": [agent_python(VIDEO_ASSEMBLY_DIR), str(VIDEO_ASSEMBLY_DIR / "app" / "server.py"), "--host", "127.0.0.1", "--port", str(service_port(urls["compose"], 9998))],
         },
     }
+    for service_id, service in services.items():
+        service["launch_agent_label"] = f"com.kesai.opc-agent.{service_id}"
+    return services
 
 
 SERVICES = build_services()
-SERVICE_PROCESSES: dict[str, subprocess.Popen] = {}
-SERVICE_LOCK = threading.Lock()
 
 
 def service_running(service: dict) -> bool:
@@ -134,14 +132,14 @@ def service_running(service: dict) -> bool:
 
 def service_status(service_id: str) -> dict:
     service = SERVICES[service_id]
-    process = SERVICE_PROCESSES.get(service_id)
+    running = service_running(service)
     return {
         "id": service_id,
         "label": service["label"],
         "description": service["description"],
         "url": service["url"],
-        "running": service_running(service),
-        "process_running": bool(process and process.poll() is None),
+        "running": running,
+        "process_running": running,
     }
 
 
@@ -156,30 +154,16 @@ def start_service(service_id: str) -> dict:
     if service_running(service):
         return service_status(service_id) | {"started": False, "message": "服务已运行"}
 
-    with SERVICE_LOCK:
-        process = SERVICE_PROCESSES.get(service_id)
-        if process and process.poll() is None:
-            return service_status(service_id) | {"started": False, "message": "服务正在启动"}
-
-        LOG_DIR.mkdir(parents=True, exist_ok=True)
-        log_path = LOG_DIR / f"{service_id}.log"
-        with log_path.open("a", encoding="utf-8") as log_file:
-            log_file.write(f"\n\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] start {' '.join(service['command'])}\n")
-            log_file.flush()
-            env = os.environ.copy()
-            env["PYTHONUNBUFFERED"] = "1"
-            chrome_path = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
-            if service_id == "collect" and not env.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE") and chrome_path.exists():
-                env["PLAYWRIGHT_CHROMIUM_EXECUTABLE"] = str(chrome_path)
-            process = subprocess.Popen(
-                service["command"],
-                cwd=str(service["cwd"]),
-                env=env,
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-            )
-        SERVICE_PROCESSES[service_id] = process
+    target = f"gui/{os.getuid()}/{service['launch_agent_label']}"
+    result = subprocess.run(
+        ["launchctl", "kickstart", target],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode:
+        detail = result.stderr.strip() or result.stdout.strip() or "launchctl kickstart 失败"
+        raise RuntimeError(f"Agent LaunchAgent 未安装或无法启动：{detail}")
     return service_status(service_id) | {"started": True, "message": "已发送启动命令"}
 
 

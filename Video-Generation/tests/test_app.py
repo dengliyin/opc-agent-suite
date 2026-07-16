@@ -101,6 +101,13 @@ def test_media_cleanup_route_is_owned_by_assembly_agent():
     assert "/grok/api/clear-archived-media" not in paths
 
 
+def test_script_delete_routes_exist_for_both_agents():
+    paths = {route.path for route in app_module.app.routes}
+
+    assert "/omni/api/scripts" in paths
+    assert "/grok/api/scripts" in paths
+
+
 def test_api_settings_save_shared_models_and_local_keys_separately(monkeypatch, tmp_path):
     calls = []
     shared = tmp_path / "agent_settings.env"
