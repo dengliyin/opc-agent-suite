@@ -3369,7 +3369,7 @@ PRODUCT_ID_HTML = r"""<!doctype html>
       const payload = await res.json();
       const state = await stateRes.json();
       rows = payload.rows || [];
-      products = state.products || [];
+      products = (state.products || []).filter(product => Number(product.video_count || 0) > 0);
       document.getElementById('configPath').textContent = payload.config_path || '';
       renderProductOptions();
       await loadProfiles();
