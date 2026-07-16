@@ -74,13 +74,19 @@ http://127.0.0.1:54345
 
 当前脚本不处理验证码、账号异常、风控提示。前端只显示比特窗口的 `id`、序号、编号、名称、平台和 URL，不返回代理账号、代理密码、Cookie 等敏感字段。
 
-发布配置保存在：
+商品 ID、店铺映射和商品简称保存在受 Git 跟踪的共享配置：
+
+```text
+config/product_mappings.json
+```
+
+在商品映射库中保存后应提交该文件，其他电脑执行 `git pull` 即可获得相同映射。比特浏览器账号、每日目标等本机发布配置保存在：
 
 ```text
 data/publish_config.json
 ```
 
-账号、商品 ID 和店铺映射只保存在本机 `data/publish_config.json`，示例代码不包含真实业务配置。
+`data/publish_config.json` 继续由 `.gitignore` 排除，不同步账号和其他本机运行状态。
 
 发布记录保存在：
 
