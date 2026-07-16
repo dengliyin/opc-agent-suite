@@ -25,11 +25,13 @@ class PublishQueue:
         executor: Callable[[dict[str, Any]], dict[str, Any]],
         interval_seconds: int = 10,
         profile_closer: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+        video_path_resolver: Callable[[str], str] | None = None,
     ) -> None:
         self.db_path = db_path
         self.executor = executor
         self.interval_seconds = interval_seconds
         self.profile_closer = profile_closer
+        self.video_path_resolver = video_path_resolver
         self._stop_event = threading.Event()
         self._wake_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -111,6 +113,14 @@ class PublishQueue:
             (key, value),
         )
 
+    def _resolve_video_path(self, value: str) -> str:
+        if not self.video_path_resolver:
+            return value
+        try:
+            return str(self.video_path_resolver(value))
+        except Exception:
+            return value
+
     def enqueue(self, tasks: list[dict[str, Any]]) -> list[int]:
         if not tasks:
             raise ValueError("请至少选择一个视频")
@@ -121,13 +131,13 @@ class PublishQueue:
             connection.execute("BEGIN IMMEDIATE")
             next_position = int(connection.execute("SELECT COALESCE(MAX(position), 0) + 1 FROM queue_tasks").fetchone()[0])
             active_paths = {
-                str(row[0])
+                self._resolve_video_path(str(row[0]))
                 for row in connection.execute(
                     "SELECT video_path FROM queue_tasks WHERE status IN ('pending', 'running')"
                 ).fetchall()
             }
             for task in tasks:
-                video_path = str(task.get("video_path", "")).strip()
+                video_path = self._resolve_video_path(str(task.get("video_path", "")).strip())
                 if video_path in active_paths:
                     raise ValueError(f"视频已在队列中：{Path(video_path).name}")
                 cursor = connection.execute(
@@ -170,6 +180,7 @@ class PublishQueue:
             execution_mode = self._get_meta(connection, "execution_mode", "visible")
         counts: dict[str, int] = {}
         for row in rows:
+            row["video_path"] = self._resolve_video_path(str(row.get("video_path", "")))
             row["ai_generated"] = bool(row.get("ai_generated"))
             counts[row["status"]] = counts.get(row["status"], 0) + 1
         return {
@@ -268,6 +279,7 @@ class PublishQueue:
                 (started_at, row["id"]),
             )
             task = dict(row)
+            task["video_path"] = self._resolve_video_path(str(task.get("video_path", "")))
             task["ai_generated"] = bool(task.get("ai_generated"))
             task["execution_mode"] = execution_mode
 

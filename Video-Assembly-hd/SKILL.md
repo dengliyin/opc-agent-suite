@@ -47,6 +47,8 @@ Sticker rules:
 
 Cleanup is owned by this agent, not Video Generation. It must never run automatically. Before deletion, verify each finished MP4 with FFprobe and require positive duration plus video and audio streams. Delete only source media and `.product-lock.json` files in the pending script directory. Preserve the Markdown script, `.exported.json` marker, and finished MP4, then set the marker status to `已清理`.
 
+Finished videos are written to `成品视频/产品/脚本同名.mp4`. Scanning and cleanup validation must continue to recognize legacy outputs at `成品视频/模型/日期/产品/脚本同名.mp4`, preferring the new path when both exist.
+
 ## CLI
 
 ```bash
