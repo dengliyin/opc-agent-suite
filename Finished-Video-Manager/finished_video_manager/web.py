@@ -26,6 +26,7 @@ TIKTOK_UPLOAD_FALLBACK_URL = "https://www.tiktok.com/tiktokstudio/upload?lang=en
 APP_ROOT = Path(__file__).resolve().parents[1]
 DATA_ROOT = APP_ROOT / "data"
 PUBLISH_CONFIG_PATH = DATA_ROOT / "publish_config.json"
+PRODUCT_MAPPINGS_PATH = APP_ROOT / "config" / "product_mappings.json"
 PUBLISH_RECORDS_PATH = DATA_ROOT / "publish_records.json"
 PUBLISH_QUEUE_PATH = DATA_ROOT / "publish_queue.sqlite3"
 VAULT_ROOT = Path(
@@ -68,6 +69,11 @@ DEFAULT_PUBLISH_CONFIG = {
         "target_per_account": 3,
     },
 }
+DEFAULT_PRODUCT_MAPPINGS = {
+    "product_links_by_store": {},
+    "product_short_names": {},
+    "product_links": {},
+}
 
 
 def read_json_file(path: Path, default: Any) -> Any:
@@ -88,7 +94,14 @@ def ensure_local_data_files() -> None:
 def load_publish_config() -> dict[str, Any]:
     ensure_local_data_files()
     config = read_json_file(PUBLISH_CONFIG_PATH, DEFAULT_PUBLISH_CONFIG)
-    return config if isinstance(config, dict) else DEFAULT_PUBLISH_CONFIG
+    if not isinstance(config, dict):
+        config = dict(DEFAULT_PUBLISH_CONFIG)
+    mappings = read_json_file(PRODUCT_MAPPINGS_PATH, DEFAULT_PRODUCT_MAPPINGS)
+    if isinstance(mappings, dict):
+        for key in DEFAULT_PRODUCT_MAPPINGS:
+            if key in mappings:
+                config[key] = mappings[key]
+    return config
 
 
 def load_publish_records() -> list[dict[str, Any]]:
@@ -103,7 +116,10 @@ def write_json_file(path: Path, value: Any) -> None:
 
 
 def save_publish_config(config: dict[str, Any]) -> None:
-    write_json_file(PUBLISH_CONFIG_PATH, config)
+    mappings = {key: config.get(key) or {} for key in DEFAULT_PRODUCT_MAPPINGS}
+    local_config = {key: value for key, value in config.items() if key not in DEFAULT_PRODUCT_MAPPINGS}
+    write_json_file(PRODUCT_MAPPINGS_PATH, mappings)
+    write_json_file(PUBLISH_CONFIG_PATH, local_config)
 
 
 def save_publish_records(records: list[dict[str, Any]]) -> None:
@@ -194,7 +210,7 @@ def load_product_info_catalog() -> list[dict[str, str]]:
 def product_ids_payload() -> dict[str, Any]:
     config = load_publish_config()
     return {
-        "config_path": PUBLISH_CONFIG_PATH.as_posix(),
+        "config_path": PRODUCT_MAPPINGS_PATH.as_posix(),
         "product_info_root": PRODUCT_INFO_ROOT.as_posix(),
         "products": load_product_info_catalog(),
         "accounts": config.get("accounts") or {},
