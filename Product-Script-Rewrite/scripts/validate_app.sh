@@ -58,7 +58,9 @@ assert '{{VALIDATION_FEEDBACK}}' not in prompt
 assert 'TR02-TROIL纯素藻油Omega-3' in prompt
 assert '### 镜头 1 (00:00.000 - 00:02.100)' in prompt
 assert '- **[主体]**' in prompt
-assert '只继承来源脚本的爆款机制，不继承来源脚本的内容缺陷' in prompt
+assert '剧情保留是最高优先级' in prompt
+assert '仅保留抽象的“钩子—证明—CTA”不算保留剧情' in prompt
+assert '主体、场景和核心动作默认不得更换' in prompt
 assert '至少两个不同镜头' in prompt
 assert '不得只展示包装而完全省略' in prompt
 assert '最终输出门槛（读完来源脚本后立即执行）' in prompt

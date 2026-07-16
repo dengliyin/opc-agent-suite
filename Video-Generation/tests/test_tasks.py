@@ -572,7 +572,7 @@ def test_process_direct_video_uses_character_product_and_script_without_storyboa
     assert "严格按脚本中每个镜头的时间段" in prompt
     assert "不得省略任何镜头，不得重排镜头顺序" in prompt
     assert "hello" in prompt
-    assert any("人物图 + 产品参考图 + 当前片段完整脚本" in entry["message"] for entry in refreshed["logs"])
+    assert any("人物图 + 产品参考图 + 当前片段镜头脚本" in entry["message"] for entry in refreshed["logs"])
 
 
 def test_process_direct_video_supports_grok_duration_and_references(tmp_path: Path) -> None:

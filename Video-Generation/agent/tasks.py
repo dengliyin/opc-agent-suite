@@ -1259,7 +1259,7 @@ class JobManager:
         self._log(
             job_id,
             "info",
-            f"片段{segment.index} 快速模式{self.settings.video_display_label}：使用人物图 + 产品参考图 + 当前片段完整脚本，prompt {len(video_prompt)} 字符",
+            f"片段{segment.index} 快速模式{self.settings.video_display_label}：使用人物图 + 产品参考图 + 当前片段镜头脚本，prompt {len(video_prompt)} 字符",
         )
         if video_api == "grok":
             omni_client.generate_video(

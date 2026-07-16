@@ -1,3 +1,5 @@
+import pytest
+
 from agent.markdown_parser import (
     build_direct_video_prompt,
     build_video_prompt,
@@ -191,3 +193,14 @@ def test_build_direct_video_prompt_locks_order_and_references() -> None:
     assert "音频与语言控制规则" in prompt
     assert "拍摄设备可见性规则" in prompt
     assert "### 镜头 1" in prompt
+    assert "故事提示词 1" not in prompt
+    assert "始终使用单一全屏画面" in prompt
+    assert "禁止分屏、拼贴、网格、画中画" in prompt
+    assert "镜头只能按脚本时间顺序依次切换" in prompt
+
+
+def test_build_direct_video_prompt_requires_shot_script() -> None:
+    segment = parse_segments(SAMPLE)[1]
+
+    with pytest.raises(ValueError, match="未找到镜头脚本"):
+        build_direct_video_prompt(segment)
