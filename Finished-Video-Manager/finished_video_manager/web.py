@@ -524,6 +524,16 @@ def list_bitbrowser_profiles() -> dict[str, Any]:
                 **parsed_name,
             }
         )
+    profiles.sort(
+        key=lambda profile: (
+            re.fullmatch(r"[A-Z]{2}", str(profile.get("country", ""))) is None,
+            str(profile.get("country", ""))
+            if re.fullmatch(r"[A-Z]{2}", str(profile.get("country", "")))
+            else "",
+            -int(profile["seq"]) if str(profile.get("seq", "")).isdigit() else 0,
+            str(profile.get("name", "")).casefold(),
+        )
+    )
     return {"profiles": profiles, "total": data.get("totalNum", len(profiles))}
 
 
