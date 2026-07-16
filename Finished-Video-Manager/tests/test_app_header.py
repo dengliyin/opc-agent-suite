@@ -65,11 +65,9 @@ class AppHeaderTest(unittest.TestCase):
         self.assertNotIn('id="bitGroup"', HTML)
         self.assertNotIn('/api/bitbrowser/groups', HTML)
 
-    def test_product_mapping_options_only_use_products_with_finished_videos(self) -> None:
-        self.assertIn(
-            "products = (state.products || []).filter(product => Number(product.video_count || 0) > 0);",
-            PRODUCT_ID_HTML,
-        )
+    def test_product_mapping_options_use_product_info_catalog(self) -> None:
+        self.assertIn("products = payload.products || [];", PRODUCT_ID_HTML)
+        self.assertNotIn("fetch('/api/state')", PRODUCT_ID_HTML)
 
     def test_shared_header_controls_use_a_fixed_border_box_height(self) -> None:
         self.assertIn("box-sizing:border-box;", APP_HEADER_STYLE)

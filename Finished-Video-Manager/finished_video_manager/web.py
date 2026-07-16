@@ -33,6 +33,7 @@ VAULT_ROOT = Path(
 ).expanduser()
 FINISHED_VIDEO_ROOT = VAULT_ROOT / "wiki" / "视频" / "成品视频"
 TITLE_LIBRARY_ROOT = VAULT_ROOT / "wiki" / "视频" / "视频标题库"
+PRODUCT_INFO_ROOT = VAULT_ROOT / "wiki" / "产品" / "产品信息"
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".webm"}
 PUBLISH_LOCK = threading.Lock()
 PUBLISH_QUEUE: PublishQueue | None = None
@@ -174,10 +175,28 @@ def flatten_product_id_rows(config: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def load_product_info_catalog() -> list[dict[str, str]]:
+    products: list[dict[str, str]] = []
+    if not PRODUCT_INFO_ROOT.exists():
+        return products
+    for path in PRODUCT_INFO_ROOT.glob("*.md"):
+        if path.name.startswith("_"):
+            continue
+        stem = re.sub(r"-产品信息$", "", path.stem).strip()
+        code, separator, name = stem.partition("-")
+        if not separator or not code.strip() or not name.strip():
+            continue
+        products.append({"code": code.strip().upper(), "name": name.strip()})
+    products.sort(key=lambda product: (product["code"], product["name"].casefold()))
+    return products
+
+
 def product_ids_payload() -> dict[str, Any]:
     config = load_publish_config()
     return {
         "config_path": PUBLISH_CONFIG_PATH.as_posix(),
+        "product_info_root": PRODUCT_INFO_ROOT.as_posix(),
+        "products": load_product_info_catalog(),
         "accounts": config.get("accounts") or {},
         "defaults": config.get("defaults") or {},
         "rows": flatten_product_id_rows(config),
@@ -3362,14 +3381,10 @@ PRODUCT_ID_HTML = r"""<!doctype html>
     let products = [];
     let bitProfiles = [];
     async function loadRows() {
-      const [res, stateRes] = await Promise.all([
-        fetch('/api/product-ids'),
-        fetch('/api/state'),
-      ]);
+      const res = await fetch('/api/product-ids');
       const payload = await res.json();
-      const state = await stateRes.json();
       rows = payload.rows || [];
-      products = (state.products || []).filter(product => Number(product.video_count || 0) > 0);
+      products = payload.products || [];
       document.getElementById('configPath').textContent = payload.config_path || '';
       renderProductOptions();
       await loadProfiles();

@@ -24,6 +24,12 @@ CAMERA_VISIBILITY_GUARD = (
     "除非[做什么动作]明确要求角色操作拍摄设备，否则所有拍摄设备和支撑物必须保持在画面外。"
 )
 
+DIRECT_VIDEO_LAYOUT_GUARD = (
+    "画面布局规则：始终使用单一全屏画面。"
+    "禁止分屏、拼贴、网格、画中画、故事板版式或同时展示多个镜头。"
+    "镜头只能按脚本时间顺序依次切换，任何时刻只能显示当前时间段对应的一个镜头。"
+)
+
 
 @dataclass(frozen=True)
 class Segment:
@@ -175,8 +181,12 @@ def build_video_prompt(segment: Segment) -> str:
 
 
 def build_direct_video_prompt(segment: Segment) -> str:
+    shot_match = re.search(r"^#{1,6}\s*镜头\s*\d+\b.*$", segment.raw_text, re.MULTILINE)
+    if shot_match is None:
+        raise ValueError(f"片段{segment.index}未找到镜头脚本，无法运行功能4")
+    shot_script = segment.raw_text[shot_match.start() :].strip()
     return (
-        "请根据第一张人物参考图、第二张产品参考图和当前片段完整脚本，直接生成一段真实商业带货短视频片段。"
+        "请根据第一张人物参考图、第二张产品参考图和当前片段镜头脚本，直接生成一段真实商业带货短视频片段。"
         "第一张参考图用于锁定人物外观、年龄、肤色、发型、脸部特征和整体气质；"
         "第二张参考图用于强制锁定产品外观、颜色、结构、包装、Logo、标签和可见文字。"
         "必须严格按脚本中每个镜头的时间段、画面内容、人物动作、产品露出方式和镜头语言执行；"
@@ -184,7 +194,8 @@ def build_direct_video_prompt(segment: Segment) -> str:
         "音频文案只作为镜头节奏和语境参考，不要生成字幕、贴纸或画面文字。"
         f"{VIDEO_AUDIO_LANGUAGE_GUARD}"
         f"{CAMERA_VISIBILITY_GUARD}"
+        f"{DIRECT_VIDEO_LAYOUT_GUARD}"
         "画面自然真实，适合竖屏短视频带货。\n\n"
-        "当前片段完整脚本如下：\n"
-        f"{segment.raw_text}"
+        "当前片段镜头脚本如下：\n"
+        f"{shot_script}"
     )
