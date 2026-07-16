@@ -1,5 +1,5 @@
 {
-  "_说明": "脚本产出 Agent 共享模型配置。Base URL、模型和运行参数随 Git 同步，API Key 单独保存在本机 model_settings.json。",
+  "_说明": "脚本生成智能体共享模型配置。除 API Key 外应提交到 Git。",
   "modelmesh_base_url": "https://api.deepseek.com",
   "script_generation_model": "deepseek-v4-pro",
   "script_generation_max_output_tokens": 24000,

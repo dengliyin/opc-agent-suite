@@ -38,6 +38,29 @@ class AppHeaderTest(unittest.TestCase):
 
         post.assert_called_once_with("/browser/list", {"page": 0, "pageSize": 100})
 
+    @patch("finished_video_manager.web.bitbrowser_post")
+    def test_profiles_are_sorted_by_country_then_descending_sequence(self, post) -> None:
+        post.return_value = {
+            "success": True,
+            "data": {
+                "list": [
+                    {"id": "ie-11", "seq": 11, "name": "IE-shop-type-channel-user"},
+                    {"id": "fr-14", "seq": 14, "name": "FR-shop-type-channel-user"},
+                    {"id": "es-9", "seq": 9, "name": "ES-shop-type-channel-user"},
+                    {"id": "fr-13", "seq": 13, "name": "FR-shop-type-channel-user2"},
+                    {"id": "unknown", "seq": 99, "name": "未命名窗口"},
+                ],
+                "totalNum": 5,
+            },
+        }
+
+        profiles = list_bitbrowser_profiles()["profiles"]
+
+        self.assertEqual(
+            [profile["id"] for profile in profiles],
+            ["es-9", "fr-14", "fr-13", "ie-11", "unknown"],
+        )
+
     def test_publish_page_has_no_group_management_controls(self) -> None:
         self.assertNotIn('id="bitGroup"', HTML)
         self.assertNotIn('/api/bitbrowser/groups', HTML)
