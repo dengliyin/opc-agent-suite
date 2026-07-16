@@ -206,11 +206,18 @@ def matching_rewrite_outputs(
     return matches
 
 
-def build_prompt(config: dict[str, Any], source_path: str | Path, target_product: str) -> str:
+def build_prompt(
+    config: dict[str, Any],
+    source_path: str | Path,
+    target_product: str,
+    source_text: str | None = None,
+) -> str:
     source, source_product = script_product(config, source_path)
     target = validate_product_name(config, target_product)
     template = prompt_path(config).read_text(encoding="utf-8")
-    source_text = source.read_text(encoding="utf-8", errors="ignore")
+    if source_text is None:
+        source_text = source.read_text(encoding="utf-8", errors="ignore")
+    source_text = normalize_source_markdown(source_text)
     replacements = {
         "{{SOURCE_PRODUCT}}": source_product,
         "{{TARGET_PRODUCT}}": target,
@@ -230,6 +237,24 @@ def clean_model_markdown(text: str) -> str:
     content = str(text or "").strip()
     fenced = re.fullmatch(r"```(?:markdown|md)?\s*\n(?P<body>.*)\n```", content, flags=re.S | re.I)
     return fenced.group("body").strip() if fenced else content
+
+
+def normalize_source_markdown(text: str) -> str:
+    lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        shot = re.match(r"^镜头\s*\d+\s*\([^\n]+\)\s*[:：]?\s*$", stripped)
+        if shot:
+            title = re.sub(r"\s*[:：]\s*$", "", stripped)
+            lines.append(f"### {title}")
+            continue
+        field = re.match(r"^(\[[^\]]+\]|【[^】]+】)\s*(.*)$", stripped)
+        if field:
+            body = field.group(2)
+            lines.append(f"- **{field.group(1)}**{f' {body}' if body else ''}")
+            continue
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def markdown_structure_markers(text: str) -> list[str]:
@@ -424,6 +449,7 @@ def validate_rewrite(source_text: str, output_text: str, target_product_info: st
     issues: list[str] = []
     if not output_text.strip():
         return ["模型返回内容为空"]
+    source_text = normalize_source_markdown(source_text)
     source_shots = len(re.findall(r"(?m)^#{2,4}\s*镜头\s*\d+", source_text))
     output_shots = len(re.findall(r"(?m)^#{2,4}\s*镜头\s*\d+", output_text))
     if source_shots and output_shots != source_shots:
@@ -481,6 +507,22 @@ def validate_rewrite(source_text: str, output_text: str, target_product_info: st
     return issues
 
 
+def speech_repair_prompt(output_text: str, issues: list[str]) -> str:
+    return f"""你正在修复一份产品短视频 Markdown 脚本中口播超时的问题。
+
+只允许缩短存在超时风险镜头的 `[音频文案]`，并在该镜头原本存在真实字幕时同步缩短 `[字幕]`。其他镜头内容、镜头标题、编号、时间轴、字段名称、字段顺序、产品事实、语言和 Markdown 结构必须原样保留。不要新增、删除、合并、拆分或重排任何镜头或字段。
+
+必须修复的超时问题：
+{chr(10).join(f'- {issue}' for issue in issues)}
+
+只输出修复后的完整 Markdown 脚本，不要输出说明、分析或代码围栏。
+
+待修复脚本：
+
+{output_text}
+"""
+
+
 def call_deepseek(prompt: str, config: dict[str, Any]) -> str:
     api_key = get_api_key(config)
     if not api_key:
@@ -527,19 +569,27 @@ def run_rewrite(
     output = output_path_for(config, source, target_product)
     previous_outputs = matching_rewrite_outputs(config, source, target_product)
     output.parent.mkdir(parents=True, exist_ok=True)
-    source_text = source.read_text(encoding="utf-8", errors="ignore")
+    source_text = normalize_source_markdown(source.read_text(encoding="utf-8", errors="ignore"))
     target_info_text = product_info_path(config, target_product).read_text(encoding="utf-8", errors="ignore")
     if log:
         if previous_outputs:
             log(f"检测到已有改写结果 {len(previous_outputs)} 份；新版校验通过后覆盖并仅保留一份")
         log(f"调用 DeepSeek：{source_product} -> {target_product}")
-    result = clean_model_markdown(call_deepseek(build_prompt(config, source, target_product), config))
+    result = clean_model_markdown(call_deepseek(build_prompt(config, source, target_product, source_text), config))
     issues = validate_rewrite(source_text, result, target_info_text)
+    repaired_speech = False
+    if issues and all("口播超时风险" in issue for issue in issues):
+        repaired_speech = True
+        if log:
+            log(f"首版仅有 {len(issues)} 项口播超时，自动压缩修复一次")
+        result = clean_model_markdown(call_deepseek(speech_repair_prompt(result, issues), config))
+        issues = validate_rewrite(source_text, result, target_info_text)
     if issues:
         detail = "；".join(issues)
+        stage = "口播压缩修复后" if repaired_speech else "模型首版输出"
         if log:
-            log(f"质量校验未通过，未写入且不自动重试: {detail}")
-        raise RuntimeError(f"模型首版输出未通过质量校验（未写入且不自动重试）: {detail}")
+            log(f"{stage}未通过质量校验，未写入: {detail}")
+        raise RuntimeError(f"{stage}未通过质量校验（未写入）: {detail}")
     temporary = output.with_name(f".{output.name}.{os.getpid()}.{time.time_ns()}.tmp")
     try:
         temporary.write_text(result.rstrip() + "\n", encoding="utf-8")

@@ -18,6 +18,7 @@ from product_script_rewrite.core import (
     list_products,
     load_config,
     matching_rewrite_outputs,
+    normalize_source_markdown,
     product_marker_matches,
     rewrite_origin_product,
     rewrite_source_identity,
@@ -83,6 +84,19 @@ structure_source = """### 镜头 1 (00:00.000 - 00:02.000)
 """
 structure_valid = structure_source.replace('来源产品', '目标产品').replace('原文', '改写文案')
 assert validate_rewrite(structure_source, structure_valid) == []
+plain_structure_source = """镜头 1 (00:00.000 - 00:02.000):
+[主体] 来源产品
+[音频文案] 原文
+---
+镜头 2 (00:02.000 - 00:04.000):
+[主体] 来源产品
+[音频文案] 原文
+"""
+normalized_plain = normalize_source_markdown(plain_structure_source)
+assert '### 镜头 1 (00:00.000 - 00:02.000)' in normalized_plain
+assert '- **[主体]** 来源产品' in normalized_plain
+assert normalize_source_markdown(normalized_plain) == normalized_plain
+assert validate_rewrite(plain_structure_source, structure_valid) == []
 
 subtitle_none_source = """### 镜头 1 (00:00.000 - 00:02.000)
 * **[音频文案]** 原文一
@@ -118,7 +132,7 @@ with TemporaryDirectory() as directory:
     info_root.mkdir()
     (info_root / 'B产品-产品信息.md').write_text('目标产品信息', encoding='utf-8')
     source_file = source_folder / source
-    source_file.write_text(structure_source, encoding='utf-8')
+    source_file.write_text(plain_structure_source, encoding='utf-8')
     other_source_file = other_source_folder / source
     other_source_file.write_text(structure_source, encoding='utf-8')
     legacy_output = target_folder / rewritten_filename(source, '旧简称')
@@ -141,7 +155,20 @@ with TemporaryDirectory() as directory:
         assert calls and len(calls) == 1
         assert written == canonical_output.resolve()
         assert written.read_text(encoding='utf-8') == structure_valid.rstrip() + '\n'
+        assert source_file.read_text(encoding='utf-8') == plain_structure_source
         assert matching_rewrite_outputs(temp_config, source_file, 'B产品') == [written]
+
+        calls.clear()
+        responses = [
+            structure_valid.replace('改写文案', 'uno dos tres cuatro cinco seis siete ocho nueve'),
+            structure_valid,
+        ]
+        core.call_deepseek = lambda prompt, call_config: calls.append(prompt) or responses.pop(0)
+        written = core.run_rewrite(source_file, 'B产品', config=temp_config)
+        assert len(calls) == 2
+        assert '只允许缩短存在超时风险镜头' in calls[1]
+        assert written.read_text(encoding='utf-8') == structure_valid.rstrip() + '\n'
+        assert source_file.read_text(encoding='utf-8') == plain_structure_source
 
         preserved = written.read_text(encoding='utf-8')
         calls.clear()
