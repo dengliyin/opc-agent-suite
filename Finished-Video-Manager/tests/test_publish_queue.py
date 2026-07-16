@@ -136,6 +136,33 @@ class PublishQueueTest(unittest.TestCase):
             self.assertTrue(payload["paused"])
             self.assertEqual(payload["tasks"][0]["status"], "needs_review")
 
+    def test_resolves_legacy_video_paths_for_queue_display_and_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            calls = []
+            old_path = "/finished/omni/2026-07-13/TEST/demo.mp4"
+            new_path = "/finished/TEST/demo.mp4"
+            queued = task("demo")
+            queued["video_path"] = old_path
+            db_path = Path(directory) / "queue.sqlite3"
+            legacy_queue = PublishQueue(db_path, lambda item: {})
+            legacy_queue.enqueue([queued])
+            queue = PublishQueue(
+                db_path,
+                lambda item: calls.append(item["video_path"]) or {},
+                interval_seconds=0,
+                video_path_resolver=lambda value: new_path if value == old_path else value,
+            )
+
+            self.assertEqual(queue.payload()["tasks"][0]["video_path"], new_path)
+            queue.start()
+            queue.control("resume")
+            deadline = time.time() + 2
+            while time.time() < deadline and not calls:
+                time.sleep(0.05)
+            queue.stop()
+
+        self.assertEqual(calls, [new_path])
+
 
 if __name__ == "__main__":
     unittest.main()

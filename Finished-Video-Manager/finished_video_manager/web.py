@@ -449,6 +449,29 @@ def safe_video_path(value: str) -> Path:
     return path
 
 
+def video_identity(path: Path) -> tuple[str, str]:
+    return path.parent.name.casefold(), path.name.casefold()
+
+
+def resolve_finished_video_path(value: str) -> str:
+    path = safe_video_path(value)
+    identity = video_identity(path)
+    flat_path = FINISHED_VIDEO_ROOT / path.parent.name / path.name
+    if flat_path.is_file():
+        return flat_path.resolve().as_posix()
+    if path.is_file():
+        return path.as_posix()
+    match = next(
+        (
+            candidate
+            for candidate in FINISHED_VIDEO_ROOT.rglob(path.name)
+            if candidate.is_file() and video_identity(candidate) == identity
+        ),
+        None,
+    )
+    return (match.resolve() if match else path).as_posix()
+
+
 def read_json_body(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
     length = int(handler.headers.get("Content-Length", "0") or "0")
     if length <= 0:
@@ -1627,19 +1650,19 @@ def scan_finished_videos(libraries: dict[str, dict[str, Any]], records: list[dic
         key=lambda item: item.as_posix().lower(),
     )
     flat_identities = {
-        (path.parent.name.casefold(), path.name.casefold())
+        video_identity(path)
         for path in paths
         if len(path.relative_to(FINISHED_VIDEO_ROOT).parts) == 2
     }
     published_by_identity: dict[tuple[str, str], dict[str, Any]] = {}
-    for path in paths:
-        record = published_records.get(path.as_posix())
-        if record:
-            published_by_identity.setdefault((path.parent.name.casefold(), path.name.casefold()), record)
+    for record in records:
+        if not isinstance(record, dict) or record.get("status") != "published" or not record.get("video_path"):
+            continue
+        published_by_identity.setdefault(video_identity(Path(str(record["video_path"]))), record)
 
     for path in paths:
         product_key = path.parent.name
-        identity = (product_key.casefold(), path.name.casefold())
+        identity = video_identity(path)
         relative_parts = path.relative_to(FINISHED_VIDEO_ROOT).parts
         is_flat_layout = len(relative_parts) == 2
         if not is_flat_layout and identity in flat_identities:
@@ -3980,6 +4003,7 @@ def main(argv: list[str] | None = None) -> None:
         run_tiktok_publish_locked,
         interval_seconds=10,
         profile_closer=close_bitbrowser_profile,
+        video_path_resolver=resolve_finished_video_path,
     )
     PUBLISH_QUEUE.start()
     print(f"成品管理 Web 界面: http://{args.host}:{args.port}", flush=True)
