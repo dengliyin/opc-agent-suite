@@ -568,6 +568,15 @@ TIMECODE_RANGE_PATTERN = re.compile(
     r"(?P<start>\d{1,2}:\d{2}(?:\.\d{1,3})?)\s*(?P<sep>[-~—至到]+)\s*(?P<end>\d{1,2}:\d{2}(?:\.\d{1,3})?)"
 )
 
+SHOT_HEADING_TIMECODE_PATTERN = re.compile(
+    r"^(?P<prefix>[ \t]*(?:#{1,6}[ \t]*)?镜头[ \t]*(?P<number>\d+)[ \t]*\([ \t]*)"
+    r"(?P<start>\d{1,2}:\d{2}(?:\.\d{1,3})?)[ \t]*"
+    r"(?P<sep>[-~—至到]+)[ \t]*"
+    r"(?P<end>\d{1,2}:\d{2}(?:\.\d{1,3})?)"
+    r"(?P<suffix>[ \t]*\)[ \t]*:?[ \t]*)$",
+    re.MULTILINE,
+)
+
 
 def extract_timecode_ranges(text):
     ranges = []
@@ -610,6 +619,61 @@ def enforce_configured_total_duration(config, text):
         "时间码已自动缩放: "
         f"结构化变量要求 {target_seconds:g} 秒，但模型输出结束在 {final_end:g} 秒；"
         f"已按比例缩放所有镜头时间码到 {format_timecode(target_seconds)}。"
+    ]
+
+
+def enforce_output_timeline(config, reference_text, generated_text):
+    reference_matches = list(SHOT_HEADING_TIMECODE_PATTERN.finditer(str(reference_text or "")))
+    generated_matches = list(SHOT_HEADING_TIMECODE_PATTERN.finditer(str(generated_text or "")))
+    reference_numbers = [int(match.group("number")) for match in reference_matches]
+    generated_numbers = [int(match.group("number")) for match in generated_matches]
+    if not reference_numbers:
+        raise ValueError("时间码校验失败: 参考稿中未识别到镜头标题时间码。")
+    if generated_numbers != reference_numbers:
+        raise ValueError(
+            "时间码校验失败: 输出镜头编号或数量与参考稿不一致；"
+            f"参考稿={reference_numbers}，输出={generated_numbers}。"
+        )
+
+    configured_duration = (config or {}).get("script_total_duration", "")
+    target_seconds = target_total_duration_seconds(config)
+    if preserves_original_script(configured_duration):
+        reference_timecodes = {
+            int(match.group("number")): (match.group("start"), match.group("end"))
+            for match in reference_matches
+        }
+        correction_label = "时间码已按参考稿恢复"
+        correction_detail = "原始时间码"
+    else:
+        reference_end = max(parse_timestamp_seconds(match.group("end")) or 0 for match in reference_matches)
+        if target_seconds is None or reference_end <= 0:
+            raise ValueError("时间码校验失败: 目标总时长或参考稿结束时间无效。")
+        ratio = target_seconds / reference_end
+        reference_timecodes = {
+            int(match.group("number")): (
+                format_timecode((parse_timestamp_seconds(match.group("start")) or 0) * ratio),
+                format_timecode((parse_timestamp_seconds(match.group("end")) or 0) * ratio),
+            )
+            for match in reference_matches
+        }
+        correction_label = "时间码已按参考稿时间比例重算"
+        correction_detail = f"目标 {format_timecode(target_seconds)} 时间码"
+    corrected_shots = []
+
+    def restore_timecode(match):
+        shot_number = int(match.group("number"))
+        start, end = reference_timecodes[shot_number]
+        if match.group("start") != start or match.group("end") != end:
+            corrected_shots.append(shot_number)
+        return f'{match.group("prefix")}{start} - {end}{match.group("suffix")}'
+
+    corrected = SHOT_HEADING_TIMECODE_PATTERN.sub(restore_timecode, str(generated_text or ""))
+    if not corrected_shots:
+        return corrected, []
+    return corrected, [
+        f"{correction_label}: "
+        f"模型时间码与参考时间轴不一致的镜头为 {corrected_shots}；"
+        f"已修正 {len(corrected_shots)} 个镜头的{correction_detail}。"
     ]
 
 
@@ -1845,10 +1909,11 @@ def resolve_output_root(config, output_dir=""):
 
 def write_script_outputs(config, output_dir, text, raw_response):
     text = normalize_camera_visibility(normalize_audio_translation_positions(text))
-    text, duration_warnings = enforce_configured_total_duration(config, text)
+    reference_path = get_reference_path(config)
+    reference_text = read_text_file(reference_path)
+    text, duration_warnings = enforce_output_timeline(config, reference_text, text)
     output_root = resolve_output_root(config, output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
-    reference_path = get_reference_path(config)
     country, author, source_id = reference_country_author_and_video_id(reference_path)
     product_name = safe_output_name(product_output_name(config))
     stage_name = script_output_stage_name(raw_response)
@@ -1892,7 +1957,7 @@ def write_script_outputs(config, output_dir, text, raw_response):
     for sequence_index, variant_text in enumerate(variants, start=1):
         variant_number = variant_numbers[sequence_index - 1]
         variant_text = normalize_camera_visibility(normalize_audio_translation_positions(variant_text))
-        variant_text, variant_duration_warnings = enforce_configured_total_duration(config, variant_text)
+        variant_text, variant_duration_warnings = enforce_output_timeline(config, reference_text, variant_text)
         output_path, raw_path = unique_script_output_paths(output_root, stem)
         output_path.write_text(variant_text.strip() + "\n", encoding="utf-8")
         raw_payload = dict(raw_response) if isinstance(raw_response, dict) else {"raw_response": raw_response}

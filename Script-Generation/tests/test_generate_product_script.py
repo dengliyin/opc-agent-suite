@@ -12,6 +12,69 @@ from opc_engine.features.script_generation import generate_product_script
 
 
 class GenerateProductScriptTests(unittest.TestCase):
+    def test_preserved_duration_restores_each_reference_shot_timecode(self):
+        reference = """镜头 1 (00:00.000 - 00:01.000):
+
+内容
+
+镜头 2 (00:01.000 - 00:02.500):
+
+内容
+"""
+        generated = """### 镜头 1 (00:00.000 - 00:02.000)
+
+新内容
+
+### 镜头 2 (00:02.000 - 00:04.000)
+
+新内容
+"""
+
+        corrected, warnings = generate_product_script.enforce_output_timeline(
+            {"script_total_duration": "不改变原脚本"},
+            reference,
+            generated,
+        )
+
+        self.assertIn("### 镜头 1 (00:00.000 - 00:01.000)", corrected)
+        self.assertIn("### 镜头 2 (00:01.000 - 00:02.500)", corrected)
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("已修正 2 个镜头", warnings[0])
+
+    def test_preserved_duration_rejects_changed_shot_structure(self):
+        reference = """镜头 1 (00:00.000 - 00:01.000):
+镜头 2 (00:01.000 - 00:02.500):
+"""
+        generated = """### 镜头 1 (00:00.000 - 00:01.000)
+### 镜头 3 (00:01.000 - 00:02.500)
+"""
+
+        with self.assertRaisesRegex(ValueError, "镜头编号或数量与参考稿不一致"):
+            generate_product_script.enforce_output_timeline(
+                {"script_total_duration": "不改变原脚本"},
+                reference,
+                generated,
+            )
+
+    def test_explicit_duration_scales_reference_timeline_not_model_timeline(self):
+        reference = """镜头 1 (00:00.000 - 00:01.000):
+镜头 2 (00:01.000 - 00:04.000):
+"""
+        generated = """### 镜头 1 (00:00.000 - 00:02.000)
+### 镜头 2 (00:02.000 - 00:04.000)
+"""
+
+        corrected, warnings = generate_product_script.enforce_output_timeline(
+            {"script_total_duration": "8秒"},
+            reference,
+            generated,
+        )
+
+        self.assertIn("### 镜头 1 (00:00.000 - 00:02.000)", corrected)
+        self.assertIn("### 镜头 2 (00:02.000 - 00:08.000)", corrected)
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("已按参考稿时间比例重算", warnings[0])
+
     def test_vietnam_and_philippines_country_defaults(self):
         self.assertEqual(generate_product_script.COUNTRY_DEFAULT_LANGUAGE["越南"], "越南语")
         self.assertEqual(generate_product_script.COUNTRY_DEFAULT_LANGUAGE["菲律宾"], "菲律宾语")
