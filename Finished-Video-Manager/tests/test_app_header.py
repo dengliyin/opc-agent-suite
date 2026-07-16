@@ -69,6 +69,11 @@ class AppHeaderTest(unittest.TestCase):
         self.assertIn("products = payload.products || [];", PRODUCT_ID_HTML)
         self.assertNotIn("fetch('/api/state')", PRODUCT_ID_HTML)
 
+    def test_home_page_reports_state_api_errors_before_rendering(self) -> None:
+        error_check = "if (!res.ok || state.error) throw new Error(state.error || '读取成品管理数据失败');"
+        self.assertIn(error_check, HTML)
+        self.assertLess(HTML.index(error_check), HTML.index("state.videos.map"))
+
     def test_shared_header_controls_use_a_fixed_border_box_height(self) -> None:
         self.assertIn("box-sizing:border-box;", APP_HEADER_STYLE)
         self.assertIn("height:32px;", APP_HEADER_STYLE)

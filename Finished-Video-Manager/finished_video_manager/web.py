@@ -2474,6 +2474,7 @@ HTML = r"""<!doctype html>
     async function loadState() {
       const res = await fetch('/api/state');
       state = await res.json();
+      if (!res.ok || state.error) throw new Error(state.error || '读取成品管理数据失败');
       document.getElementById('videoBadge').textContent = `视频 ${state.video_count}`;
       document.getElementById('productBadge').textContent = `产品 ${state.product_count}`;
       document.getElementById('libraryBadge').textContent = `标题库 ${state.library_count}`;
