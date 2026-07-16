@@ -4,8 +4,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${OPC_ENV_FILE:-${ROOT_DIR}/.env}"
 CONSOLE_LAUNCHD_LABEL="com.kesai.opc-console"
+AGENT_SERVICE_IDS=(collect analyze script adapt assemble finished rewrite compose)
 
 if command -v launchctl >/dev/null 2>&1; then
+  for service_id in "${AGENT_SERVICE_IDS[@]}"; do
+    launchctl kill SIGTERM "gui/$(id -u)/com.kesai.opc-agent.$service_id" >/dev/null 2>&1 || true
+  done
   launchctl bootout "gui/$(id -u)/$CONSOLE_LAUNCHD_LABEL" >/dev/null 2>&1 || true
 fi
 

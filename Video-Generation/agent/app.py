@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from .config import ENV_PATH, SETTINGS_PATH, Settings, load_settings, mask_secrets, update_env_values
 from .exporter import export_completed_scripts, restore_exported_scripts
-from .files import scan_scripts, script_to_dict, summarize_catalog
+from .files import character_image_path, scan_scripts, script_to_dict, storyboard_image_path, summarize_catalog, video_output_path
 from .product_lock import storyboard_meta_path
 from .tasks import JobManager, VALID_STAGES
 
@@ -98,6 +98,10 @@ class ExportRequest(BaseModel):
 class RestoreRequest(BaseModel):
     script_paths: Optional[List[str]] = None
     restore_videos: Optional[bool] = False
+
+
+class ScriptDeleteRequest(BaseModel):
+    script_paths: List[str] = Field(..., min_length=1)
 
 
 class ArtifactDeleteRequest(BaseModel):
@@ -707,6 +711,60 @@ def _restore_exported(provider: str, request: RestoreRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=_safe(str(exc)))
 
 
+def _delete_scripts(provider: str, request: ScriptDeleteRequest) -> Dict[str, Any]:
+    current = _settings_for(provider)
+    selected_paths = {Path(path).expanduser().resolve() for path in request.script_paths if path}
+    if not selected_paths:
+        raise HTTPException(status_code=400, detail="请至少选择一个脚本")
+
+    for job in _manager_for(provider).list_jobs():
+        if job.get("status") not in {"queued", "running"}:
+            continue
+        raw_job_paths = job.get("script_paths")
+        if raw_job_paths is None:
+            raise HTTPException(status_code=409, detail="当前任务会处理全部脚本，暂不能删除脚本")
+        active_paths = {Path(path).expanduser().resolve() for path in raw_job_paths if path}
+        if selected_paths & active_paths:
+            raise HTTPException(status_code=409, detail="所选脚本正在运行或排队，请等待任务完成或先取消任务")
+
+    try:
+        scripts = scan_scripts(current)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=_safe(f"读取脚本失败：{exc}"))
+    scripts_by_path = {script.md_path.resolve(): script for script in scripts}
+    missing = selected_paths - scripts_by_path.keys()
+    if missing:
+        raise HTTPException(status_code=404, detail=f"脚本不存在、已归档或不属于当前 Agent：{next(iter(sorted(missing)))}")
+
+    deletion_plan: List[Path] = []
+    for script_path in sorted(selected_paths):
+        script = scripts_by_path[script_path]
+        deletion_plan.append(script.md_path.resolve())
+        for segment in script.segments:
+            character_path = character_image_path(script.md_path, segment.index, current.artifact_prefix).resolve()
+            storyboard_path = storyboard_image_path(script.md_path, segment.index, current.artifact_prefix).resolve()
+            video_path = video_output_path(current, script.product_name, script.md_path, segment.index).resolve()
+            deletion_plan.extend(
+                [
+                    character_path,
+                    storyboard_path,
+                    storyboard_meta_path(storyboard_path),
+                    video_path,
+                    storyboard_meta_path(video_path),
+                ]
+            )
+
+    deleted: List[str] = []
+    try:
+        for target in dict.fromkeys(deletion_plan):
+            if target.exists() and target.is_file():
+                target.unlink()
+                deleted.append(str(target))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=_safe(f"删除脚本及附属文件失败：{exc}"))
+    return {"scripts_deleted": len(selected_paths), "files_deleted": len(deleted), "deleted": deleted}
+
+
 def _list_jobs(provider: str) -> Dict[str, Any]:
     return {"jobs": _manager_for(provider).list_jobs()}
 
@@ -936,6 +994,17 @@ def restore_omni_exported(request: RestoreRequest) -> Dict[str, Any]:
 @app.post("/grok/api/restore-exported")
 def restore_grok_exported(request: RestoreRequest) -> Dict[str, Any]:
     return _restore_exported("grok", request)
+
+
+@app.delete("/api/scripts")
+@app.delete("/omni/api/scripts")
+def delete_omni_scripts(request: ScriptDeleteRequest) -> Dict[str, Any]:
+    return _delete_scripts("omni", request)
+
+
+@app.delete("/grok/api/scripts")
+def delete_grok_scripts(request: ScriptDeleteRequest) -> Dict[str, Any]:
+    return _delete_scripts("grok", request)
 
 
 

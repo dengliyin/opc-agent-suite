@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+from unittest import mock
 import unittest
 from pathlib import Path
 
@@ -36,6 +37,31 @@ class ConsoleBoundaryTests(unittest.TestCase):
             with self.subTest(service=service["label"]):
                 self.assertEqual(service["cwd"].parent, WORKSPACE_ROOT)
                 self.assertNotEqual(service["cwd"], CONSOLE_ROOT)
+
+    def test_every_service_has_an_independent_launch_agent(self):
+        for service_id, service in self.app.SERVICES.items():
+            self.assertEqual(service["launch_agent_label"], f"com.kesai.opc-agent.{service_id}")
+
+    def test_start_service_uses_launchctl_kickstart(self):
+        with (
+            mock.patch.object(self.app, "service_running", return_value=False),
+            mock.patch.object(self.app.subprocess, "run") as run,
+        ):
+            run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+            result = self.app.start_service("collect")
+
+        run.assert_called_once_with(
+            ["launchctl", "kickstart", f"gui/{self.app.os.getuid()}/com.kesai.opc-agent.collect"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertTrue(result["started"])
+
+    def test_agent_launchd_template_is_on_demand(self):
+        template = (WORKSPACE_ROOT / "scripts" / "launchd" / "com.kesai.opc-agent.plist.template").read_text(encoding="utf-8")
+        self.assertNotIn("RunAtLoad", template)
+        self.assertNotIn("KeepAlive", template)
 
     def test_console_no_longer_exposes_legacy_business_routes(self):
         self.assertTrue({"/product", "/publish", "/metrics", "/optimize"}.isdisjoint(self.app.ROUTE_TO_SERVICE))

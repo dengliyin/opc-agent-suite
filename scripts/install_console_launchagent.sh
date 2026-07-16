@@ -27,6 +27,10 @@ source "$ENV_FILE"
 set +a
 PORT="${KESAI_APP_PORT:-8888}"
 
+if [ ! -f "$HOME/Library/LaunchAgents/com.kesai.opc-agent.collect.plist" ]; then
+  "$ROOT_DIR/scripts/install_agent_launchagents.sh"
+fi
+
 launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
 
 for pid in $(lsof -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true); do
