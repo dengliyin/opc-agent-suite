@@ -26,7 +26,7 @@ python3 -m opc_engine.features.script_generation.script_generation_agent_web --p
 
 - 产品信息 Markdown。
 - 竞品爆款脚本或视频拆解 Markdown。
-- 可选目标总时长。
+- 视频总时长和逐镜时间码严格跟随爆款参考。
 - 可选裂变改写及裂变数量。
 - ModelMesh/Gemini 兼容模型配置。
 
@@ -66,8 +66,7 @@ python3 -m opc_engine.features.script_generation.generate_product_script
 ```bash
 python3 -m opc_engine.features.script_generation.generate_product_script \
   --product-doc /path/to/product.md \
-  --reference-script /path/to/competitor.md \
-  --total-duration 40s
+  --reference-script /path/to/competitor.md
 ```
 
 ## 输出

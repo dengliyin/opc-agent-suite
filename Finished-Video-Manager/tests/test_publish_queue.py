@@ -107,6 +107,32 @@ class PublishQueueTest(unittest.TestCase):
             self.assertEqual(modes, ["headless"])
             self.assertEqual(queue.payload()["execution_mode"], "headless")
 
+    def test_retried_task_forces_visible_without_changing_other_headless_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            calls = []
+            closed_profiles = []
+            path = Path(directory) / "queue.sqlite3"
+            queue = PublishQueue(
+                path,
+                lambda item: calls.append((item["video_name"], item["execution_mode"])) or {},
+                interval_seconds=0,
+                profile_closer=lambda item: closed_profiles.append(item["profile_id"]) or {"success": True},
+            )
+            retry_id, _normal_id = queue.enqueue([task("retry"), task("normal", "profile-2")])
+            with sqlite3.connect(path) as connection:
+                connection.execute("UPDATE queue_tasks SET status='failed' WHERE id=?", (retry_id,))
+            queue.task_action(retry_id, "retry")
+            queue.start()
+            queue.control("resume", "headless")
+            deadline = time.time() + 3
+            while time.time() < deadline and queue.payload()["counts"].get("published") != 2:
+                time.sleep(0.05)
+            queue.stop()
+
+            self.assertEqual(calls, [("normal.mp4", "headless"), ("retry.mp4", "visible")])
+            self.assertIn("profile-1", closed_profiles)
+            self.assertEqual(queue.payload()["execution_mode"], "headless")
+
     def test_executes_in_reordered_sequence_with_interval(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             calls = []

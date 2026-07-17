@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import html
 import json
 import os
 import subprocess
@@ -154,7 +153,28 @@ def start_service(service_id: str) -> dict:
     if service_running(service):
         return service_status(service_id) | {"started": False, "message": "服务已运行"}
 
-    target = f"gui/{os.getuid()}/{service['launch_agent_label']}"
+    domain = f"gui/{os.getuid()}"
+    target = f"{domain}/{service['launch_agent_label']}"
+    registration = subprocess.run(
+        ["launchctl", "print", target],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if registration.returncode:
+        plist_path = Path.home() / "Library" / "LaunchAgents" / f"{service['launch_agent_label']}.plist"
+        if not plist_path.is_file():
+            raise RuntimeError(f"Agent LaunchAgent 配置不存在：{plist_path}")
+        bootstrap = subprocess.run(
+            ["launchctl", "bootstrap", domain, str(plist_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if bootstrap.returncode:
+            detail = bootstrap.stderr.strip() or bootstrap.stdout.strip() or "launchctl bootstrap 失败"
+            raise RuntimeError(f"Agent LaunchAgent 注册失败：{detail}")
+
     result = subprocess.run(
         ["launchctl", "kickstart", target],
         capture_output=True,
@@ -251,7 +271,7 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, json.JSONDecodeError) as exc:
             self.send_json(400, {"error": str(exc)})
         except Exception as exc:
-            self.send_json(500, {"error": html.escape(str(exc))})
+            self.send_json(500, {"error": str(exc)})
 
     def log_message(self, *_args) -> None:
         return

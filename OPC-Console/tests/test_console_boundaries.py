@@ -47,21 +47,59 @@ class ConsoleBoundaryTests(unittest.TestCase):
             mock.patch.object(self.app, "service_running", return_value=False),
             mock.patch.object(self.app.subprocess, "run") as run,
         ):
-            run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+            run.side_effect = [
+                mock.Mock(returncode=0, stdout="", stderr=""),
+                mock.Mock(returncode=0, stdout="", stderr=""),
+            ]
             result = self.app.start_service("collect")
 
-        run.assert_called_once_with(
-            ["launchctl", "kickstart", f"gui/{self.app.os.getuid()}/com.kesai.opc-agent.collect"],
-            capture_output=True,
-            text=True,
-            check=False,
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [
+                ["launchctl", "print", f"gui/{self.app.os.getuid()}/com.kesai.opc-agent.collect"],
+                ["launchctl", "kickstart", f"gui/{self.app.os.getuid()}/com.kesai.opc-agent.collect"],
+            ],
         )
+        self.assertTrue(result["started"])
+
+    def test_start_service_bootstraps_an_unregistered_launch_agent(self):
+        with (
+            mock.patch.object(self.app, "service_running", return_value=False),
+            mock.patch.object(self.app.subprocess, "run") as run,
+            mock.patch.object(self.app.Path, "is_file", return_value=True),
+        ):
+            run.side_effect = [
+                mock.Mock(returncode=1, stdout="", stderr="Could not find service"),
+                mock.Mock(returncode=0, stdout="", stderr=""),
+                mock.Mock(returncode=0, stdout="", stderr=""),
+            ]
+            result = self.app.start_service("adapt")
+
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(commands[0][:2], ["launchctl", "print"])
+        self.assertEqual(commands[1][:3], ["launchctl", "bootstrap", f"gui/{self.app.os.getuid()}"])
+        self.assertEqual(commands[2][:2], ["launchctl", "kickstart"])
         self.assertTrue(result["started"])
 
     def test_agent_launchd_template_is_on_demand(self):
         template = (WORKSPACE_ROOT / "scripts" / "launchd" / "com.kesai.opc-agent.plist.template").read_text(encoding="utf-8")
         self.assertNotIn("RunAtLoad", template)
         self.assertNotIn("KeepAlive", template)
+
+    def test_agent_installer_uses_each_agents_virtual_environment(self):
+        installer = (WORKSPACE_ROOT / "scripts" / "install_agent_launchagents.sh").read_text(encoding="utf-8")
+        for directory in (
+            "Video-Collection",
+            "Script-Analysis",
+            "Script-Generation",
+            "Script-Adaptation",
+            "Video-Generation",
+            "Finished-Video-Manager",
+            "Product-Script-Rewrite",
+            "Video-Assembly-hd",
+        ):
+            self.assertIn(f'"{directory}"', installer)
+        self.assertIn('python_path="$ROOT_DIR/$agent_dir/.venv/bin/python"', installer)
 
     def test_console_no_longer_exposes_legacy_business_routes(self):
         self.assertTrue({"/product", "/publish", "/metrics", "/optimize"}.isdisjoint(self.app.ROUTE_TO_SERVICE))

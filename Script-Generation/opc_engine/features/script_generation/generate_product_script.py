@@ -512,40 +512,6 @@ def preserves_original_script(value):
     return str(value or "").strip() in {"", "不改变原脚本", "跟随原脚本", "保持原脚本", "不变"}
 
 
-def parse_duration_seconds(value):
-    text = str(value or "").strip()
-    if preserves_original_script(text):
-        return None
-    match = re.fullmatch(r"(\d+(?:\.\d+)?)\s*(?:秒|s|sec|secs|second|seconds)?", text, re.I)
-    if match:
-        return float(match.group(1))
-    match = re.fullmatch(r"(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?", text)
-    if match:
-        hours = int(match.group(1) or 0)
-        minutes = int(match.group(2) or 0)
-        seconds = int(match.group(3) or 0)
-        millis = int((match.group(4) or "0").ljust(3, "0")[:3])
-        return hours * 3600 + minutes * 60 + seconds + millis / 1000
-    match = re.fullmatch(r"(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?", text)
-    if match:
-        minutes = int(match.group(1) or 0)
-        seconds = int(match.group(2) or 0)
-        millis = int((match.group(3) or "0").ljust(3, "0")[:3])
-        return minutes * 60 + seconds + millis / 1000
-    return None
-
-
-def target_total_duration_seconds(config):
-    return parse_duration_seconds((config or {}).get("script_total_duration", ""))
-
-
-def format_timecode(seconds):
-    total_millis = max(0, int(round(float(seconds or 0) * 1000)))
-    minutes, remainder = divmod(total_millis, 60_000)
-    secs, millis = divmod(remainder, 1000)
-    return f"{minutes:02d}:{secs:02d}.{millis:03d}"
-
-
 def parse_timestamp_seconds(value):
     text = str(value or "").strip()
     match = re.fullmatch(r"(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?", text)
@@ -589,39 +555,6 @@ def extract_timecode_ranges(text):
     return ranges
 
 
-def enforce_configured_total_duration(config, text):
-    target_seconds = target_total_duration_seconds(config)
-    content = str(text or "")
-    if target_seconds is None or not content.strip():
-        return content, []
-
-    ranges = extract_timecode_ranges(content)
-    if not ranges:
-        return content, [f"时间码警告: 已指定视频总时长 {target_seconds:g} 秒，但输出中未识别到镜头时间码。"]
-
-    final_end = max(end for _start, end, _raw in ranges)
-    if final_end <= 0:
-        return content, [f"时间码警告: 已指定视频总时长 {target_seconds:g} 秒，但输出时间码结束时间无效。"]
-    if abs(final_end - target_seconds) <= 0.15:
-        return content, []
-
-    ratio = target_seconds / final_end
-
-    def replace_range(match):
-        start = parse_timestamp_seconds(match.group("start"))
-        end = parse_timestamp_seconds(match.group("end"))
-        if start is None or end is None:
-            return match.group(0)
-        return f"{format_timecode(start * ratio)} - {format_timecode(end * ratio)}"
-
-    scaled = TIMECODE_RANGE_PATTERN.sub(replace_range, content)
-    return scaled, [
-        "时间码已自动缩放: "
-        f"结构化变量要求 {target_seconds:g} 秒，但模型输出结束在 {final_end:g} 秒；"
-        f"已按比例缩放所有镜头时间码到 {format_timecode(target_seconds)}。"
-    ]
-
-
 def enforce_output_timeline(config, reference_text, generated_text):
     reference_matches = list(SHOT_HEADING_TIMECODE_PATTERN.finditer(str(reference_text or "")))
     generated_matches = list(SHOT_HEADING_TIMECODE_PATTERN.finditer(str(generated_text or "")))
@@ -635,29 +568,10 @@ def enforce_output_timeline(config, reference_text, generated_text):
             f"参考稿={reference_numbers}，输出={generated_numbers}。"
         )
 
-    configured_duration = (config or {}).get("script_total_duration", "")
-    target_seconds = target_total_duration_seconds(config)
-    if preserves_original_script(configured_duration):
-        reference_timecodes = {
-            int(match.group("number")): (match.group("start"), match.group("end"))
-            for match in reference_matches
-        }
-        correction_label = "时间码已按参考稿恢复"
-        correction_detail = "原始时间码"
-    else:
-        reference_end = max(parse_timestamp_seconds(match.group("end")) or 0 for match in reference_matches)
-        if target_seconds is None or reference_end <= 0:
-            raise ValueError("时间码校验失败: 目标总时长或参考稿结束时间无效。")
-        ratio = target_seconds / reference_end
-        reference_timecodes = {
-            int(match.group("number")): (
-                format_timecode((parse_timestamp_seconds(match.group("start")) or 0) * ratio),
-                format_timecode((parse_timestamp_seconds(match.group("end")) or 0) * ratio),
-            )
-            for match in reference_matches
-        }
-        correction_label = "时间码已按参考稿时间比例重算"
-        correction_detail = f"目标 {format_timecode(target_seconds)} 时间码"
+    reference_timecodes = {
+        int(match.group("number")): (match.group("start"), match.group("end"))
+        for match in reference_matches
+    }
     corrected_shots = []
 
     def restore_timecode(match):
@@ -671,9 +585,9 @@ def enforce_output_timeline(config, reference_text, generated_text):
     if not corrected_shots:
         return corrected, []
     return corrected, [
-        f"{correction_label}: "
+        "时间码已按参考稿恢复: "
         f"模型时间码与参考时间轴不一致的镜头为 {corrected_shots}；"
-        f"已修正 {len(corrected_shots)} 个镜头的{correction_detail}。"
+        f"已修正 {len(corrected_shots)} 个镜头的原始时间码。"
     ]
 
 
@@ -751,17 +665,9 @@ def build_generation_prompt(config):
     product_manual = get_product_manual(config)
     competitor_reference = read_text_file(reference_path)
 
-    total_duration = str(config.get("script_total_duration", "") or "").strip()
-    target_duration_seconds = target_total_duration_seconds(config)
     country = str(config.get("script_country", "") or "").strip()
     target_language = normalized_target_language(config)
-    duration_instruction = (
-        f"请将新脚本严格控制为 {total_duration}。这是硬性结构化变量，优先级高于参考爆款内容。"
-        f"如果参考爆款原视频不是 {total_duration}，不得沿用原时间码，必须按原镜头节奏比例重新压缩/拉伸每个镜头时间码；"
-        f"最后一个镜头的结束时间必须是 {format_timecode(target_duration_seconds)}。"
-        if not preserves_original_script(total_duration)
-        else f"未单独指定；请跟随{reference_label}中的原视频总时长，并保持原视频的镜头时长比例。"
-    )
+    duration_instruction = f"必须跟随{reference_label}中的原视频总时长，并原样保持每个镜头的时间码。"
     source_country, _source_author, _source_id = reference_country_author_and_video_id(reference_path)
     source_country_note = source_country or "未从文件名识别"
     country_instruction = (
@@ -836,9 +742,9 @@ def build_generation_prompt(config):
 
 - 你正在做的是“脚本产出”：把竞品爆款视频的底层逻辑、情绪节奏、转场力度和话术杀伤力，复刻成适配我方产品的新带货视频脚本。
 - 必须同时参考“{prompt_inputs_text}”；其中参考爆款内容是唯一案例来源，错题本只用于避免重复历史错误、错误卖点、错误表达、合规风险和不适合本产品的转化角度。
-- 当参考爆款内容是竞品脚本时，必须先拆出它的镜头节奏、痛点递进、情绪强度、卖点进入顺序和 CTA 位置；人物数量、角色功能、年龄段、动作路径、镜头语言、光线、贴纸位置、特效和 BGM 是锁定项。若“视频总时长”已指定，则只允许按目标总时长重算时间码，不得沿用冲突的原时间码。
+- 当参考爆款内容是竞品脚本时，必须先拆出它的镜头节奏、痛点递进、情绪强度、卖点进入顺序和 CTA 位置；人物数量、角色功能、年龄段、动作路径、镜头语言、光线、贴纸位置、特效、BGM 和每个镜头的时间码都是锁定项。
 - 竞品里的旧产品、旧痛点、旧机制只有在与“产品手册信息”不一致或不合规时才替换；替换范围仅限产品占位、音频文案、字幕和贴纸文案中的产品信息。若“国家/地区”指定了具体市场，还必须把人物外观、服装审美、场景陈设和消费语境本地化到该市场，但不得改变镜头功能、动作路径或重写整条画面结构。
-- 必须严格遵守“国家/地区、目标语言、视频总时长”三个结构化变量；这些变量优先级高于参考脚本。国家/地区指定具体市场时，[主体]、[在场景中]、[画面风格/氛围] 和本地化表达必须服务于该市场；目标语言指定具体语言时，所有口播、字幕、贴纸文案和屏幕文字必须使用该语言。尤其是视频总时长：指定了具体秒数时，所有镜头时间码必须落在该总时长内，最后一个镜头结束时间必须等于该总时长。
+- 必须严格遵守“国家/地区、目标语言”两个结构化变量；这些变量优先级高于参考脚本。国家/地区指定具体市场时，[主体]、[在场景中]、[画面风格/氛围] 和本地化表达必须服务于该市场；目标语言指定具体语言时，所有口播、字幕、贴纸文案和屏幕文字必须使用该语言。视频总时长和逐镜时间码必须与参考脚本完全一致。
 - 如果目标语言是孟加拉语，台词列必须输出 Bengali / Bangla 文案；字幕列可以放中文翻译对照。不得用 Malay/Bahasa 代替 Bengali。
 - 如果目标语言是法语，台词列必须输出 French / Français 文案；字幕列可以放中文翻译对照。不得用 Spanish / Español、德语或原脚本语言代替法语。
 - 每个镜头的 **[音频文案]** 必须输出真实目标语言台词，不能只写“目标语言口播（大意：……）”“马来语口播（大意：……）”这类说明；中文翻译对照只能放在该条音频文案最后一个括号里，禁止插在目标语言台词中间，且必须覆盖前面整段目标语言口播。
@@ -858,17 +764,7 @@ def build_mutation_prompt(config, generated_script, variant_count, batch_start=1
     reference_path = get_reference_path(config)
     country = str(config.get("script_country", "") or "").strip()
     target_language = normalized_target_language(config)
-    total_duration = str(config.get("script_total_duration", "") or "").strip()
-    target_duration_seconds = target_total_duration_seconds(config)
-    if preserves_original_script(total_duration):
-        timecode_rule = "必须保持原脚本每个镜头的时间码、镜头编号、景别/机位逻辑、情绪强度、视觉奇观底层逻辑、叙事推进顺序和 CTA 位置。"
-    else:
-        target_timecode = format_timecode(target_duration_seconds) if target_duration_seconds is not None else total_duration
-        timecode_rule = (
-            f"必须保持原脚本的镜头编号、景别/机位逻辑、情绪强度、视觉奇观底层逻辑、叙事推进顺序和 CTA 位置，"
-            f"但不得沿用原脚本时间码；必须按视频总时长变量 {total_duration} 重新压缩/拉伸每个镜头时间码，"
-            f"所有镜头时间码必须落在目标总时长内，最后一个镜头结束时间必须是 {target_timecode}。"
-        )
+    timecode_rule = "必须保持原脚本每个镜头的时间码、镜头编号、景别/机位逻辑、情绪强度、视觉奇观底层逻辑、叙事推进顺序和 CTA 位置。"
 
     total_variant_count = total_variant_count or variant_count
     batch_end = batch_start + variant_count - 1
@@ -903,11 +799,11 @@ def build_mutation_prompt(config, generated_script, variant_count, batch_start=1
 目标语言变量：
 {target_language if not preserves_original_script(target_language) else "不改变原脚本"}
 
-视频总时长变量：
-{total_duration if not preserves_original_script(total_duration) else "不改变原脚本"}
+视频总时长：
+严格跟随裂变主输入，不得修改任何镜头时间码。
 
 裂变主输入：
-以下内容是本次唯一需要被裂变的脚本母稿。必须围绕它保留镜头结构、台词节奏、情绪推进和 CTA 位置；若视频总时长变量不是“不改变原脚本”，时间码必须按该变量重算。
+以下内容是本次唯一需要被裂变的脚本母稿。必须围绕它保留镜头结构、台词节奏、情绪推进、时间码和 CTA 位置。
 {generated_script}
 
 {f'''
@@ -1435,8 +1331,6 @@ def mutate_script_source(config, args, generated_script, reference_context=""):
         variant = variants[0] if variants else ""
         batch_validation_warnings = []
         if variant:
-            variant, duration_warnings = enforce_configured_total_duration(config, variant)
-            batch_validation_warnings.extend(duration_warnings)
             warnings = validate_audio_length_against_source(
                 source_audio_profiles,
                 extract_audio_profiles(variant),
@@ -1603,7 +1497,6 @@ def parse_args():
     parser.add_argument("--reference-analysis", default="", help="本次直接使用的竞品视频拆解 Markdown 路径")
     parser.add_argument("--country", default="", help="已弃用：脚本生产会从产品信息和参考脚本中自动识别市场语境")
     parser.add_argument("--target-language", default="", help="已弃用：脚本生产会从产品信息和参考脚本中自动识别目标语言")
-    parser.add_argument("--total-duration", default="", help="目标视频总时长；留空时跟随参考爆款原视频时长")
     parser.add_argument("--hook-duration", default="", help="已弃用：黄金钩子不再作为独立输入")
     parser.add_argument("--audio-emotion", default="", help="已弃用：情绪强度不再作为独立输入，直接参考竞品爆款")
     parser.add_argument("--enable-mutation", action="store_true", help="生成脚本后继续进行场景/人物/服饰道具裂变，并只保存裂变后的结果")
@@ -1630,8 +1523,6 @@ def apply_cli_overrides(config, args):
         config["script_country"] = args.country
     if getattr(args, "target_language", ""):
         config["script_target_language"] = args.target_language
-    if args.total_duration:
-        config["script_total_duration"] = args.total_duration
     if getattr(args, "enable_mutation", False):
         config["script_enable_mutation_rewrite"] = "true"
     config["script_mutation_mode"] = "standard"

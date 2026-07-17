@@ -86,7 +86,6 @@ CONFIG_SECTIONS: list[tuple[str, str, list[str]]] = [
             "script_country",
             "script_audio_emotion",
             "script_target_language",
-            "script_total_duration",
         ],
     ),
     (
