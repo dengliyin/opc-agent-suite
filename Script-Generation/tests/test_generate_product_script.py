@@ -105,15 +105,21 @@ class GenerateProductScriptTests(unittest.TestCase):
                 },
             }
 
-            output_paths, raw_paths = generate_product_script.write_script_outputs(
-                config,
-                str(root / "outputs"),
-                f"{variant_one}\n\n{variant_two}",
-                raw_response,
-            )
+            with patch.object(
+                generate_product_script,
+                "enforce_output_timeline",
+                wraps=generate_product_script.enforce_output_timeline,
+            ) as enforce_timeline:
+                output_paths, raw_paths = generate_product_script.write_script_outputs(
+                    config,
+                    str(root / "outputs"),
+                    f"{variant_one}\n\n{variant_two}",
+                    raw_response,
+                )
 
             self.assertEqual(len(output_paths), 2)
             self.assertEqual(len(raw_paths), 2)
+            self.assertEqual(enforce_timeline.call_count, 2)
             first_text = output_paths[0].read_text(encoding="utf-8")
             second_text = output_paths[1].read_text(encoding="utf-8")
             self.assertIn("第一条", first_text)
@@ -123,6 +129,36 @@ class GenerateProductScriptTests(unittest.TestCase):
             for saved_text in (first_text, second_text):
                 self.assertIn("镜头 1 (00:00.000 - 00:01.000)", saved_text)
                 self.assertIn("镜头 2 (00:01.000 - 00:03.000)", saved_text)
+
+    def test_clone_is_timeline_validated_once(self):
+        reference = """### 镜头 1 (00:00.000 - 00:01.000)
+### 镜头 2 (00:01.000 - 00:03.000)
+"""
+        clone = """### 镜头 1 (00:00.000 - 00:02.000)
+### 镜头 2 (00:02.000 - 00:04.000)
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            reference_path = root / "VN-author-1234567890123456789.md"
+            reference_path.write_text(reference, encoding="utf-8")
+            config = {
+                "script_reference_script_path": str(reference_path),
+                "script_product_document_path": str(root / "SIMC01-SIMC染发棒-产品信息.md"),
+            }
+            with patch.object(
+                generate_product_script,
+                "enforce_output_timeline",
+                wraps=generate_product_script.enforce_output_timeline,
+            ) as enforce_timeline:
+                output_paths, _raw_paths = generate_product_script.write_script_outputs(
+                    config,
+                    str(root / "outputs"),
+                    clone,
+                    {},
+                )
+
+            self.assertEqual(len(output_paths), 1)
+            self.assertEqual(enforce_timeline.call_count, 1)
 
     def test_vietnam_and_philippines_country_defaults(self):
         self.assertEqual(generate_product_script.COUNTRY_DEFAULT_LANGUAGE["越南"], "越南语")
