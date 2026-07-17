@@ -56,7 +56,7 @@ class GenerateProductScriptTests(unittest.TestCase):
                 generated,
             )
 
-    def test_explicit_duration_scales_reference_timeline_not_model_timeline(self):
+    def test_stale_explicit_duration_cannot_override_reference_timeline(self):
         reference = """镜头 1 (00:00.000 - 00:01.000):
 镜头 2 (00:01.000 - 00:04.000):
 """
@@ -70,10 +70,59 @@ class GenerateProductScriptTests(unittest.TestCase):
             generated,
         )
 
-        self.assertIn("### 镜头 1 (00:00.000 - 00:02.000)", corrected)
-        self.assertIn("### 镜头 2 (00:02.000 - 00:08.000)", corrected)
+        self.assertIn("### 镜头 1 (00:00.000 - 00:01.000)", corrected)
+        self.assertIn("### 镜头 2 (00:01.000 - 00:04.000)", corrected)
         self.assertEqual(len(warnings), 1)
-        self.assertIn("已按参考稿时间比例重算", warnings[0])
+        self.assertIn("已按参考稿恢复", warnings[0])
+
+    def test_multiple_mutations_are_validated_and_saved_independently(self):
+        reference = """### 镜头 1 (00:00.000 - 00:01.000)
+### 镜头 2 (00:01.000 - 00:03.000)
+"""
+        variant_one = """### 变体 #1
+### 镜头 1 (00:00.000 - 00:02.000)
+第一条
+### 镜头 2 (00:02.000 - 00:04.000)
+"""
+        variant_two = """### 变体 #2
+### 镜头 1 (00:00.000 - 00:02.000)
+第二条
+### 镜头 2 (00:02.000 - 00:04.000)
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            reference_path = root / "VN-author-1234567890123456789.md"
+            reference_path.write_text(reference, encoding="utf-8")
+            config = {
+                "script_reference_script_path": str(reference_path),
+                "script_product_document_path": str(root / "SIMC01-SIMC染发棒-产品信息.md"),
+            }
+            raw_response = {
+                "final_stage": "mutation_rewrite",
+                "mutation_rewrite_raw": {
+                    "mutation_variants": [variant_one, variant_two],
+                    "mutation_variant_numbers": [1, 2],
+                },
+            }
+
+            output_paths, raw_paths = generate_product_script.write_script_outputs(
+                config,
+                str(root / "outputs"),
+                f"{variant_one}\n\n{variant_two}",
+                raw_response,
+            )
+
+            self.assertEqual(len(output_paths), 2)
+            self.assertEqual(len(raw_paths), 2)
+            first_text = output_paths[0].read_text(encoding="utf-8")
+            second_text = output_paths[1].read_text(encoding="utf-8")
+            self.assertIn("第一条", first_text)
+            self.assertNotIn("第二条", first_text)
+            self.assertIn("第二条", second_text)
+            self.assertNotIn("第一条", second_text)
+            for saved_text in (first_text, second_text):
+                self.assertIn("镜头 1 (00:00.000 - 00:01.000)", saved_text)
+                self.assertIn("镜头 2 (00:01.000 - 00:03.000)", saved_text)
 
     def test_vietnam_and_philippines_country_defaults(self):
         self.assertEqual(generate_product_script.COUNTRY_DEFAULT_LANGUAGE["越南"], "越南语")

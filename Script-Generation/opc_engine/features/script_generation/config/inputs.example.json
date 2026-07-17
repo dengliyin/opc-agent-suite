@@ -4,7 +4,6 @@
   "script_reference_script_path": "/path/to/competitor_hot_script.md",
   "script_reference_analysis_path": "",
   "script_reference_kind": "竞品爆款脚本/拆解稿",
-  "script_total_duration": "",
   "script_enable_mutation_rewrite": "",
   "script_mutation_variants": "3",
   "output_dir": ""

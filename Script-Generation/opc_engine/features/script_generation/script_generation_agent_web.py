@@ -65,7 +65,6 @@ INPUT_KEYS = (
     "script_reference_kind",
     "script_country",
     "script_target_language",
-    "script_total_duration",
     "script_enable_mutation_rewrite",
     "script_mutation_variants",
     "output_dir",
@@ -416,7 +415,6 @@ def save_state(payload: dict[str, Any]) -> dict[str, Any]:
         inputs["product_project_slug"] = product_name
     inputs.setdefault("script_country", "不改变原脚本")
     inputs.setdefault("script_target_language", "不改变原脚本")
-    inputs.setdefault("script_total_duration", "不改变原脚本")
     inputs.setdefault("script_mutation_source", "复刻稿")
     inputs.setdefault("script_mutation_mode", "standard")
     inputs["script_content_knowledge_base_path"] = SCRIPT_MISTAKE_BOOK_SOURCE_ROOT.as_posix()
@@ -651,6 +649,16 @@ class GenerationJob:
             }
 
     def start(self, payload: dict[str, Any]) -> dict[str, Any]:
+        reference_value = str(
+            payload.get("script_reference_script_path")
+            or payload.get("script_reference_analysis_path")
+            or ""
+        ).strip()
+        if not reference_value:
+            raise ValueError("请先选择有效的爆款参考文件：竞品爆款脚本或竞品视频拆解 Markdown")
+        reference_path = resolve_root_path(reference_value)
+        if reference_path.suffix.lower() != ".md" or not reference_path.is_file():
+            raise ValueError("爆款参考文件无效或不存在，请重新选择 Markdown 文件")
         save_state(payload)
         with self.lock:
             task_id = self.next_id
@@ -784,7 +792,6 @@ class GenerationJob:
             ("--reference-analysis", payload.get("script_reference_analysis_path")),
             ("--country", payload.get("script_country")),
             ("--target-language", payload.get("script_target_language")),
-            ("--total-duration", payload.get("script_total_duration")),
             ("--timeout", payload.get("script_generation_timeout")),
             ("--max-output-tokens", payload.get("script_generation_max_output_tokens")),
         ]
@@ -1560,7 +1567,7 @@ HTML_PAGE = r"""<!doctype html>
           <button id="openReferenceBtn" disabled>打开脚本</button>
         </div>
         <input id="referencePath" type="hidden" />
-        <div class="grid3 variable-row">
+        <div class="grid2 variable-row">
           <div>
             <label>国家/地区</label>
             <select id="scriptCountry"></select>
@@ -1568,10 +1575,6 @@ HTML_PAGE = r"""<!doctype html>
           <div>
             <label>目标语言</label>
             <select id="targetLanguage"></select>
-          </div>
-          <div>
-            <label>视频总时长</label>
-            <input id="totalDuration" placeholder="不改变原脚本" />
           </div>
         </div>
         <div class="grid2 mutation-row">
@@ -1995,7 +1998,6 @@ HTML_PAGE = r"""<!doctype html>
         script_reference_analysis_path: '',
         script_country: $('scriptCountry').value.trim() || '不改变原脚本',
         script_target_language: $('targetLanguage').value.trim() || '不改变原脚本',
-        script_total_duration: $('totalDuration').value.trim() || '不改变原脚本',
         script_enable_mutation_rewrite: $('enableMutation').checked ? 'true' : '',
         script_mutation_variants: Number($('mutationVariants').value || 3),
         script_mutation_source: '复刻稿',
@@ -2022,7 +2024,6 @@ HTML_PAGE = r"""<!doctype html>
       $('referencePath').value = inputs.script_reference_script_path || inputs.script_reference_analysis_path || '';
       $('scriptCountry').value = normalizeOptionValue(inputs.script_country, COUNTRY_ALIASES, COUNTRY_OPTIONS);
       $('targetLanguage').value = normalizeOptionValue(inputs.script_target_language, LANGUAGE_ALIASES, LANGUAGE_OPTIONS);
-      $('totalDuration').value = inputs.script_total_duration || '不改变原脚本';
       $('enableMutation').checked = isTruthy(inputs.script_enable_mutation_rewrite);
       $('mutationVariants').value = inputs.script_mutation_variants || 3;
       $('outputDir').value = inputs.output_dir || outputDirForProduct($('productDoc').value);
@@ -2054,6 +2055,11 @@ HTML_PAGE = r"""<!doctype html>
 
     async function startRun(dryRun) {
       const body = payload();
+      const referencePath = body.script_reference_script_path || body.script_reference_analysis_path;
+      if (!referencePath) {
+        $('logs').textContent = '请先从爆款脚本列表选择一个参考脚本，再生成或裂变。';
+        return;
+      }
       body.dry_run = dryRun;
       await api('/api/run', {method: 'POST', body: JSON.stringify(body)});
       if (pollTimer) clearInterval(pollTimer);

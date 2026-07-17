@@ -3866,7 +3866,7 @@ QUEUE_HTML = r"""<!doctype html>
     }
     async function retryTask(id, status) {
       const warning = status === 'needs_review' ? '这个任务的发布结果不明确，重试可能造成重复发布。\n\n' : '';
-      if (!confirm(`${warning}确认将任务重新加到队尾？`)) return;
+      if (!confirm(`${warning}确认将任务重新加到队尾并强制使用可视执行？`)) return;
       await taskAction(id,'retry');
     }
     async function taskAction(taskId, action) { await post('/api/queue/task',{task_id:taskId,action}); }

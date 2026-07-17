@@ -56,7 +56,7 @@
 - 参考文件是否为 Markdown
 - `script_generation_prompt_path` 是否存在，或旧路径是否可兼容读取
 - 爆款内容知识库是否存在；如果不存在，可以继续，但必须知道模型上下文会少一块长期方法论
-- 可选 `script_total_duration` 是否来自配置；留空时应跟随参考爆款原视频时长
+- 参考爆款中的视频总时长和逐镜时间码是否完整可读；它们是生成结果时间轴的唯一真值
 - API Key 是否来自环境变量或本地配置
 - 可选裂变：`script_enable_mutation_rewrite` 和 `script_mutation_variants` 是否符合预期
 
@@ -73,7 +73,7 @@
 - 素材框架提取要求
 - 参考爆款内容，可能是拆解结果，也可能是竞品成品脚本
 - 参考爆款情绪和节奏
-- 视频总时长要求；如果未指定，则跟随参考爆款原视频时长
+- 视频总时长和逐镜时间码锁定要求；必须原样跟随参考爆款
 - 复刻规则与输出格式提示词
 - 本次额外约束
 
@@ -95,8 +95,7 @@
 ```bash
 python3 -m opc_engine.features.script_generation.generate_product_script \
   --product-doc /path/to/product.md \
-  --reference-script /path/to/hot_competitor_script.md \
-  --total-duration 40s
+  --reference-script /path/to/hot_competitor_script.md
 ```
 
 启用裂变：
@@ -138,7 +137,7 @@ python3 -m opc_engine.features.script_generation.generate_product_script --dry-r
 - 竞品爆款脚本 Markdown：`--reference-script` 或 `script_reference_script_path`
 - 脚本产出提示词路径：`script_generation_prompt_path`，默认只能指向本模块 `config/` 目录
 - 爆款内容知识库路径：`script_content_knowledge_base_path`，默认只能指向本模块 `config/` 目录
-- 视频总时长：可选 `script_total_duration`；留空时跟随参考爆款原视频时长
+- 视频总时长和逐镜时间码：不接受独立输入，始终原样跟随参考爆款
 - 裂变：可选 `script_enable_mutation_rewrite`；变体数量为 `script_mutation_variants`，默认 3
 - 模型参数：API Key、base URL、模型名、超时和最大输出 token
 

@@ -73,6 +73,11 @@ class PublishQueue:
                 )
                 """
             )
+            columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(queue_tasks)")}
+            if "execution_mode_override" not in columns:
+                connection.execute(
+                    "ALTER TABLE queue_tasks ADD COLUMN execution_mode_override TEXT NOT NULL DEFAULT ''"
+                )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS queue_meta (
@@ -230,7 +235,8 @@ class PublishQueue:
                 connection.execute(
                     """
                     UPDATE queue_tasks
-                    SET status='pending', position=?, started_at='', completed_at='', error='', result_url=''
+                    SET status='pending', position=?, started_at='', completed_at='', error='', result_url='',
+                        execution_mode_override='visible'
                     WHERE id=?
                     """,
                     (next_position, task_id),
@@ -281,13 +287,19 @@ class PublishQueue:
             task = dict(row)
             task["video_path"] = self._resolve_video_path(str(task.get("video_path", "")))
             task["ai_generated"] = bool(task.get("ai_generated"))
-            task["execution_mode"] = execution_mode
+            retry_visible = str(task.get("execution_mode_override", "")) == "visible"
+            task["execution_mode"] = "visible" if retry_visible else execution_mode
 
         status = "published"
         error = ""
         result_url = ""
         close_failed = False
         try:
+            if retry_visible and self.profile_closer:
+                try:
+                    self.profile_closer(task)
+                except Exception:
+                    pass
             result = self.executor(task)
             result_url = str(result.get("url") or result.get("tiktok_upload_url") or "")
         except Exception as exc:
