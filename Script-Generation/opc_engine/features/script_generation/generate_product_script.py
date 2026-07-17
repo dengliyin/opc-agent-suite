@@ -1802,12 +1802,14 @@ def write_script_outputs(config, output_dir, text, raw_response):
     text = normalize_camera_visibility(normalize_audio_translation_positions(text))
     reference_path = get_reference_path(config)
     reference_text = read_text_file(reference_path)
-    text, duration_warnings = enforce_output_timeline(config, reference_text, text)
+    stage_name = script_output_stage_name(raw_response)
+    duration_warnings = []
+    if stage_name == "复刻":
+        text, duration_warnings = enforce_output_timeline(config, reference_text, text)
     output_root = resolve_output_root(config, output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
     country, author, source_id = reference_country_author_and_video_id(reference_path)
     product_name = safe_output_name(product_output_name(config))
-    stage_name = script_output_stage_name(raw_response)
     source_part = f"{country}-{author}-{source_id}" if country else f"{author}-{source_id}"
     filename_country = output_country_for_filename(config, country)
     filename_part = f"{filename_country}-{author}-{source_id}" if filename_country else f"{author}-{source_id}"
