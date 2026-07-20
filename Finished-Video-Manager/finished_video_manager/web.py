@@ -871,7 +871,7 @@ def select_tiktok_video(page: Any, video_path: Path) -> str:
             continue
         for index in range(count):
             try:
-                inputs.nth(index).set_input_files(video_path.as_posix(), timeout=8000)
+                inputs.nth(index).set_input_files(video_path.as_posix(), timeout=60000)
                 return f"input:{selector}:{index}"
             except Exception:
                 continue
