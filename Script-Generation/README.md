@@ -77,7 +77,7 @@ python3 -m opc_engine.features.script_generation.generate_product_script \
 $OPC_VAULT_ROOT/wiki/视频/05产品视频脚本/<产品名>/
 ```
 
-每次生成保存 Markdown 和原始模型响应 JSON。同名结果自动追加 `_002`、`_003`，不会覆盖已有脚本。
+每次生成保存 Markdown 和原始模型响应 JSON。未勾选裂变时，同一参考脚本和国家版本会重新复刻并覆盖原复刻 Markdown 与 raw JSON；裂变结果仍自动追加 `_002`、`_003`，不会覆盖已有裂变脚本。
 
 ## 代码边界
 

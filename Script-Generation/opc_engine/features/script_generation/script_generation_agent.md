@@ -86,7 +86,7 @@
 - 成品脚本：`<source_id>_<product>.md`
 - 原始响应：`<source_id>_<product>.raw.json`
 
-如果同一产品信息和同一爆款参考被多次生成，不得覆盖旧结果。基础文件名已存在时，自动追加 `_002`、`_003` 等序号，原始响应 JSON 使用同一个序号。
+如果未启用裂变，同一产品、参考脚本和国家版本再次生成时，覆盖对应的原复刻 Markdown 和 raw JSON。裂变结果不得覆盖旧文件；基础文件名已存在时，自动追加 `_002`、`_003` 等序号，原始响应 JSON 使用同一个序号。
 
 默认输出目录应由 `infer_source_id(reference_path)` 和 `source_stage_dir(source_id, "scripts", config)` 决定。这样脚本能和上游竞品视频、拆解结果保持同一个 `source_id` 资产链路。
 

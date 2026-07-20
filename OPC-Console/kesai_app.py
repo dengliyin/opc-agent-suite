@@ -176,7 +176,7 @@ def start_service(service_id: str) -> dict:
             raise RuntimeError(f"Agent LaunchAgent 注册失败：{detail}")
 
     result = subprocess.run(
-        ["launchctl", "kickstart", target],
+        ["launchctl", "kickstart", "-k", target],
         capture_output=True,
         text=True,
         check=False,
@@ -205,10 +205,12 @@ main{max-width:1180px;margin:auto;padding:64px 24px 80px}header{display:flex;jus
 <script>
 const grid=document.querySelector('#grid'),summary=document.querySelector('#summary');
 let services=[];
+const startingServices=new Set();
 function esc(value){return String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function render(){grid.innerHTML=services.map((s,i)=>`<article class="card"><div class="top"><span class="step">STEP ${String(i+1).padStart(2,'0')}</span><span class="status ${s.running?'on':''}">${s.running?'运行中':'未启动'}</span></div><h2>${esc(s.label)}</h2><p class="desc">${esc(s.description)}</p><div class="actions"><button class="primary" onclick="startService('${esc(s.id)}',this)" ${s.running?'disabled':''}>${s.running?'已启动':'启动'}</button><a class="button" href="${esc(s.url)}" target="_blank" rel="noreferrer">打开</a></div></article>`).join('');const count=services.filter(s=>s.running).length;summary.textContent=`${count} / ${services.length} 个 Agent 运行中`;}
+function render(){grid.innerHTML=services.map((s,i)=>{const starting=startingServices.has(s.id)&&!s.running;return `<article class="card"><div class="top"><span class="step">STEP ${String(i+1).padStart(2,'0')}</span><span class="status ${s.running?'on':''}">${s.running?'运行中':starting?'启动中…':'未启动'}</span></div><h2>${esc(s.label)}</h2><p class="desc">${esc(s.description)}</p><div class="actions"><button class="primary" onclick="startService('${esc(s.id)}')" ${s.running||starting?'disabled':''}>${s.running?'已启动':starting?'启动中…':'启动'}</button><a class="button" href="${esc(s.url)}" target="_blank" rel="noreferrer">打开</a></div></article>`}).join('');const count=services.filter(s=>s.running).length;summary.textContent=`${count} / ${services.length} 个 Agent 运行中`;}
 async function refresh(){try{const r=await fetch('/api/agent-services');const data=await r.json();services=data.services;render()}catch(e){summary.textContent='服务状态读取失败'}}
-async function startService(id,button){button.disabled=true;button.textContent='启动中…';try{const r=await fetch('/api/agent-services/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});const data=await r.json();if(!r.ok)throw new Error(data.error||'启动失败');setTimeout(refresh,900)}catch(e){alert(e.message);button.disabled=false;button.textContent='启动'}}
+async function waitForService(id){const deadline=Date.now()+30000;while(Date.now()<deadline){await new Promise(resolve=>setTimeout(resolve,1000));await refresh();if(services.some(s=>s.id===id&&s.running))return true}return false}
+async function startService(id){startingServices.add(id);render();try{const r=await fetch('/api/agent-services/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});const data=await r.json();if(!r.ok)throw new Error(data.error||'启动失败');if(!await waitForService(id))throw new Error('Agent 启动超时，请检查对应运行日志')}catch(e){alert(e.message)}finally{startingServices.delete(id);await refresh()}}
 refresh();setInterval(refresh,4000);
 </script></body></html>"""
 

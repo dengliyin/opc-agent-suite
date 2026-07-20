@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import mimetypes
 import os
 import re
+import subprocess
 import sys
 import threading
 import time
+import unicodedata
 import urllib.request
 import urllib.parse
 from datetime import datetime
@@ -25,6 +28,9 @@ TIKTOK_UPLOAD_URL = "https://www.tiktok.com/tiktokstudio/upload?from=creator_cen
 TIKTOK_UPLOAD_FALLBACK_URL = "https://www.tiktok.com/tiktokstudio/upload?lang=en"
 APP_ROOT = Path(__file__).resolve().parents[1]
 DATA_ROOT = APP_ROOT / "data"
+THUMBNAIL_ROOT = DATA_ROOT / "thumbnails"
+FFMPEG_PATH = APP_ROOT.parent / "Video-Assembly-hd" / "runtime" / "bin" / "ffmpeg"
+THUMBNAIL_VERSION = "first-frame-v1"
 PUBLISH_CONFIG_PATH = DATA_ROOT / "publish_config.json"
 PRODUCT_MAPPINGS_PATH = APP_ROOT / "config" / "product_mappings.json"
 PUBLISH_RECORDS_PATH = DATA_ROOT / "publish_records.json"
@@ -669,13 +675,14 @@ def fill_tiktok_caption(page: Any, caption: str) -> bool:
         return False
 
     for hashtag in hashtags:
+        hashtag = unicodedata.normalize("NFC", hashtag)
         locator = visible_tiktok_caption_input(page)
         if not locator:
             return False
         focus_tiktok_caption_end(locator)
         if caption_text(locator):
             page.keyboard.press("Space")
-        page.keyboard.type(hashtag, delay=40)
+        type_tiktok_hashtag(page, hashtag)
         if not select_tiktok_hashtag_suggestion(page, locator, hashtag):
             return False
 
@@ -703,7 +710,29 @@ def focus_tiktok_caption_end(locator: Any) -> None:
     )
 
 
+def type_tiktok_hashtag(page: Any, hashtag: str) -> None:
+    hashtag = unicodedata.normalize("NFC", hashtag)
+    ascii_text = ""
+    for character in hashtag:
+        if character.isascii():
+            ascii_text += character
+            continue
+        if ascii_text:
+            page.keyboard.type(ascii_text, delay=40)
+            ascii_text = ""
+        page.keyboard.insert_text(character)
+        page.wait_for_timeout(40)
+    if ascii_text:
+        page.keyboard.type(ascii_text, delay=40)
+
+
+def normalize_hashtag(value: str) -> str:
+    value = unicodedata.normalize("NFC", value)
+    return re.sub(r"\s+", " ", value).strip().casefold()
+
+
 def select_tiktok_hashtag_suggestion(page: Any, locator: Any, hashtag: str) -> bool:
+    hashtag = unicodedata.normalize("NFC", hashtag)
     existing_count = locator.locator('[data-testid="mentionText"]').count()
     candidates = [hashtag]
     if hashtag.casefold() != hashtag:
@@ -714,7 +743,7 @@ def select_tiktok_hashtag_suggestion(page: Any, locator: Any, hashtag: str) -> b
             focus_tiktok_caption_end(locator)
             for _ in hashtag:
                 page.keyboard.press("Backspace")
-            page.keyboard.type(candidate, delay=40)
+            type_tiktok_hashtag(page, candidate)
 
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
@@ -724,7 +753,7 @@ def select_tiktok_hashtag_suggestion(page: Any, locator: Any, hashtag: str) -> b
                 if not option.is_visible():
                     continue
                 topic = option.locator('.hash-tag-topic')
-                if topic.count() != 1 or topic.first.inner_text().strip().casefold() != candidate.casefold():
+                if topic.count() != 1 or normalize_hashtag(topic.first.inner_text()) != normalize_hashtag(candidate):
                     continue
                 option.click(force=True, timeout=5000)
                 page.wait_for_timeout(300)
@@ -738,10 +767,10 @@ def tiktok_hashtags_are_mentions(locator: Any, hashtags: list[str]) -> bool:
     if not hashtags:
         return True
     mentions = [
-        re.sub(r"\s+", " ", value).strip().casefold()
+        normalize_hashtag(value)
         for value in locator.locator('[data-testid="mentionText"]').all_inner_texts()
     ]
-    return all(hashtag.casefold() in mentions for hashtag in hashtags)
+    return all(normalize_hashtag(hashtag) in mentions for hashtag in hashtags)
 
 
 def caption_text(locator: Any) -> str:
@@ -755,6 +784,7 @@ def caption_text(locator: Any) -> str:
 
 def captions_match(actual: str, expected: str) -> bool:
     def normalize(value: str) -> str:
+        value = unicodedata.normalize("NFC", value)
         value = re.sub(r"\s+", " ", value).strip()
         return re.sub(r"(?<!\S)#[^\s#]+", lambda match: match.group(0).casefold(), value)
 
@@ -1487,6 +1517,54 @@ def serve_video(handler: BaseHTTPRequestHandler, path: Path) -> None:
         return
 
 
+def video_thumbnail_path(path: Path) -> Path:
+    stat = path.stat()
+    cache_key = hashlib.sha256(
+        f"{THUMBNAIL_VERSION}:{path.as_posix()}:{stat.st_size}:{stat.st_mtime_ns}".encode("utf-8")
+    ).hexdigest()[:24]
+    cache_dir = THUMBNAIL_ROOT / cache_key
+    thumbnail = cache_dir / "first-frame.png"
+    if thumbnail.is_file():
+        return thumbnail
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(
+        [
+            str(FFMPEG_PATH),
+            "-y",
+            "-i",
+            str(path),
+            "-frames:v",
+            "1",
+            "-vf",
+            "scale=-2:480",
+            str(thumbnail),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=30,
+        check=False,
+    )
+    if result.returncode != 0 or not thumbnail.is_file():
+        raise RuntimeError("生成视频封面失败")
+    return thumbnail
+
+
+def serve_video_thumbnail(handler: BaseHTTPRequestHandler, path: Path) -> None:
+    thumbnail = video_thumbnail_path(path)
+    file_size = thumbnail.stat().st_size
+    handler.send_response(200)
+    handler.send_header("Content-Type", "image/png")
+    handler.send_header("Content-Length", str(file_size))
+    handler.send_header("Cache-Control", "public, max-age=31536000, immutable")
+    handler.end_headers()
+    try:
+        with thumbnail.open("rb") as file:
+            while chunk := file.read(256 * 1024):
+                handler.wfile.write(chunk)
+    except (BrokenPipeError, ConnectionResetError):
+        return
+
+
 def delete_finished_video(video_value: str) -> dict[str, Any]:
     path = safe_video_path(video_value)
     if not path.exists() or not path.is_file():
@@ -1743,6 +1821,12 @@ def scan_finished_videos(libraries: dict[str, dict[str, Any]], records: list[dic
                 "size_mb": round(stat.st_size / 1024 / 1024, 1),
                 "modified": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
                 "video_url": "/api/video?path=" + urllib.parse.quote(path.as_posix()),
+                "thumbnail_url": (
+                    "/api/video/thumbnail?path="
+                    + urllib.parse.quote(path.as_posix())
+                    + "&v="
+                    + THUMBNAIL_VERSION
+                ),
                 "has_title_library": library is not None,
                 "published": published_record is not None,
                 "published_record": published_record,
@@ -2165,6 +2249,13 @@ HTML = r"""<!doctype html>
       grid-template-columns:repeat(auto-fill,minmax(250px,1fr));
       gap:10px;
     }
+    .videoPager {
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      gap:10px;
+      margin-top:12px;
+    }
     .videoCard {
       border:1px solid var(--line);
       background:#fff;
@@ -2410,7 +2501,7 @@ HTML = r"""<!doctype html>
           </div>
           <div>
             <label>国家</label>
-            <select id="country" onchange="render()"></select>
+            <select id="country" onchange="onCountryFilterChange()"></select>
           </div>
         </div>
         <div class="statusFilters" aria-label="发布状态筛选">
@@ -2433,6 +2524,7 @@ HTML = r"""<!doctype html>
       <div class="panelBody">
         <div id="selectionBar" class="selectionBar emptySelection">勾选视频后可加入队列或批量删除。</div>
         <div id="videoGrid" class="videoGrid"></div>
+        <div id="videoPager" class="videoPager"></div>
       </div>
     </section>
     <section class="library">
@@ -2452,16 +2544,15 @@ HTML = r"""<!doctype html>
         </div>
         <div class="publishActions">
           <button onclick="loadBitProfiles()">刷新窗口</button>
-          <button onclick="manualUpload()">手动发布</button>
-          <button onclick="autoPublish()">立即自动发布</button>
           <button class="primary" onclick="enqueueSelected()">加入队列</button>
         </div>
-        <div id="publishStatus" class="statusLine">手动发布和自动发布都会从当前产品/国家标题库随机选择一条文案。</div>
+        <div id="publishStatus" class="statusLine">加入队列时会从当前产品/国家标题库随机选择一条文案。</div>
       </div>
       <div id="libraryPanel" class="panelBody"></div>
     </section>
   </main>
   <script>
+    const PAGE_SIZE = 24;
     let state = null;
     let selectedProduct = '';
     let selectedVideo = '';
@@ -2470,6 +2561,7 @@ HTML = r"""<!doctype html>
     let captionPool = [];
     let publishStatusFilter = 'all';
     let queuedVideoPaths = new Set();
+    let currentPage = 1;
 
     async function loadState() {
       const res = await fetch('/api/state');
@@ -2556,19 +2648,51 @@ HTML = r"""<!doctype html>
 
     function render() {
       if (!state) return;
-      const videos = filteredVideos();
-      document.getElementById('resultCount').textContent = `${videos.length} 个结果`;
-      if (!selectedVideo && videos.length) selectedVideo = videos[0].id;
-      if (!videos.some(v => v.id === selectedVideo) && videos.length) selectedVideo = videos[0].id;
+
+      const allVideos = filteredVideos();
+      const pageCount = Math.max(1, Math.ceil(allVideos.length / PAGE_SIZE));
+      currentPage = Math.min(currentPage, pageCount);
+
+      const start = (currentPage - 1) * PAGE_SIZE;
+      const pageVideos = allVideos.slice(start, start + PAGE_SIZE);
+
+      document.getElementById('resultCount').textContent =
+        `${allVideos.length} 个结果 · 第 ${currentPage}/${pageCount} 页`;
+
+      if (!selectedVideo && pageVideos.length) selectedVideo = pageVideos[0].id;
+      if (!pageVideos.some(v => v.id === selectedVideo) && pageVideos.length) selectedVideo = pageVideos[0].id;
       renderProductCards();
-      renderVideos(videos);
+      renderVideos(pageVideos);
+      renderPager(pageCount);
       renderSelectionBar();
       renderLibrary();
       renderPublishContext();
     }
 
+    function renderPager(pageCount) {
+      const host = document.getElementById('videoPager');
+      host.innerHTML = `
+        <button ${currentPage <= 1 ? 'disabled' : ''} onclick="changePage(-1)">上一页</button>
+        <span>第 ${currentPage} / ${pageCount} 页</span>
+        <button ${currentPage >= pageCount ? 'disabled' : ''} onclick="changePage(1)">下一页</button>
+      `;
+    }
+
+    function changePage(delta) {
+      currentPage += delta;
+      selectedVideo = '';
+      render();
+    }
+
+    function onCountryFilterChange() {
+      currentPage = 1;
+      selectedVideo = '';
+      render();
+    }
+
     function setPublishStatusFilter(value) {
       publishStatusFilter = value;
+      currentPage = 1;
       selectedVideo = '';
       render();
     }
@@ -2622,6 +2746,7 @@ HTML = r"""<!doctype html>
 
     function onProductFilterChange() {
       selectedProduct = document.getElementById('productSelect').value;
+      currentPage = 1;
       selectedVideo = '';
       renderCountryOptions();
       render();
@@ -2637,7 +2762,7 @@ HTML = r"""<!doctype html>
         <div class="videoCard ${v.id === selectedVideo ? 'active' : ''} ${v.published ? 'published' : ''} ${selectedVideoOrder.includes(v.id) ? 'selectedForQueue' : ''}" onclick="selectVideo('${escapeAttr(v.id)}')">
           ${v.published ? '<div class="publishedFlag">已发布</div>' : ''}
           ${queuedVideoPaths.has(v.path) ? '<div class="queueFlag">队列中</div>' : ''}
-          <video src="${escapeAttr(v.video_url)}" preload="metadata" muted controls></video>
+          <video src="${escapeAttr(v.video_url)}" poster="${escapeAttr(v.thumbnail_url)}" preload="none" muted controls></video>
             <div class="videoInfo">
               <div class="videoTitleRow">
                 <div class="videoTitle">${escapeHtml(v.name)}</div>
@@ -2667,16 +2792,12 @@ HTML = r"""<!doctype html>
       const index = selectedVideoOrder.indexOf(id);
       if (index >= 0) selectedVideoOrder.splice(index, 1);
       else selectedVideoOrder.push(id);
-      renderVideos(filteredVideos());
-      renderSelectionBar();
-      renderPublishContext();
+      render();
     }
 
     function clearQueueSelection() {
       selectedVideoOrder = [];
-      renderVideos(filteredVideos());
-      renderSelectionBar();
-      renderPublishContext();
+      render();
     }
 
     function selectAllVisibleVideos() {
@@ -2684,9 +2805,7 @@ HTML = r"""<!doctype html>
       filteredVideos().forEach(video => {
         if (!known.has(video.id)) selectedVideoOrder.push(video.id);
       });
-      renderVideos(filteredVideos());
-      renderSelectionBar();
-      renderPublishContext();
+      render();
     }
 
     function renderSelectionBar() {
@@ -2855,6 +2974,7 @@ HTML = r"""<!doctype html>
 
     function selectProduct(key) {
       selectedProduct = key;
+      currentPage = 1;
       selectedVideo = '';
       const productSelect = document.getElementById('productSelect');
       if (productSelect) productSelect.value = selectedProduct;
@@ -2921,14 +3041,6 @@ HTML = r"""<!doctype html>
       await loadState();
     }
 
-    function randomCaptionForSelected() {
-      if (!captionPool.length) {
-        throw new Error('当前视频没有可用标题标签。');
-      }
-      const index = Math.floor(Math.random() * captionPool.length);
-      return captionPool[index];
-    }
-
     function captionPoolForVideo(video, profile) {
       const product = state.products.find(item => item.key === video.product_key);
       const byCountry = product && product.library ? (product.library.by_country || {}) : {};
@@ -2955,7 +3067,7 @@ HTML = r"""<!doctype html>
         .map(task => task.video_path)
         .filter(Boolean));
       document.getElementById('queueBadge').textContent = `发布队列 ${waiting + running}`;
-      if (state) renderVideos(filteredVideos());
+      if (state) render();
     }
 
     async function enqueueSelected() {
@@ -2992,9 +3104,7 @@ HTML = r"""<!doctype html>
       const payload = await res.json();
       if (!res.ok || payload.error) return setPublishStatus(payload.error || '加入队列失败', 'error');
       selectedVideoOrder = [];
-      renderVideos(filteredVideos());
-      renderSelectionBar();
-      renderPublishContext();
+      render();
       await loadQueueSummary();
       setPublishStatus(`已加入 ${tasks.length} 个待执行任务。请前往发布队列选择“可视执行”或“后台执行”。`, 'ok');
     }
@@ -3003,95 +3113,6 @@ HTML = r"""<!doctype html>
       const host = document.getElementById('publishStatus');
       host.textContent = text;
       host.className = `statusLine ${kind}`;
-    }
-
-    async function manualUpload() {
-      const profileId = document.getElementById('bitProfile').value;
-      const video = selectedVideoItem();
-      if (!video) {
-        setPublishStatus('请先选择一个成品视频。', 'error');
-        return;
-      }
-      if (!profileId) {
-        setPublishStatus('请先选择一个比特浏览器窗口。', 'error');
-        return;
-      }
-      let caption = '';
-      try {
-        caption = randomCaptionForSelected();
-      } catch (err) {
-        setPublishStatus(err.message, 'error');
-        return;
-      }
-      setPublishStatus('正在手动发布：随机选择文案、上传视频并填写文案，后续步骤由你手动处理...', '');
-      const res = await fetch('/api/tiktok/manual-upload', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          profile_id: profileId,
-          video_path: video.path,
-          caption,
-        }),
-      });
-      const payload = await res.json();
-      if (!res.ok || payload.error) {
-        setPublishStatus(payload.error || '手动发布准备失败', 'error');
-        return;
-      }
-      setPublishStatus('已上传视频并填写文案，AI 标识、商品链接和最终发布请手动完成。', 'ok');
-    }
-
-    async function autoPublish() {
-      const profileId = document.getElementById('bitProfile').value;
-      const video = selectedVideoItem();
-      if (!video) {
-        setPublishStatus('请先选择一个成品视频。', 'error');
-        return;
-      }
-      if (!profileId) {
-        setPublishStatus('请先选择一个比特浏览器窗口。', 'error');
-        return;
-      }
-      const productId = productIdFor(video, profileId);
-      if (!productId) {
-        setPublishStatus('当前视频和账号没有配置商品 ID，已停止发布。', 'error');
-        renderPublishContext();
-        return;
-      }
-      const productShortName = productShortNameFor(video);
-      if (!productShortName) {
-        setPublishStatus('当前产品和国家没有配置商品简称，已停止发布。', 'error');
-        renderPublishContext();
-        return;
-      }
-      let caption = '';
-      try {
-        caption = randomCaptionForSelected();
-      } catch (err) {
-        setPublishStatus(err.message, 'error');
-        return;
-      }
-      setPublishStatus('正在执行完整发布：随机选择文案、上传视频、填写文案、挂商品、确认设置并发布...', '');
-      const res = await fetch('/api/tiktok/publish', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          profile_id: profileId,
-          video_path: video.path,
-          caption,
-          product_id: productId,
-          product_short_name: productShortName,
-          ai_generated: document.getElementById('aiGenerated').checked,
-          visibility: 'public',
-        }),
-      });
-      const payload = await res.json();
-      if (!res.ok || payload.error) {
-        setPublishStatus(payload.error || '发布失败', 'error');
-        return;
-      }
-      setPublishStatus(`${payload.message} 商品：${payload.product_name || productId}`, 'ok');
-      await loadState();
     }
 
     function countryName(code) {
@@ -3933,6 +3954,12 @@ class Handler(BaseHTTPRequestHandler):
                 if not path.exists() or not path.is_file():
                     raise ValueError("视频文件不存在")
                 serve_video(self, path)
+            elif parsed.path == "/api/video/thumbnail":
+                query = urllib.parse.parse_qs(parsed.query)
+                path = safe_video_path(query.get("path", [""])[0])
+                if not path.exists() or not path.is_file():
+                    raise ValueError("视频文件不存在")
+                serve_video_thumbnail(self, path)
             else:
                 json_response(self, 404, {"error": "not found"})
         except Exception as exc:  # noqa: BLE001 - keep UI/API failures readable.
@@ -3949,20 +3976,6 @@ class Handler(BaseHTTPRequestHandler):
                     str(payload.get("caption", "")),
                     bool(payload.get("ai_generated", True)),
                 )
-                json_response(self, 200, result)
-            elif parsed.path == "/api/tiktok/manual-upload":
-                payload = read_json_body(self)
-                result = prepare_tiktok_upload_locked(
-                    str(payload.get("profile_id", "")),
-                    str(payload.get("video_path", "")),
-                    str(payload.get("caption", "")),
-                    False,
-                )
-                result["message"] = "已打开 TikTok 上传页、上传视频并填写文案，后续步骤请手动完成。"
-                json_response(self, 200, result)
-            elif parsed.path == "/api/tiktok/publish":
-                payload = read_json_body(self)
-                result = run_tiktok_publish_locked(payload)
                 json_response(self, 200, result)
             elif parsed.path == "/api/queue/enqueue":
                 payload = read_json_body(self)

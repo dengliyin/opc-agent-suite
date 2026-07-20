@@ -1834,7 +1834,7 @@ HTML_PAGE = r"""<!doctype html>
       const hint = $('mutationSourceHint');
       const path = expectedClonePath();
       if (!$('enableMutation').checked) {
-        hint.innerHTML = '勾选裂变后，会使用当前产品、当前爆款脚本和当前国家/地区对应的复刻稿作为母稿；如果不存在，会先自动复刻再裂变。';
+        hint.innerHTML = '未勾选裂变：重新复刻并覆盖当前脚本、当前国家/地区对应的原复刻稿；勾选后则基于复刻稿生成独立裂变文件。';
         return;
       }
       if (!path) {

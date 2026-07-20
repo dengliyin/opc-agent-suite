@@ -3,12 +3,33 @@ import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from finished_video_manager import web
 
 
 class FinishedVideoScanTest(unittest.TestCase):
+    def test_thumbnail_uses_first_video_frame(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            video = root / "video.mp4"
+            video.write_bytes(b"video")
+            cache = root / "cache"
+            commands = []
+
+            def run(command, **kwargs):
+                commands.append(command)
+                Path(command[-1]).write_bytes(b"png")
+                return SimpleNamespace(returncode=0)
+
+            with patch.object(web, "THUMBNAIL_ROOT", cache), patch.object(web.subprocess, "run", run):
+                thumbnail = web.video_thumbnail_path(video)
+
+        self.assertEqual(thumbnail.name, "first-frame.png")
+        self.assertIn("-frames:v", commands[0])
+        self.assertEqual(commands[0][commands[0].index("-frames:v") + 1], "1")
+
     def test_new_layout_uses_modified_date_and_hides_legacy_duplicate(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -29,6 +50,8 @@ class FinishedVideoScanTest(unittest.TestCase):
         self.assertEqual(videos[0]["path"], new_path.as_posix())
         self.assertEqual(videos[0]["date"], "2026-07-15")
         self.assertEqual(videos[0]["workflow"], "")
+        self.assertIn("/api/video/thumbnail?path=", videos[0]["thumbnail_url"])
+        self.assertIn("&v=first-frame-v1", videos[0]["thumbnail_url"])
         self.assertTrue(videos[0]["published"])
 
     def test_old_path_resolves_to_new_layout(self) -> None:

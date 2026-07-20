@@ -57,10 +57,17 @@ class ConsoleBoundaryTests(unittest.TestCase):
             [call.args[0] for call in run.call_args_list],
             [
                 ["launchctl", "print", f"gui/{self.app.os.getuid()}/com.kesai.opc-agent.collect"],
-                ["launchctl", "kickstart", f"gui/{self.app.os.getuid()}/com.kesai.opc-agent.collect"],
+                ["launchctl", "kickstart", "-k", f"gui/{self.app.os.getuid()}/com.kesai.opc-agent.collect"],
             ],
         )
         self.assertTrue(result["started"])
+
+    def test_console_waits_for_agent_health_after_start(self):
+        html = self.app.INDEX_HTML
+
+        self.assertIn("const startingServices=new Set()", html)
+        self.assertIn("await waitForService(id)", html)
+        self.assertIn("Agent 启动超时", html)
 
     def test_start_service_bootstraps_an_unregistered_launch_agent(self):
         with (

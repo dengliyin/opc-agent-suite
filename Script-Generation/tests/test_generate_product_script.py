@@ -160,6 +160,41 @@ class GenerateProductScriptTests(unittest.TestCase):
             self.assertEqual(len(output_paths), 1)
             self.assertEqual(enforce_timeline.call_count, 1)
 
+    def test_recloning_overwrites_existing_clone_and_raw_response(self):
+        reference = """### 镜头 1 (00:00.000 - 00:01.000)
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            output_dir = root / "outputs"
+            reference_path = root / "VN-author-1234567890123456789.md"
+            reference_path.write_text(reference, encoding="utf-8")
+            config = {
+                "script_reference_script_path": str(reference_path),
+                "script_product_document_path": str(root / "SIMC01-SIMC染发棒-产品信息.md"),
+            }
+
+            first_paths, first_raw_paths = generate_product_script.write_script_outputs(
+                config,
+                str(output_dir),
+                "### 镜头 1 (00:00.000 - 00:01.000)\n第一次复刻",
+                {"generation_marker": "first"},
+            )
+            second_paths, second_raw_paths = generate_product_script.write_script_outputs(
+                config,
+                str(output_dir),
+                "### 镜头 1 (00:00.000 - 00:01.000)\n第二次复刻",
+                {"generation_marker": "second"},
+            )
+
+            self.assertEqual(second_paths, first_paths)
+            self.assertEqual(second_raw_paths, first_raw_paths)
+            self.assertIn("第二次复刻", second_paths[0].read_text(encoding="utf-8"))
+            self.assertNotIn("第一次复刻", second_paths[0].read_text(encoding="utf-8"))
+            raw_payload = json.loads(second_raw_paths[0].read_text(encoding="utf-8"))
+            self.assertEqual(raw_payload["generation_marker"], "second")
+            self.assertEqual(len(list(output_dir.glob("复刻-*.md"))), 1)
+            self.assertEqual(len(list(output_dir.glob("复刻-*.raw.json"))), 1)
+
     def test_vietnam_and_philippines_country_defaults(self):
         self.assertEqual(generate_product_script.COUNTRY_DEFAULT_LANGUAGE["越南"], "越南语")
         self.assertEqual(generate_product_script.COUNTRY_DEFAULT_LANGUAGE["菲律宾"], "菲律宾语")

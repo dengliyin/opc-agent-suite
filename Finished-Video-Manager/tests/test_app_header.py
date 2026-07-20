@@ -65,6 +65,22 @@ class AppHeaderTest(unittest.TestCase):
         self.assertNotIn('id="bitGroup"', HTML)
         self.assertNotIn('/api/bitbrowser/groups', HTML)
 
+    def test_publish_page_only_offers_queue_publishing(self) -> None:
+        self.assertIn('onclick="enqueueSelected()">加入队列</button>', HTML)
+        self.assertNotIn('onclick="manualUpload()"', HTML)
+        self.assertNotIn('onclick="autoPublish()"', HTML)
+        self.assertNotIn('/api/tiktok/manual-upload', HTML)
+        self.assertNotIn('/api/tiktok/publish', HTML)
+
+    def test_home_video_grid_is_paginated_without_preloading(self) -> None:
+        self.assertIn('const PAGE_SIZE = 24;', HTML)
+        self.assertIn('id="videoPager"', HTML)
+        self.assertIn('const pageVideos = allVideos.slice(start, start + PAGE_SIZE);', HTML)
+        self.assertIn('renderVideos(pageVideos);', HTML)
+        self.assertIn('poster="${escapeAttr(v.thumbnail_url)}"', HTML)
+        self.assertIn('preload="none"', HTML)
+        self.assertNotIn('preload="metadata"', HTML)
+
     def test_product_mapping_options_use_product_info_catalog(self) -> None:
         self.assertIn("products = payload.products || [];", PRODUCT_ID_HTML)
         self.assertNotIn("fetch('/api/state')", PRODUCT_ID_HTML)
