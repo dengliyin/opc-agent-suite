@@ -11,7 +11,7 @@ from .config import CONFIG_PATH, ConfigError, init_config, load_config, validate
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="爆款视频收集智能体")
-    parser.add_argument("--config", default=str(CONFIG_PATH), help="配置文件路径，默认 ./config.json")
+    parser.add_argument("--config", default=str(CONFIG_PATH), help=f"配置文件路径，默认 {CONFIG_PATH}")
 
     subparsers = parser.add_subparsers(dest="command")
 
@@ -32,7 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
 def command_init(args) -> int:
     path = init_config(Path(args.config), overwrite=args.force)
     print(f"配置文件已准备: {path}")
-    print("下一步：编辑 config.json，并用环境变量 FASTMOSS_PHONE / FASTMOSS_PASSWORD 提供账号密码。")
+    print("下一步：编辑该配置文件，并用环境变量 FASTMOSS_PHONE / FASTMOSS_PASSWORD 提供账号密码。")
     return 0
 
 

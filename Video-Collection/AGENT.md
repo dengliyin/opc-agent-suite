@@ -7,7 +7,7 @@
 ## 输入
 
 - 产品项目：`product.name` 或 `product.slug`
-- FastMoss 登录凭据：`FASTMOSS_PHONE` / `FASTMOSS_PASSWORD` 或 `config.json`
+- FastMoss 登录凭据：`FASTMOSS_PHONE` / `FASTMOSS_PASSWORD` 或 `~/Library/Application Support/OPC-Agent-Suite/Video-Collection/config.json`
 - 采集条件：国家、关键词、类目路径、商品筛选条件
 - 采集规模：商品数量、每个商品的视频数量
 - 下载条件：是否下载、指定 CSV、下载数量上限

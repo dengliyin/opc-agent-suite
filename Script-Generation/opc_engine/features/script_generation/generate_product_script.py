@@ -1673,20 +1673,6 @@ def unique_script_output_paths(output_root, stem):
 def single_clone_output_paths(output_root, stem):
     output_path = output_root / f"{stem}.md"
     raw_path = output_root / f"{stem}.raw.json"
-    created_output = False
-    try:
-        with output_path.open("x", encoding="utf-8"):
-            pass
-        created_output = True
-        with raw_path.open("x", encoding="utf-8"):
-            pass
-    except FileExistsError:
-        if created_output:
-            output_path.unlink(missing_ok=True)
-        raise RuntimeError(
-            "当前参考爆款脚本已经复刻过一次，不能重复复刻；如需更多版本，请勾选“是否裂变”生成裂变脚本。"
-            f"\n已存在: {output_path}"
-        )
     return output_path, raw_path
 
 

@@ -59,7 +59,7 @@ export OPC_VIDEO_ASSEMBLY_RUNTIME_SOURCE="/path/to/Video-Assembly-hd/runtime"
 ./scripts/install_console_launchagent.sh
 ```
 
-8888 的“启动”按钮通过 `launchctl kickstart` 启动对应 Agent。Agent 不再是控制台子进程，因此重启 8888 不会带走已运行的 Agent；未点击启动的 Agent 也不会在登录时自动运行。
+8888 的“启动”按钮通过 `launchctl kickstart -k` 恢复对应 Agent，并持续检测最多 30 秒，健康检查成功后才显示“已启动”。Agent 不再是控制台子进程，因此重启 8888 不会带走已运行的 Agent；未点击启动的 Agent 也不会在登录时自动运行。
 LaunchAgent 的标准输出和错误日志位于 `~/Library/Logs/OPC-Agent-Suite/`，避免 macOS 阻止 launchd 在 `Documents` 下创建日志文件。
 
 取消常驻：

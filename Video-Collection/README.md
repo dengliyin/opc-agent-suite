@@ -18,7 +18,7 @@ python3 -m playwright install chromium
 ./run_agent.sh init
 ```
 
-然后编辑本目录的 `config.json`，至少填写：
+然后编辑 `~/Library/Application Support/OPC-Agent-Suite/Video-Collection/config.json`，至少填写：
 
 - 可选 `product.path`：手动指定产品项目目录。为空时默认使用软件目录下的 `product/`
 - 可选 `product.name` 或 `product.slug`：填写后且未指定 `product.path` 时，使用 `projects/<product_slug>/`
@@ -98,7 +98,7 @@ run_logs/
 
 ## 配置说明
 
-首次运行 `./run_agent.sh init` 会从 `config.example.json` 创建本地 `config.json`。真实账号、产品资料和运行结果都被 `.gitignore` 忽略。
+首次运行 `./run_agent.sh init` 会从 `config.example.json` 创建 `~/Library/Application Support/OPC-Agent-Suite/Video-Collection/config.json`。如果软件目录中已有旧版 `config.json`，程序会在新文件不存在时自动复制一次并保留旧文件。可用 `OPC_VIDEO_COLLECTION_CONFIG_PATH` 覆盖默认位置。真实账号、产品资料和运行结果都不会提交到 Git。
 
 `fastmoss.show_browser` 默认为 `false`，浏览器会尽量最小化运行。遇到验证码或滑块时，把它改成 `true`，手动完成验证后重跑。
 

@@ -9,7 +9,13 @@ from typing import Any, Dict, Iterable
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CONFIG_PATH = ROOT / "config.json"
+CONFIG_PATH = Path(
+    os.environ.get(
+        "OPC_VIDEO_COLLECTION_CONFIG_PATH",
+        str(Path.home() / "Library" / "Application Support" / "OPC-Agent-Suite" / "Video-Collection" / "config.json"),
+    )
+).expanduser()
+LEGACY_CONFIG_PATH = ROOT / "config.json"
 EXAMPLE_CONFIG_PATH = ROOT / "config.example.json"
 
 
@@ -55,6 +61,16 @@ class ConfigError(RuntimeError):
     pass
 
 
+def migrate_legacy_config(config_path: Path = CONFIG_PATH) -> bool:
+    config_path = Path(config_path)
+    if config_path != CONFIG_PATH or config_path.exists() or not LEGACY_CONFIG_PATH.is_file():
+        return False
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(LEGACY_CONFIG_PATH, config_path)
+    config_path.chmod(0o600)
+    return True
+
+
 def safe_name(value: str, default: str = "untitled", max_length: int = 120) -> str:
     text = str(value or "").strip()
     text = re.sub(r"[\\/:*?\"<>|]+", "_", text)
@@ -84,6 +100,7 @@ def deep_merge(base: Dict[str, Any], overlay: Dict[str, Any]) -> Dict[str, Any]:
 
 def load_config(config_path: Path = CONFIG_PATH) -> Dict[str, Any]:
     config_path = Path(config_path)
+    migrate_legacy_config(config_path)
     if not config_path.exists():
         data: Dict[str, Any] = {}
     else:
@@ -103,6 +120,7 @@ def load_config(config_path: Path = CONFIG_PATH) -> Dict[str, Any]:
 
 def read_config_file(config_path: Path = CONFIG_PATH) -> Dict[str, Any]:
     config_path = Path(config_path)
+    migrate_legacy_config(config_path)
     if not config_path.exists():
         return deep_merge(DEFAULT_CONFIG, {})
     try:
@@ -117,14 +135,19 @@ def read_config_file(config_path: Path = CONFIG_PATH) -> Dict[str, Any]:
 def save_config(config: Dict[str, Any], config_path: Path = CONFIG_PATH) -> Dict[str, Any]:
     config_path = Path(config_path)
     payload = deep_merge(DEFAULT_CONFIG, config)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    config_path.chmod(0o600)
     return payload
 
 
 def init_config(config_path: Path = CONFIG_PATH, overwrite: bool = False) -> Path:
     config_path = Path(config_path)
+    if not overwrite:
+        migrate_legacy_config(config_path)
     if config_path.exists() and not overwrite:
         return config_path
+    config_path.parent.mkdir(parents=True, exist_ok=True)
     source = EXAMPLE_CONFIG_PATH
     if source.exists():
         shutil.copyfile(str(source), str(config_path))
@@ -133,6 +156,7 @@ def init_config(config_path: Path = CONFIG_PATH, overwrite: bool = False) -> Pat
             json.dumps(DEFAULT_CONFIG, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
+    config_path.chmod(0o600)
     return config_path
 
 
