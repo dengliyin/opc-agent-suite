@@ -270,6 +270,16 @@ h2 {
   background: var(--surface-soft);
 }
 
+.product-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.product-panel > .panel-heading {
+  flex: 0 0 auto;
+}
+
 .heading-actions {
   display: flex;
   align-items: center;
@@ -323,7 +333,8 @@ h2 {
   display: grid;
   gap: 8px;
   padding: 12px;
-  max-height: calc(100vh - 136px);
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
 }
 

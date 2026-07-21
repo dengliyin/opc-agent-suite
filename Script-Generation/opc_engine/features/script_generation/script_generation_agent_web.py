@@ -2046,9 +2046,16 @@ HTML_PAGE = r"""<!doctype html>
       await refreshJob();
     }
 
+    function renderJobLogs(logText) {
+      const logElement = $('logs');
+      const text = String(logText || '').trimEnd();
+      logElement.textContent = text ? text.split('\n').reverse().join('\n') : '';
+      logElement.scrollTop = 0;
+    }
+
     async function refreshJob() {
       const job = await api('/api/job');
-      $('logs').textContent = job.logs || '';
+      renderJobLogs(job.logs);
       $('jobChip').className = 'chip ' + (job.status === 'completed' ? 'ok' : job.status === 'failed' ? 'bad' : '');
       if (job.running) {
         $('jobChip').textContent = `运行 ${job.active_count || 0}/${job.max_workers || 1} · 排队 ${job.queued_count || 0}`;
