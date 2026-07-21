@@ -795,7 +795,12 @@ def adaptation_contract_issues(content: str, image_data: dict[str, Any]) -> list
     return issues
 
 
-def script_file_payload(path: Path, root: Path, config: dict[str, Any]) -> dict[str, Any]:
+def script_file_payload(
+    path: Path,
+    root: Path,
+    config: dict[str, Any],
+    status_logs: dict[Path, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     stat = path.stat()
     try:
         relative = path.relative_to(root).as_posix()
@@ -813,7 +818,18 @@ def script_file_payload(path: Path, root: Path, config: dict[str, Any]) -> dict[
         path,
         config.get("script_adaptation_segment_seconds"),
     )
-    status_record = adaptation_status_record_for_script(output_path, path.name, path.as_posix())
+    status_log = None
+    if output_path and status_logs is not None:
+        output_dir = output_path.parent
+        if output_dir not in status_logs:
+            status_logs[output_dir] = read_adaptation_status_log(output_dir)
+        status_log = status_logs[output_dir]
+    status_record = adaptation_status_record_for_script(
+        output_path,
+        path.name,
+        path.as_posix(),
+        status_log=status_log,
+    )
     batch_meta = script_batch_metadata(path, product_folder, status_record, stat.st_mtime)
     adapted = bool(output_validation["valid"])
     return {
@@ -844,10 +860,15 @@ def script_file_payload(path: Path, root: Path, config: dict[str, Any]) -> dict[
     }
 
 
-def adaptation_status_record_for_script(output_path: Path | None, source_filename: str, source_path: str) -> dict[str, Any]:
+def adaptation_status_record_for_script(
+    output_path: Path | None,
+    source_filename: str,
+    source_path: str,
+    status_log: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     if not output_path:
         return {}
-    log = read_adaptation_status_log(output_path.parent)
+    log = status_log if status_log is not None else read_adaptation_status_log(output_path.parent)
     files = log.get("files") if isinstance(log.get("files"), dict) else {}
     candidates = [
         output_path.name,
@@ -970,7 +991,8 @@ def batch_payload(batch_id: str, scripts: list[dict[str, Any]]) -> dict[str, Any
 
 
 def product_script_payload(product_name: str, product_path: Path, files: list[Path], root: Path, config: dict[str, Any]) -> dict[str, Any]:
-    scripts = [script_file_payload(path, root, config) for path in files]
+    status_logs: dict[Path, dict[str, Any]] = {}
+    scripts = [script_file_payload(path, root, config, status_logs) for path in files]
     adapted_count = sum(1 for script in scripts if script.get("adapted"))
     invalid_count = sum(1 for script in scripts if script.get("adaptation_state") in INVALID_ADAPTATION_STATES)
     countries = sorted({str(script.get("country") or "").strip() for script in scripts if str(script.get("country") or "").strip()})

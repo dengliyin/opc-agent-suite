@@ -2,11 +2,52 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
 
+from opc_engine.features.script_generation import script_generation_agent_web
 from opc_engine.features.script_generation.script_generation_agent_web import HTML_PAGE, GenerationJob
 
 
 class ScriptGenerationAgentWebTests(unittest.TestCase):
+    def test_reference_status_uses_markdown_stems_across_target_countries(self):
+        reference = Path("/tmp/MX-author-1234567890123456789-example.md")
+        stems = (
+            "复刻-product-IE-author-1234567890123456789",
+            "裂变-product-ES-author-1234567890123456789",
+            "裂变-product-IT-author-1234567890123456789_002",
+            "裂变-product-IE-other-9999999999999999999",
+        )
+
+        status = script_generation_agent_web.reference_output_status("product", reference, stems)
+
+        self.assertTrue(status["cloned"])
+        self.assertEqual(status["mutation_count"], 2)
+
+    def test_library_scans_each_product_output_directory_once(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            product_root = root / "products"
+            reference_root = root / "references"
+            output_root = root / "outputs"
+            product_root.mkdir()
+            (reference_root / "product").mkdir(parents=True)
+            (product_root / "product-产品信息.md").write_text("product", encoding="utf-8")
+            (reference_root / "product" / "MX-a-1234567890123456789.md").write_text("a", encoding="utf-8")
+            (reference_root / "product" / "US-b-9999999999999999999.md").write_text("b", encoding="utf-8")
+
+            with (
+                patch.object(script_generation_agent_web, "PRODUCT_INFO_SOURCE_DIR", product_root),
+                patch.object(script_generation_agent_web, "HOT_SCRIPT_SOURCE_ROOT", reference_root),
+                patch.object(script_generation_agent_web, "SCRIPT_OUTPUT_SOURCE_ROOT", output_root),
+                patch.object(script_generation_agent_web, "product_output_stems", return_value=()) as scan_outputs,
+            ):
+                payload = script_generation_agent_web.library_payload({"script_country": "不改变原脚本"})
+
+        self.assertEqual(len(payload["references"]), 2)
+        scan_outputs.assert_called_once_with("product")
+
     def test_run_without_reference_is_rejected_before_queueing(self):
         job = GenerationJob()
 
