@@ -54,6 +54,7 @@ def _scan_script_root(settings: Settings, root: Path, exported: bool) -> List[Sc
 
     scripts: List[ScriptFile] = []
     if exported:
+        references_by_product: Dict[str, List[Path]] = {}
         for md_path in sorted(root.rglob("*.md")):
             if any(part.startswith("_") or part.startswith(".") for part in md_path.relative_to(root).parts[:-1]):
                 continue
@@ -61,7 +62,9 @@ def _scan_script_root(settings: Settings, root: Path, exported: bool) -> List[Sc
             if product_dir is None:
                 continue
             product_name = product_dir.name
-            reference_images = find_product_references(settings.reference_root, product_name)
+            if product_name not in references_by_product:
+                references_by_product[product_name] = find_product_references(settings.reference_root, product_name)
+            reference_images = references_by_product[product_name]
             reference_image = reference_images[0] if len(reference_images) == 1 else None
             markdown = md_path.read_text(encoding="utf-8")
             segments = parse_segments(markdown)

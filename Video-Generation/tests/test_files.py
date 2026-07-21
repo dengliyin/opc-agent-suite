@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from agent import files as files_module
 from agent.config import Settings
 from agent.files import (
     character_image_path,
@@ -159,6 +160,35 @@ def test_scan_archived_scripts_requires_date_product_script_layout(tmp_path: Pat
     assert [script.product_name for script in scripts] == ["P1"]
     assert [script.product_dir.name for script in scripts] == ["P1"]
     assert all(script.exported for script in scripts)
+
+
+def test_scan_archived_scripts_matches_references_once_per_product(tmp_path: Path, monkeypatch) -> None:
+    settings = settings_for(tmp_path)
+    settings.reference_root.mkdir(parents=True)
+    (settings.reference_root / "P1.png").write_bytes(b"ref")
+    markdown = (
+        "# Segment 1：00:00 - 00:01\n"
+        "## A. 人物造型参考板提示词\nA\n"
+        "## B. 故事板图片提示词\nB\n"
+    )
+    for date in ("2026-07-08", "2026-07-09"):
+        script_dir = settings.completed_script_root / date / "P1" / date
+        script_dir.mkdir(parents=True)
+        (script_dir / f"{date}.md").write_text(markdown, encoding="utf-8")
+
+    original = files_module.find_product_references
+    calls: list[str] = []
+
+    def counted(reference_root: Path, product_name: str):
+        calls.append(product_name)
+        return original(reference_root, product_name)
+
+    monkeypatch.setattr(files_module, "find_product_references", counted)
+
+    scripts = scan_scripts(settings, include_archived=True)
+
+    assert len(scripts) == 2
+    assert calls == ["P1"]
 
 
 def test_grok_image_outputs_must_match_configured_aspect(tmp_path: Path) -> None:

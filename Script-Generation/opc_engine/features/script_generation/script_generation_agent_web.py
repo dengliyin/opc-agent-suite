@@ -190,50 +190,26 @@ def iter_markdown_files(root: Path) -> list[Path]:
     return sorted((path for path in root.rglob("*.md") if path.is_file()), key=lambda item: item.name.lower())
 
 
-def resolved_path_key(value: str | Path) -> str:
-    return Path(value).expanduser().resolve().as_posix()
-
-
-def raw_json_payload(path: Path) -> dict[str, Any]:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def reference_output_status(product_name: str, reference_path: Path) -> dict[str, Any]:
-    status = {"cloned": False, "mutation_count": 0}
+def product_output_stems(product_name: str) -> tuple[str, ...]:
     output_root = output_dir_for_product(product_name)
     if not output_root.is_dir():
-        return status
+        return ()
+    return tuple(path.stem for path in output_root.glob("*.md") if path.is_file())
 
-    reference_key = resolved_path_key(reference_path)
-    country, author, source_id = reference_country_author_and_video_id(reference_path)
-    source_part = f"{country}-{author}-{source_id}" if country else f"{author}-{source_id}"
-    raw_matched_stems: set[str] = set()
 
-    for raw_path in output_root.glob("*.raw.json"):
-        raw = raw_json_payload(raw_path)
-        raw_reference = str(raw.get("source_reference_path") or "").strip()
-        raw_reference_key = resolved_path_key(raw_reference) if raw_reference else ""
-        raw_source_key = str(raw.get("source_key") or "").strip()
-        if not (
-            raw_reference_key == reference_key
-            or raw_source_key == source_part
-        ):
-            continue
-        if str(raw.get("output_stage") or "").strip() == "裂变":
-            status["mutation_count"] += 1
-        else:
-            status["cloned"] = True
-        raw_matched_stems.add(raw_path.name.removesuffix(".raw.json"))
+def reference_output_status(
+    product_name: str,
+    reference_path: Path,
+    output_stems: tuple[str, ...] | None = None,
+) -> dict[str, Any]:
+    status = {"cloned": False, "mutation_count": 0}
+    if output_stems is None:
+        output_stems = product_output_stems(product_name)
 
-    for md_path in output_root.glob("*.md"):
-        if md_path.stem in raw_matched_stems:
-            continue
-        stem = md_path.stem
-        if source_part not in stem:
+    _country, author, source_id = reference_country_author_and_video_id(reference_path)
+    identity = f"-{author}-{source_id}"
+    for stem in output_stems:
+        if identity not in stem:
             continue
         if stem.startswith("裂变-"):
             status["mutation_count"] += 1
@@ -249,6 +225,7 @@ def library_payload(config: dict[str, Any] | None = None) -> dict[str, Any]:
     selected_reference = str(config.get("script_reference_script_path") or config.get("script_reference_analysis_path") or "")
     products: list[dict[str, Any]] = []
     references: list[dict[str, Any]] = []
+    output_stems_by_product: dict[str, tuple[str, ...]] = {}
 
     for path in iter_markdown_files(PRODUCT_INFO_SOURCE_DIR):
         product_name = product_name_from_path(path)
@@ -265,13 +242,15 @@ def library_payload(config: dict[str, Any] | None = None) -> dict[str, Any]:
             product_group = path.relative_to(HOT_SCRIPT_SOURCE_ROOT).parts[0]
         except (ValueError, IndexError):
             product_group = ""
+        if product_group not in output_stems_by_product:
+            output_stems_by_product[product_group] = product_output_stems(product_group)
         references.append(
             {
                 "name": path.name,
                 "path": path.as_posix(),
                 "product": product_group,
                 "selected": bool(selected_reference and resolve_root_path(selected_reference) == path.resolve()),
-                "status": reference_output_status(product_group, path),
+                "status": reference_output_status(product_group, path, output_stems_by_product[product_group]),
             }
         )
 
