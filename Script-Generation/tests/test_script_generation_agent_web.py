@@ -61,6 +61,12 @@ class ScriptGenerationAgentWebTests(unittest.TestCase):
         self.assertIn("if (!referencePath)", HTML_PAGE)
         self.assertIn("请先从爆款脚本列表选择一个参考脚本", HTML_PAGE)
 
+    def test_job_logs_are_rendered_newest_first(self):
+        self.assertIn("function renderJobLogs(logText)", HTML_PAGE)
+        self.assertIn(".reverse().join('\\n')", HTML_PAGE)
+        self.assertIn("logElement.scrollTop = 0", HTML_PAGE)
+        self.assertIn("renderJobLogs(job.logs)", HTML_PAGE)
+
     def test_duration_override_is_not_exposed_or_forwarded(self):
         self.assertNotIn('id="totalDuration"', HTML_PAGE)
         command = GenerationJob()._subprocess_command({"script_total_duration": "8秒"})
