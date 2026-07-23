@@ -102,6 +102,29 @@ def test_future_reuse_note_is_not_current_segment_reuse() -> None:
     assert segments[0].referenced_character_index == 1
 
 
+def test_current_segment_reuse_allows_detailed_source_description() -> None:
+    segments = parse_segments(
+        """# Segment 1：00:00.000 - 00:10.000
+## A. 人物造型参考板提示词
+角色ID：character_01、character_02
+本段首次生成 character_01 与 character_02 人物造型参考板。
+## B. 故事板图片提示词
+故事提示词
+
+# Segment 2：00:00.000 - 00:10.000
+## A. 人物造型参考板提示词
+角色ID：character_01、character_02
+本段复用 Segment 1 中已生成的同一张人物造型参考板（包含 character_01 与 character_02），不需要重新生成人物造型参考板。
+## B. 故事板图片提示词
+故事提示词
+"""
+    )
+
+    assert segments[1].reuses_character is True
+    assert segments[1].referenced_character_indices == (1, 2)
+    assert character_source_segment_index(segments, segments[1]) == 1
+
+
 def test_parse_segments_accepts_combined_multi_character_board_and_reuse() -> None:
     segments = parse_segments(
         """# Segment 1：00:00.000 - 00:05.000

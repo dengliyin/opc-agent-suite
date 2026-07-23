@@ -50,6 +50,12 @@ class Segment:
             return False
         if "本段首次" in prompt or "首次出现" in prompt:
             return False
+        if re.search(
+            r"(?:^|[。；;\n])\s*(?:本段|当前片段|此段|本片段)\s*(?:将|继续|直接)?\s*复用",
+            prompt,
+            re.IGNORECASE,
+        ):
+            return True
         return bool(
             re.search(
                 r"(?:本段|当前片段|此段|本片段)?[^。；;\n]{0,12}复用[^。；;\n]{0,24}(?:character[_-]?0*\d+|人物图)",
