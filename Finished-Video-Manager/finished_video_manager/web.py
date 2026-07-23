@@ -44,6 +44,11 @@ PRODUCT_INFO_ROOT = VAULT_ROOT / "wiki" / "产品" / "产品信息"
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".webm"}
 PUBLISH_LOCK = threading.Lock()
 PUBLISH_QUEUE: PublishQueue | None = None
+_FINISHED_VIDEO_INDEX_LOCK = threading.Lock()
+_FINISHED_VIDEO_INDEX_ROOT: Path | None = None
+_FINISHED_VIDEO_INDEX_AT = 0.0
+_FINISHED_VIDEO_INDEX: dict[tuple[str, str], Path] = {}
+_FINISHED_VIDEO_INDEX_TTL_SECONDS = 2.0
 COUNTRY_NAMES = {
     "US": "美国",
     "UK": "英国",
@@ -494,22 +499,43 @@ def video_identity(path: Path) -> tuple[str, str]:
     return path.parent.name.casefold(), path.name.casefold()
 
 
+def _finished_video_lookup_key(path: Path) -> tuple[str, str]:
+    return path.parent.name.casefold(), path.name
+
+
+def _build_finished_video_index(root: Path) -> dict[tuple[str, str], Path]:
+    if not root.exists():
+        return {}
+    index: dict[tuple[str, str], Path] = {}
+    for candidate in root.rglob("*"):
+        if candidate.is_file() and candidate.suffix.lower() in VIDEO_EXTENSIONS:
+            index.setdefault(_finished_video_lookup_key(candidate), candidate)
+    return index
+
+
+def _finished_video_index() -> dict[tuple[str, str], Path]:
+    global _FINISHED_VIDEO_INDEX_ROOT, _FINISHED_VIDEO_INDEX_AT, _FINISHED_VIDEO_INDEX
+    root = FINISHED_VIDEO_ROOT.resolve()
+    now = time.monotonic()
+    if _FINISHED_VIDEO_INDEX_ROOT == root and now - _FINISHED_VIDEO_INDEX_AT < _FINISHED_VIDEO_INDEX_TTL_SECONDS:
+        return _FINISHED_VIDEO_INDEX
+    with _FINISHED_VIDEO_INDEX_LOCK:
+        now = time.monotonic()
+        if _FINISHED_VIDEO_INDEX_ROOT != root or now - _FINISHED_VIDEO_INDEX_AT >= _FINISHED_VIDEO_INDEX_TTL_SECONDS:
+            _FINISHED_VIDEO_INDEX = _build_finished_video_index(root)
+            _FINISHED_VIDEO_INDEX_ROOT = root
+            _FINISHED_VIDEO_INDEX_AT = now
+    return _FINISHED_VIDEO_INDEX
+
+
 def resolve_finished_video_path(value: str) -> str:
     path = safe_video_path(value)
-    identity = video_identity(path)
     flat_path = FINISHED_VIDEO_ROOT / path.parent.name / path.name
     if flat_path.is_file():
         return flat_path.resolve().as_posix()
     if path.is_file():
         return path.as_posix()
-    match = next(
-        (
-            candidate
-            for candidate in FINISHED_VIDEO_ROOT.rglob(path.name)
-            if candidate.is_file() and video_identity(candidate) == identity
-        ),
-        None,
-    )
+    match = _finished_video_index().get(_finished_video_lookup_key(path))
     return (match.resolve() if match else path).as_posix()
 
 
@@ -1811,7 +1837,7 @@ def scan_finished_videos(libraries: dict[str, dict[str, Any]], records: list[dic
                 "path": path.as_posix(),
                 "display_path": display_path(path),
                 "product_key": product_key,
-                "product_code": product_key.split("-", 1)[0] if "-" in product_key else product_key,
+                "product_code": (product_key.split("-", 1)[0] if "-" in product_key else product_key).upper(),
                 "product_name": library["name"] if library else product_key.split("-", 1)[-1],
                 "workflow": workflow,
                 "date": date,

@@ -1,6 +1,11 @@
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from agent import app as app_module
+
+
+STATIC_APP_JS = Path(__file__).resolve().parents[1] / "static" / "app.js"
 
 
 class FakeManager:
@@ -106,6 +111,15 @@ def test_script_delete_routes_exist_for_both_agents():
 
     assert "/omni/api/scripts" in paths
     assert "/grok/api/scripts" in paths
+
+
+def test_catalog_polling_is_deduplicated_after_terminal_job():
+    source = STATIC_APP_JS.read_text(encoding="utf-8")
+
+    assert "if (state.pollingJobs) return;" in source
+    assert "terminalKey !== state.lastTerminalCatalogJobKey" in source
+    assert "refreshAll().catch" in source
+    assert "}).finally(() => {\n  setInterval(pollJobs, 4000);\n});" in source
 
 
 def test_api_settings_save_shared_models_and_local_keys_separately(monkeypatch, tmp_path):

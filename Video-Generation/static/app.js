@@ -8,6 +8,8 @@ const state = {
   activeJobId: null,
   lastCatalogRefreshAt: 0,
   lastGlobalStatusAt: 0,
+  lastTerminalCatalogJobKey: "",
+  pollingJobs: false,
   showArchived: false,
   expansionMode: "",
   expandedProducts: new Set(),
@@ -53,6 +55,7 @@ async function refreshAll() {
   state.catalog = catalog;
   state.jobs = jobs.jobs || [];
   state.globalJobs = globalJobs;
+  state.lastTerminalCatalogJobKey = terminalJobKey(state.jobs[0]);
   state.lastCatalogRefreshAt = Date.now();
   state.lastGlobalStatusAt = Date.now();
   render();
@@ -1198,6 +1201,8 @@ async function deleteSelectedScripts() {
 }
 
 async function pollJobs() {
+  if (state.pollingJobs) return;
+  state.pollingJobs = true;
   try {
     const [jobs, globalJobs] = await Promise.all([api("/jobs"), loadGlobalJobs()]);
     state.jobs = jobs.jobs || [];
@@ -1217,12 +1222,25 @@ async function pollJobs() {
       renderJobs();
       return;
     }
-    if (latest && ["completed", "failed", "canceled"].includes(latest.status)) {
-      await refreshAll();
+    const terminalKey = terminalJobKey(latest);
+    if (terminalKey && terminalKey !== state.lastTerminalCatalogJobKey) {
+      state.lastTerminalCatalogJobKey = terminalKey;
+      state.catalog = await api("/catalog");
+      state.lastCatalogRefreshAt = Date.now();
+      renderCatalog();
+      renderSegments();
+      renderJobs();
     }
   } catch (_) {
     // Polling should not interrupt the dashboard.
+  } finally {
+    state.pollingJobs = false;
   }
+}
+
+function terminalJobKey(job) {
+  if (!job || !["completed", "failed", "canceled"].includes(job.status)) return "";
+  return `${job.id || ""}:${job.status}:${job.finished_at || ""}`;
 }
 
 function setButtonsDisabled(disabled) {
@@ -1335,5 +1353,6 @@ document.addEventListener("click", handleArtifactDeleteClick);
 
 refreshAll().catch((error) => {
   alert(`初始化失败：${error.message}`);
+}).finally(() => {
+  setInterval(pollJobs, 4000);
 });
-setInterval(pollJobs, 4000);

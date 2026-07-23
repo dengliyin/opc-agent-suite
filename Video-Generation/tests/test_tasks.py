@@ -261,6 +261,46 @@ def test_process_character_logs_progress_with_job_id(tmp_path: Path) -> None:
     assert any("fake progress" in entry["message"] for entry in refreshed["logs"])
 
 
+def test_process_character_copies_detailed_current_segment_reuse(tmp_path: Path) -> None:
+    settings = settings_for(tmp_path)
+    product_dir = settings.script_root / "P1"
+    product_dir.mkdir(parents=True)
+    md_path = product_dir / "script.md"
+    source_segment = Segment(
+        index=1,
+        title="# Segment 1：00:00 - 00:10",
+        time_range="00:00 - 00:10",
+        raw_text="",
+        character_prompt="角色ID：character_01、character_02\n本段首次生成 character_01 与 character_02 人物造型参考板。",
+        storyboard_prompt="story",
+    )
+    reused_segment = Segment(
+        index=2,
+        title="# Segment 2：00:00 - 00:10",
+        time_range="00:00 - 00:10",
+        raw_text="",
+        character_prompt=(
+            "角色ID：character_01、character_02\n"
+            "本段复用 Segment 1 中已生成的同一张人物造型参考板（包含 character_01 与 character_02），"
+            "不需要重新生成人物造型参考板。"
+        ),
+        storyboard_prompt="story",
+    )
+    script = type("Script", (), {"md_path": md_path, "segments": [source_segment, reused_segment]})()
+    source = character_image_path(md_path, 1, settings.artifact_prefix)
+    Image.new("RGB", (1024, 768), (12, 34, 56)).save(source)
+    image_client = FakeImageClient()
+    manager = JobManager(settings)
+
+    result = manager._process_character("job_reuse", image_client, script, reused_segment, overwrite=False)
+    target = character_image_path(md_path, 2, settings.artifact_prefix)
+
+    assert result == "复用片段1人物图"
+    assert target.read_bytes() == source.read_bytes()
+    assert image_client.prompt_calls == []
+    assert image_client.reference_calls == []
+
+
 def test_process_character_retries_invalid_grok_aspect_and_keeps_only_valid_output(tmp_path: Path) -> None:
     settings = replace(
         settings_for(tmp_path),

@@ -54,6 +54,19 @@ class FinishedVideoScanTest(unittest.TestCase):
         self.assertIn("&v=first-frame-v1", videos[0]["thumbnail_url"])
         self.assertTrue(videos[0]["published"])
 
+    def test_product_code_is_normalized_for_mapping_lookup(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            product = "NeckFan01-数显无叶挂脖风扇"
+            path = root / product / f"omni-裂变-{product}-IT-demo.mp4"
+            path.parent.mkdir(parents=True)
+            path.write_bytes(b"video")
+
+            with patch.object(web, "FINISHED_VIDEO_ROOT", root):
+                videos = web.scan_finished_videos({}, [])
+
+        self.assertEqual(videos[0]["product_code"], "NECKFAN01")
+
     def test_old_path_resolves_to_new_layout(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -70,6 +83,31 @@ class FinishedVideoScanTest(unittest.TestCase):
                 resolved = web.resolve_finished_video_path(old_path.as_posix())
 
         self.assertEqual(resolved, new_path.resolve().as_posix())
+
+    def test_multiple_legacy_paths_share_one_finished_video_index(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            first = root / "archive" / "P1" / "first.mp4"
+            second = root / "archive" / "P2" / "second.mp4"
+            first.parent.mkdir(parents=True)
+            second.parent.mkdir(parents=True)
+            first.write_bytes(b"first")
+            second.write_bytes(b"second")
+            old_first = root / "old" / "P1" / first.name
+            old_second = root / "old" / "P2" / second.name
+
+            with (
+                patch.object(web, "FINISHED_VIDEO_ROOT", root),
+                patch.object(web, "_FINISHED_VIDEO_INDEX_ROOT", None),
+                patch.object(web, "_FINISHED_VIDEO_INDEX", {}),
+                patch.object(web, "_build_finished_video_index", wraps=web._build_finished_video_index) as build_index,
+            ):
+                resolved_first = web.resolve_finished_video_path(old_first.as_posix())
+                resolved_second = web.resolve_finished_video_path(old_second.as_posix())
+
+        self.assertEqual(resolved_first, first.resolve().as_posix())
+        self.assertEqual(resolved_second, second.resolve().as_posix())
+        build_index.assert_called_once_with(root.resolve())
 
     def test_legacy_layout_keeps_path_date_when_no_new_copy_exists(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
