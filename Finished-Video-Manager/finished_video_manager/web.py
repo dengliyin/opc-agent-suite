@@ -38,8 +38,18 @@ PUBLISH_QUEUE_PATH = DATA_ROOT / "publish_queue.sqlite3"
 VAULT_ROOT = Path(
     os.environ.get("OPC_VAULT_ROOT", str(Path.home() / "Documents" / "Obsidian Vault"))
 ).expanduser()
-FINISHED_VIDEO_ROOT = VAULT_ROOT / "wiki" / "视频" / "成品视频"
-TITLE_LIBRARY_ROOT = VAULT_ROOT / "wiki" / "视频" / "视频标题库"
+FINISHED_VIDEO_ROOT = Path(
+    os.environ.get(
+        "VIDEO_ASSEMBLY_OUTPUT_ROOT",
+        str(VAULT_ROOT / "wiki" / "视频" / "成品视频"),
+    )
+).expanduser()
+TITLE_LIBRARY_ROOT = Path(
+    os.environ.get(
+        "VIDEO_TITLE_LIBRARY_ROOT",
+        str(VAULT_ROOT / "wiki" / "视频" / "成品视频" / "视频标题库"),
+    )
+).expanduser()
 PRODUCT_INFO_ROOT = VAULT_ROOT / "wiki" / "产品" / "产品信息"
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".webm"}
 PUBLISH_LOCK = threading.Lock()

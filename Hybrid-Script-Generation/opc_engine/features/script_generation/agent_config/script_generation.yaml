@@ -1,0 +1,4 @@
+interface:
+  display_name: "钩子与 CTA 脚本复刻裂变智能体"
+  short_description: "按类型和产品复刻10002解析脚本，并批量生成钩子或CTA变体"
+  default_prompt: "Use `python3 -m opc_engine.features.script_generation.script_generation_agent_web --port 10003` for the visual web UI. Read references only from `02解析脚本/混剪-钩子|混剪-CTA/<产品名>/` and write outputs to `03复刻裂变脚本/<类型>/<产品名>/<来源脚本>/`."

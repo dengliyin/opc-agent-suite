@@ -1,6 +1,6 @@
 # Hybrid-Script-Adaptation
 
-独立的混剪脚本适配 Agent，以现有 `Script-Adaptation` 为完整母版复制，用于把同时包含钩子和 CTA 的参考脚本适配成 Omni 等视频模型可直接使用的片段指令。
+独立的钩子与 CTA 脚本适配 Agent，以现有 `Script-Adaptation` 为完整母版复制，用于把混剪解析脚本适配成 Omni 等视频模型可直接使用的片段指令。
 
 - full adaptation Markdown
 - NanoBananaPro storyboard-grid JSON
@@ -10,9 +10,9 @@
 默认输入和输出：
 
 ```text
-输入 1：$OPC_VAULT_ROOT/wiki/视频/04爆款视频脚本/混剪-钩子
-输入 2：$OPC_VAULT_ROOT/wiki/视频/04爆款视频脚本/混剪-CTA
-输出：$OPC_VAULT_ROOT/wiki/视频/混剪适配后的脚本/<目标模型>
+输入 1：$OPC_VAULT_ROOT/wiki/视频/AI实拍混剪/03复刻裂变脚本/混剪-钩子/<产品名>/<来源脚本>
+输入 2：$OPC_VAULT_ROOT/wiki/视频/AI实拍混剪/03复刻裂变脚本/混剪-CTA/<产品名>/<来源脚本>
+输出：$OPC_VAULT_ROOT/wiki/视频/AI实拍混剪/04适配脚本/<目标模型>/<类型>/<产品名>/<来源脚本>
 ```
 
 本 Agent 与 9994 使用相同的代码结构和输出契约，但拥有独立目录、配置、密钥、日志、虚拟环境和 9999 端口。

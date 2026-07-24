@@ -29,8 +29,8 @@ class ConsoleBoundaryTests(unittest.TestCase):
         self.assertEqual(self.app.ROOT, CONSOLE_ROOT)
         self.assertEqual(self.app.WORKSPACE_ROOT, WORKSPACE_ROOT)
 
-    def test_console_orchestrates_exactly_nine_agents(self):
-        self.assertEqual(len(self.app.SERVICES), 9)
+    def test_console_orchestrates_exactly_twelve_agents(self):
+        self.assertEqual(len(self.app.SERVICES), 12)
         self.assertEqual(set(self.app.ROUTE_TO_SERVICE.values()), set(self.app.SERVICES))
 
     def test_every_service_runs_from_its_agent_directory(self):
@@ -79,6 +79,7 @@ class ConsoleBoundaryTests(unittest.TestCase):
         self.assertIn("统一归口 · 成品管理与发布", html)
         self.assertIn("steps:['collect','analyze','script','adapt','assemble','compose']", html)
         self.assertIn("steps:['rewrite','script','adapt','assemble','compose']", html)
+        self.assertIn("steps:['hybrid_collect','hybrid_analyze','hybrid_script','hybrid_adapt'", html)
 
     def test_agent_cards_do_not_render_descriptions(self):
         self.assertNotIn('<p class="desc">', self.app.INDEX_HTML)
@@ -96,10 +97,11 @@ class ConsoleBoundaryTests(unittest.TestCase):
         self.assertIn("'hybrid_adapt'", html)
         self.assertIn("port:'10000',label:'AI＋实拍混剪'", html)
         self.assertIn("暂未接入", html)
-        self.assertEqual(len(self.app.SERVICES), 9)
+        self.assertEqual(len(self.app.SERVICES), 12)
         service_urls = [str(service.get("url", "")) for service in self.app.SERVICES.values()]
         self.assertTrue(any(":9999" in url for url in service_urls))
         self.assertFalse(any(":10000" in url for url in service_urls))
+        self.assertTrue(any(":10003" in url for url in service_urls))
 
     def test_console_exposes_global_path_settings_page(self):
         self.assertIn('href="/settings/paths"', self.app.INDEX_HTML)
@@ -107,6 +109,7 @@ class ConsoleBoundaryTests(unittest.TestCase):
         self.assertIn("/api/global-paths", self.app.PATH_SETTINGS_HTML)
         group_labels = {group["label"] for group in self.app.GLOBAL_PATH_GROUPS}
         self.assertIn("9992 · 脚本解析", group_labels)
+        self.assertIn("10003 · 钩子与 CTA 脚本复刻裂变", group_labels)
         self.assertIn("9995 · 片段产出", group_labels)
         self.assertIn("9998 · 片段合成", group_labels)
         self.assertIn("其他 Agent", self.app.PATH_SETTINGS_HTML)
@@ -129,9 +132,23 @@ class ConsoleBoundaryTests(unittest.TestCase):
         self.assertEqual(settings["OPC_VAULT_ROOT"]["group"], "shared")
         self.assertEqual(settings["SCRIPT_ROOT"]["group"], "9995")
         self.assertEqual(settings["VIDEO_TEARDOWN_INPUT_ROOT"]["group"], "9992")
+        self.assertEqual(settings["VIDEO_TITLE_LIBRARY_ROOT"]["group"], "9996")
+        self.assertEqual(settings["SCRIPT_MISTAKE_BOOK_ROOT"]["group"], "script_knowledge")
         self.assertEqual(
             settings["VIDEO_TEARDOWN_INPUT_ROOT"]["resolved"],
-            "/tmp/opc vault/wiki/视频/03爆款视频",
+            "/tmp/opc vault/wiki/视频/纯AI视频/01来源素材",
+        )
+        self.assertEqual(
+            settings["VIDEO_TITLE_LIBRARY_ROOT"]["resolved"],
+            "/tmp/opc vault/wiki/视频/成品视频/视频标题库",
+        )
+        self.assertEqual(
+            settings["SCRIPT_MISTAKE_BOOK_ROOT"]["resolved"],
+            "/tmp/opc vault/wiki/视频/共享知识库/脚本错题本",
+        )
+        self.assertEqual(
+            settings["VIDEO_ASSEMBLY_OUTPUT_ROOT"]["resolved"],
+            "/tmp/opc vault/wiki/视频/成品视频",
         )
 
     def test_saving_global_paths_preserves_non_path_env_values(self):
@@ -198,6 +215,9 @@ class ConsoleBoundaryTests(unittest.TestCase):
         for directory in (
             "Video-Collection",
             "Script-Analysis",
+            "Hybrid-Video-Collection",
+            "Hybrid-Script-Analysis",
+            "Hybrid-Script-Generation",
             "Script-Generation",
             "Script-Adaptation",
             "Hybrid-Script-Adaptation",
@@ -224,6 +244,21 @@ class ConsoleBoundaryTests(unittest.TestCase):
         self.assertEqual(Path(service["command"][0]), expected)
         self.assertEqual(service["cwd"], WORKSPACE_ROOT / "Hybrid-Script-Adaptation")
         self.assertEqual(service["url"], "http://127.0.0.1:9999/")
+
+    def test_hybrid_collection_and_analysis_use_independent_environments(self):
+        collection = self.app.SERVICES["hybrid_collect"]
+        analysis = self.app.SERVICES["hybrid_analyze"]
+
+        self.assertEqual(
+            Path(collection["command"][0]),
+            WORKSPACE_ROOT / "Hybrid-Video-Collection" / ".venv" / "bin" / "python",
+        )
+        self.assertEqual(collection["url"], "http://127.0.0.1:10001/")
+        self.assertEqual(
+            Path(analysis["command"][0]),
+            WORKSPACE_ROOT / "Hybrid-Script-Analysis" / ".venv" / "bin" / "python",
+        )
+        self.assertEqual(analysis["url"], "http://127.0.0.1:10002/")
 
     def test_double_click_launcher_bootstraps_missing_environment(self):
         launcher = (WORKSPACE_ROOT / "启动OPC集合控制台.command").read_text(encoding="utf-8")

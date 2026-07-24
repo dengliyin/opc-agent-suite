@@ -1,0 +1,7 @@
+{
+  "_说明": "钩子与 CTA 脚本复刻裂变智能体共享模型配置。除 API Key 外应提交到 Git。",
+  "modelmesh_base_url": "https://api.deepseek.com",
+  "script_generation_model": "deepseek-v4-pro",
+  "script_generation_max_output_tokens": 24000,
+  "script_generation_timeout": 120
+}

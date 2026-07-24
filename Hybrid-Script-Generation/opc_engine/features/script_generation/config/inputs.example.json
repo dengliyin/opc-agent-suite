@@ -1,0 +1,11 @@
+{
+  "_说明": "钩子与 CTA 脚本复刻裂变智能体输入示例。复制为 inputs.json 后填写本机路径；inputs.json 已被 .gitignore 忽略。",
+  "script_product_document_path": "/path/to/product_document.md",
+  "script_reference_script_path": "",
+  "script_reference_analysis_path": "/path/to/02解析脚本/混剪-钩子/产品名/source.md",
+  "script_reference_kind": "竞品视频拆解结果",
+  "script_hybrid_material_type": "混剪-钩子",
+  "script_enable_mutation_rewrite": "",
+  "script_mutation_variants": "3",
+  "output_dir": ""
+}

@@ -26,12 +26,12 @@ chmod +x scripts/install_mac.sh
 
 ```text
 Obsidian Vault/
-  wiki/视频/06产品适配后的脚本/
+  wiki/视频/纯AI视频/04适配脚本/
     omni/
     grok/
   wiki/产品/产品底图/
-  wiki/视频/10omni视频片段/
-  wiki/视频/10grok视频片段/
+  wiki/视频/纯AI视频/05AI片段/omni/
+  wiki/视频/纯AI视频/05AI片段/grok/
 ```
 
 启动后打开：
@@ -65,8 +65,8 @@ http://127.0.0.1:9995
     omni10s1片段/
     grok6-30s1片段/
   输出/
-    10omni视频片段/
-    10grok视频片段/
+    05AI片段/omni/
+    05AI片段/grok/
 ```
 
 对应路径设置：
@@ -75,8 +75,8 @@ http://127.0.0.1:9995
 Omni 脚本输入路径 -> 任务包/输入/omni10s1片段
 Grok 脚本输入路径 -> 任务包/输入/grok6-30s1片段
 产品参考图路径 -> 任务包/09产品参考图
-Omni 视频输出路径 -> 任务包/输出/10omni视频片段
-Grok 视频输出路径 -> 任务包/输出/10grok视频片段
+Omni 视频输出路径 -> 任务包/输出/05AI片段/omni
+Grok 视频输出路径 -> 任务包/输出/05AI片段/grok
 ```
 
 ## 常用命令

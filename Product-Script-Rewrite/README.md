@@ -1,6 +1,6 @@
 # 产品脚本改写智能体
 
-将某个产品目录中的爆款 Markdown 脚本，按目标产品信息改写后，写入目标产品在 `04爆款视频脚本` 下的子文件夹。
+将某个产品目录中的爆款 Markdown 脚本，按目标产品信息改写后，写入目标产品在 `纯AI视频/02参考脚本` 下的子文件夹。
 
 启动：
 
@@ -23,4 +23,3 @@ bash scripts/validate_app.sh
 ```
 
 本地密钥保存在 `agent_config/agent_secrets.local.json`，该文件已由同目录 `.gitignore` 忽略。
-

@@ -1,13 +1,13 @@
 ---
 name: Hybrid-Script-Adaptation
-description: Portable self-contained hybrid script adaptation workflow copied from the 9994 agent structure. Use when Codex needs to run, install, package, or maintain the bundled 混剪脚本适配智能体; adapt a Markdown reference script containing hook and CTA segments; manage its prompt or knowledge base; or produce model-ready Markdown, storyboard JSON, and video prompt outputs.
+description: Portable self-contained hybrid script adaptation workflow copied from the 9994 agent structure. Use when Codex needs to run, install, package, or maintain the bundled 钩子与 CTA 脚本适配智能体; adapt parsed hook or CTA Markdown; manage its prompt or knowledge base; or produce model-ready Markdown, storyboard JSON, and video prompt outputs.
 ---
 
 # Hybrid Script Adaptation Agent
 
 ## Overview
 
-Use this skill to operate the bundled 混剪脚本适配智能体. It is independent from 9994 and uses the same code structure and output contract. The runnable app is packaged inside this skill:
+Use this skill to operate the bundled 钩子与 CTA 脚本适配智能体. It is independent from 9994 and uses the same code structure and output contract. The runnable app is packaged inside this skill:
 
 ```text
 software/Hybrid-Script-Adaptation-app/

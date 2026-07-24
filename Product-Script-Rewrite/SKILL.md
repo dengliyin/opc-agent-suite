@@ -13,7 +13,7 @@ bash scripts/start_web.sh
 
 Open `http://127.0.0.1:9997/`.
 
-The source scripts are read from the configured `04爆款视频脚本` product folders. The rewritten Markdown is written into the selected target product folder under the same root.
+The source scripts are read from the configured `纯AI视频/02参考脚本` product folders. The rewritten Markdown is written into the selected target product folder under the same root.
 
 This agent is separate from 脚本适配. It rewrites product content while preserving the source video's viral structure; it does not generate Veo, Omni, or Grok delivery formats.
 

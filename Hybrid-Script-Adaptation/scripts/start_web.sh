@@ -51,11 +51,11 @@ if [ -n "$PID" ]; then
 fi
 
 if [ -z "$PID" ] || ! kill -0 "$PID" 2>/dev/null; then
-  echo "混剪脚本适配智能体启动失败，错误日志：$ERR_LOG" >&2
+  echo "钩子与 CTA 脚本适配智能体启动失败，错误日志：$ERR_LOG" >&2
   tail -n 80 "$ERR_LOG" >&2 || true
   exit 1
 fi
 
-echo "混剪脚本适配智能体 Web 界面: http://127.0.0.1:${PORT}"
+echo "钩子与 CTA 脚本适配智能体 Web 界面: http://127.0.0.1:${PORT}"
 echo "PID: ${PID}"
 echo "日志: ${OUT_LOG}"

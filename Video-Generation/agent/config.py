@@ -21,11 +21,12 @@ load_dotenv(SETTINGS_PATH, override=True)
 DEFAULT_VAULT_ROOT = Path(
     os.environ.get("OPC_VAULT_ROOT", str(Path.home() / "Documents" / "Obsidian Vault"))
 ).expanduser()
-DEFAULT_SCRIPT_ROOT = DEFAULT_VAULT_ROOT / "wiki" / "视频" / "06产品适配后的脚本" / "omni"
-DEFAULT_GROK_SCRIPT_ROOT = DEFAULT_VAULT_ROOT / "wiki" / "视频" / "06产品适配后的脚本" / "grok"
+DEFAULT_SCRIPT_ROOT = DEFAULT_VAULT_ROOT / "wiki" / "视频" / "纯AI视频" / "04适配脚本" / "omni"
+DEFAULT_GROK_SCRIPT_ROOT = DEFAULT_VAULT_ROOT / "wiki" / "视频" / "纯AI视频" / "04适配脚本" / "grok"
 DEFAULT_REFERENCE_ROOT = DEFAULT_VAULT_ROOT / "wiki" / "产品" / "产品底图"
-DEFAULT_VIDEO_OUTPUT_ROOT = DEFAULT_VAULT_ROOT / "wiki" / "视频" / "10omni视频片段"
-DEFAULT_GROK_VIDEO_OUTPUT_ROOT = DEFAULT_VAULT_ROOT / "wiki" / "视频" / "10grok视频片段"
+DEFAULT_VIDEO_OUTPUT_ROOT = DEFAULT_VAULT_ROOT / "wiki" / "视频" / "纯AI视频" / "05AI片段" / "omni"
+DEFAULT_GROK_VIDEO_OUTPUT_ROOT = DEFAULT_VAULT_ROOT / "wiki" / "视频" / "纯AI视频" / "05AI片段" / "grok"
+DEFAULT_COMPLETED_SCRIPT_ROOT = DEFAULT_VAULT_ROOT / "wiki" / "视频" / "纯AI视频" / "06合成工作区"
 ENV_ASSIGNMENT_RE = re.compile(r"^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_]*)(\s*=)(.*?)(\r?\n)?$")
 
 
@@ -75,6 +76,7 @@ class Settings:
     script_root: Path
     reference_root: Path
     video_output_root: Path
+    completed_root: Path | None = None
     script_concurrency: int = 3
     character_api_model: str = ""
     storyboard_api_model: str = ""
@@ -178,7 +180,11 @@ class Settings:
 
     @property
     def completed_script_root(self) -> Path:
-        return self.video_output_root.parent / "视频片段 （待拼接）" / self.provider
+        if self.completed_root is not None:
+            pending_root = self.completed_root
+        else:
+            pending_root = self.video_output_root.parent / "视频片段 （待拼接）"
+        return pending_root / self.provider
 
     def secret_values(self) -> List[str]:
         return [value for value in [self.otu_api_key, self.grok_api_key] if value]
@@ -238,6 +244,9 @@ def load_settings(provider: str = "omni") -> Settings:
         video_output_root=Path(os.getenv("VIDEO_OUTPUT_ROOT", str(video_output_root))).expanduser()
         if provider == "omni"
         else video_output_root.expanduser(),
+        completed_root=Path(
+            os.getenv("VIDEO_ASSEMBLY_PENDING_ROOT", str(DEFAULT_COMPLETED_SCRIPT_ROOT))
+        ).expanduser(),
         script_concurrency=_env_int(f"{prefix}_SCRIPT_CONCURRENCY", _env_int("SCRIPT_CONCURRENCY", 3)),
         character_api_model=os.getenv(f"{prefix}_CHARACTER_API_MODEL", default_character_api_model),
         storyboard_api_model=os.getenv(f"{prefix}_STORYBOARD_API_MODEL", default_storyboard_api_model),

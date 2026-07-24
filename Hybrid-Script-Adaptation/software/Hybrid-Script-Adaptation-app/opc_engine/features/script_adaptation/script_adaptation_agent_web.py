@@ -252,6 +252,30 @@ def script_library_roots(config: dict[str, Any] | None = None) -> list[Path]:
     return roots
 
 
+def hybrid_script_classification(path: Path, config: dict[str, Any]) -> dict[str, str]:
+    resolved = path.resolve()
+    for root in script_library_roots(config):
+        try:
+            relative = resolved.relative_to(root)
+        except ValueError:
+            continue
+        product_name = relative.parts[0] if len(relative.parts) > 1 else ""
+        if product_name:
+            relative_parent = relative.parent
+            return {
+                "material_type": root.name,
+                "product_name": product_name,
+                "relative_dir": (Path(root.name) / relative_parent).as_posix(),
+                "group_label": f"{root.name} / {product_name}",
+            }
+    return {
+        "material_type": "",
+        "product_name": "",
+        "relative_dir": "",
+        "group_label": "未分类",
+    }
+
+
 def parse_time_value(value: str) -> float | None:
     text = str(value or "").strip()
     text = re.sub(r"[秒sS]\s*$", "", text).strip()
@@ -825,9 +849,16 @@ def script_file_payload(
     parsed_name = workflow.parse_script_filename(path.name)
     target_model = normalize_target_model(config.get("script_adaptation_target_model"))
     output_root = workflow.script_adaptation_output_root(config)
-    product_folder = workflow.product_folder_from_script(config, path)
+    classification = hybrid_script_classification(path, config)
+    product_folder = classification["product_name"] or workflow.product_folder_from_script(config, path)
     output_stem = adaptation_output_stem(config, path.name, target_model)
-    output_path = output_root / product_folder / f"{output_stem}.md" if output_root else None
+    output_path = (
+        output_root / classification["relative_dir"] / f"{output_stem}.md"
+        if output_root and classification["relative_dir"]
+        else output_root / product_folder / f"{output_stem}.md"
+        if output_root
+        else None
+    )
     output_validation = adaptation_output_validation(
         output_path,
         target_model,
@@ -853,6 +884,7 @@ def script_file_payload(
         "path": path.as_posix(),
         "relative_path": relative,
         "product": product_folder,
+        **classification,
         "adaptation_type": parsed_name.get("adaptation_type", ""),
         "country": parsed_name.get("country", ""),
         "username": parsed_name.get("username", ""),
@@ -1006,7 +1038,14 @@ def batch_payload(batch_id: str, scripts: list[dict[str, Any]]) -> dict[str, Any
     }
 
 
-def product_script_payload(product_name: str, product_path: Path, files: list[Path], root: Path, config: dict[str, Any]) -> dict[str, Any]:
+def product_script_payload(
+    product_name: str,
+    product_path: Path,
+    files: list[Path],
+    root: Path,
+    config: dict[str, Any],
+    material_type: str = "",
+) -> dict[str, Any]:
     status_logs: dict[Path, dict[str, Any]] = {}
     scripts = [script_file_payload(path, root, config, status_logs) for path in files]
     adapted_count = sum(1 for script in scripts if script.get("adapted"))
@@ -1023,6 +1062,8 @@ def product_script_payload(product_name: str, product_path: Path, files: list[Pa
     total_count = len(scripts)
     return {
         "name": product_name,
+        "material_type": material_type,
+        "product_name": product_path.name,
         "path": product_path.as_posix(),
         "countries": countries,
         "count": total_count,
@@ -1054,10 +1095,23 @@ def list_product_scripts(target_model: str | None = None) -> dict[str, Any]:
 
     products: list[dict[str, Any]] = []
     for root in available_roots:
-        files = sorted(root.rglob("*.md"), key=lambda item: item.relative_to(root).as_posix())
-        files = [path for path in files if path.is_file()]
-        if files:
-            products.append(product_script_payload(root.name, root, files, root, config))
+        for product_dir in sorted(root.iterdir(), key=lambda item: item.name):
+            if not product_dir.is_dir():
+                continue
+            files = sorted(product_dir.rglob("*.md"), key=lambda item: item.relative_to(product_dir).as_posix())
+            files = [path for path in files if path.is_file()]
+            if files:
+                group_label = f"{root.name} / {product_dir.name}"
+                products.append(
+                    product_script_payload(
+                        group_label,
+                        product_dir,
+                        files,
+                        root,
+                        config,
+                        material_type=root.name,
+                    )
+                )
 
     total_count = sum(product["count"] for product in products)
     adapted_count = sum(product.get("adapted_count", 0) for product in products)
@@ -1786,12 +1840,17 @@ class AgentWebJob:
         source_id = adaptation_output_stem(config, script_filename, target_model)
         source_anchor = script["source_path"] or script_filename
         product_folder = workflow.product_folder_from_script(config, source_anchor)
+        classification = hybrid_script_classification(Path(source_anchor), config)
+        if classification["product_name"]:
+            product_folder = classification["product_name"]
         script_dir = source_stage_dir(source_id, "scripts", config)
         script_path = script_dir / f"{source_id}.md"
         script_path.write_text(script_text.rstrip() + "\n", encoding="utf-8")
         overrides["script_adaptation_input_path"] = str(script_path)
         overrides["script_adaptation_output_stem"] = source_id
         overrides["script_adaptation_product_folder"] = product_folder
+        if classification["relative_dir"]:
+            overrides["script_adaptation_output_relative_dir"] = classification["relative_dir"]
 
         output_config = {**config, **overrides}
         output_dir = workflow.output_dir_for_stage("adapt", output_config, script_path)
@@ -1829,7 +1888,7 @@ class AgentWebJob:
         print(f"[{index}/{total}] 已导入 Markdown: {script_filename}")
         print(f"[{index}/{total}] 脚本已保存: {display_path(script_path)}")
         print(f"[{index}/{total}] 输出目录: {display_path(output_dir)}")
-        print(f"[{index}/{total}] 开始调用混剪脚本适配智能体...")
+        print(f"[{index}/{total}] 开始调用钩子与 CTA 脚本适配智能体...")
         if self.is_cancelled():
             write_adaptation_status(
                 output_dir,
@@ -1868,7 +1927,7 @@ class AgentWebJob:
                 },
             )
             raise JobCancelled("用户终止任务")
-        print(f"[{index}/{total}] 混剪脚本适配智能体执行完成，开始质检")
+        print(f"[{index}/{total}] 钩子与 CTA 脚本适配智能体执行完成，开始质检")
 
         output_validation = adaptation_output_validation(
             expected_md,
@@ -2093,7 +2152,7 @@ HTML = r"""<!doctype html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>混剪脚本适配智能体</title>
+  <title>钩子与 CTA 脚本适配智能体</title>
   <style>
     :root {
       color-scheme:light;
@@ -2910,7 +2969,7 @@ HTML = r"""<!doctype html>
 <body>
   <header>
     <div>
-      <h1>混剪脚本适配智能体</h1>
+      <h1>钩子与 CTA 脚本适配智能体</h1>
       <div class="sub">钩子与 CTA 参考脚本 · 多模型适配 · 本地归档</div>
     </div>
     <div class="statusBar">
@@ -2976,7 +3035,7 @@ HTML = r"""<!doctype html>
       <div class="panelBody scriptBody">
         <div class="scriptLibrary">
           <div class="libraryHead">
-            <span id="libraryTitle">混剪参考脚本库</span>
+            <span id="libraryTitle">钩子与 CTA 脚本库</span>
             <span id="libraryRoot" class="libraryRoot">加载中</span>
             <button class="blue" id="selectAllScriptsBtn">选当前产品</button>
             <button class="blue" id="clearScriptsBtn">清空</button>
@@ -2988,7 +3047,7 @@ HTML = r"""<!doctype html>
         </div>
         <div class="selectedScriptInfo">
           <strong id="selectedScriptName">未选择脚本</strong>
-          <span id="selectedScriptMeta">请从上方混剪参考脚本库勾选脚本后运行适配</span>
+          <span id="selectedScriptMeta">请从上方钩子与 CTA 脚本库勾选脚本后运行适配</span>
           <span id="selectedScriptPath"></span>
         </div>
       </div>
@@ -3205,7 +3264,7 @@ HTML = r"""<!doctype html>
       }
       $('runUnusedBtn').textContent = unusedScriptCount ? `适配未适配（${unusedScriptCount}）` : '无未适配';
       $('runUnusedBtn').disabled = !unusedScriptCount;
-      $('libraryTitle').textContent = `混剪参考脚本库 · 共 ${data.total_count || 0} · 已适配 ${data.adapted_count || 0} · 待处理 ${data.unused_count || 0} · 异常 ${data.invalid_count || 0}`;
+      $('libraryTitle').textContent = `钩子与 CTA 脚本库 · 共 ${data.total_count || 0} · 已适配 ${data.adapted_count || 0} · 待处理 ${data.unused_count || 0} · 异常 ${data.invalid_count || 0}`;
       $('libraryRoot').textContent = data.roots?.length ? `已配置 ${data.roots.length} 个扫描目录` : '未配置输入目录';
       if (!products.length) {
         $('products').innerHTML = '<div class="muted">未找到 .md 脚本</div>';
@@ -3325,7 +3384,7 @@ HTML = r"""<!doctype html>
         selectedScriptText = '';
         selectedScriptPath = '';
         $('selectedScriptName').textContent = '未选择脚本';
-        $('selectedScriptMeta').textContent = '请从上方混剪参考脚本库勾选脚本后运行适配';
+        $('selectedScriptMeta').textContent = '请从上方钩子与 CTA 脚本库勾选脚本后运行适配';
         $('selectedScriptPath').textContent = '';
         $('runBtn').textContent = currentJobRunning ? '任务运行中' : '调用 AI 适配';
         return;
@@ -3928,7 +3987,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"混剪脚本适配智能体 Web 界面: http://{args.host}:{args.port}", flush=True)
+    print(f"钩子与 CTA 脚本适配智能体 Web 界面: http://{args.host}:{args.port}", flush=True)
     server.serve_forever()
 
 

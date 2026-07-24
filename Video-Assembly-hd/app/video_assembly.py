@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import html
 import json
 import math
 import os
@@ -31,19 +30,13 @@ VAULT_ROOT = Path(
 PENDING_ROOT = Path(
     os.environ.get(
         "VIDEO_ASSEMBLY_PENDING_ROOT",
-        str(VAULT_ROOT / "wiki" / "视频" / "视频片段 （待拼接）"),
+        str(VAULT_ROOT / "wiki" / "视频" / "纯AI视频" / "06合成工作区"),
     )
 ).expanduser()
 OUTPUT_ROOT = Path(
     os.environ.get(
         "VIDEO_ASSEMBLY_OUTPUT_ROOT",
         str(VAULT_ROOT / "wiki" / "视频" / "成品视频"),
-    )
-).expanduser()
-STICKER_LIBRARY_ROOT = Path(
-    os.environ.get(
-        "VIDEO_ASSEMBLY_STICKER_LIBRARY_ROOT",
-        str(VAULT_ROOT / "wiki" / "视频" / "视频文字标签贴纸库"),
     )
 ).expanduser()
 WORK_ROOT = Path(os.environ.get("VIDEO_ASSEMBLY_WORK_ROOT", str(APP_ROOT)))
@@ -54,9 +47,6 @@ REPORT_PATH = Path(
 VIDEO_EXTS = {".mp4", ".mov", ".m4v"}
 CLEANABLE_MEDIA_EXTS = VIDEO_EXTS | {".png", ".jpg", ".jpeg", ".webp", ".webm"}
 EXPORT_MARKER_SUFFIX = ".exported.json"
-STICKER_STYLES = ("serif", "bubbly", "tiktok", "cinematic")
-STICKER_POSITIONS = ("top", "center", "bottom")
-STICKER_TIMINGS = ("full", "custom")
 CAPTION_MODES = ("none", "karaoke")
 DEFAULT_CAPTION_MODE = "none"
 COUNTRY_LANGUAGE_CODES = {
@@ -78,17 +68,6 @@ COUNTRY_LANGUAGE_CODES = {
     "US": "en",
     "VN": "vi",
 }
-DEFAULT_STICKER = {
-    "enabled": False,
-    "text": "",
-    "style": "tiktok",
-    "position": "top",
-    "timing": "full",
-    "start": 0.0,
-    "end": 3.0,
-}
-
-
 @dataclass
 class SegmentPlan:
     index: int
@@ -112,7 +91,6 @@ class ScriptItem:
     cleanup_file_count: int = 0
     cleanup_bytes: int = 0
     caption_mode: str = DEFAULT_CAPTION_MODE
-    sticker: dict = field(default_factory=lambda: dict(DEFAULT_STICKER))
     issues: list[str] = field(default_factory=list)
 
 
@@ -130,48 +108,6 @@ def natural_segment_key(path: Path) -> tuple[int, str]:
     if match:
         return (int(match.group(1)), path.name)
     return (10_000, path.name)
-
-
-def load_sticker_library(product: str, root: Path = STICKER_LIBRARY_ROOT) -> dict:
-    if not product or Path(product).name != product:
-        raise ValueError("产品名称无效")
-    path = root / f"{product}.md"
-    if not path.is_file():
-        return {"available": False, "product": product, "path": str(path), "countries": []}
-
-    countries: list[dict] = []
-    current_country: dict | None = None
-    current_preset: dict | None = None
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        country_match = re.match(r"^##\s+国家：(.+?)\s+\(([A-Z]{2})\)\s*$", line)
-        if country_match:
-            current_country = {
-                "name": country_match.group(1).strip(),
-                "code": country_match.group(2),
-                "presets": [],
-            }
-            countries.append(current_country)
-            current_preset = None
-            continue
-        preset_match = re.match(r"^###\s+([A-Z]{2}-\d{3})\s*$", line)
-        if preset_match and current_country:
-            current_preset = {"id": preset_match.group(1), "text": "", "translation": ""}
-            current_country["presets"].append(current_preset)
-            continue
-        if current_preset and line.startswith("- 文案："):
-            current_preset["text"] = line.removeprefix("- 文案：").strip()
-        elif current_preset and line.startswith("- 中文释义："):
-            current_preset["translation"] = line.removeprefix("- 中文释义：").strip()
-
-    for country in countries:
-        country["presets"] = [preset for preset in country["presets"] if preset["text"]]
-    countries = [country for country in countries if country["presets"]]
-    return {
-        "available": bool(countries),
-        "product": product,
-        "path": str(path),
-        "countries": countries,
-    }
 
 
 def parse_timecode(value: str) -> float:
@@ -740,69 +676,10 @@ def safe_name(value: str) -> str:
     return re.sub(r"[^\w.\-\u4e00-\u9fff]+", "_", value).strip("_")[:180]
 
 
-def normalize_sticker_options(value: dict | None) -> dict:
-    source = value if isinstance(value, dict) else {}
-    options = dict(DEFAULT_STICKER)
-    options["enabled"] = source.get("enabled") is True
-    options["text"] = re.sub(r"\s+", " ", str(source.get("text") or "")).strip()
-    options["style"] = str(source.get("style") or options["style"])
-    options["position"] = str(source.get("position") or options["position"])
-    options["timing"] = str(source.get("timing") or options["timing"])
-    if options["style"] not in STICKER_STYLES:
-        raise ValueError("文字贴纸样式无效")
-    if options["position"] not in STICKER_POSITIONS:
-        raise ValueError("文字贴纸位置无效")
-    if options["timing"] not in STICKER_TIMINGS:
-        raise ValueError("文字贴纸时间设置无效")
-    if len(options["text"]) > 36:
-        raise ValueError("贴纸文字最多 36 个字符")
-    if options["enabled"] and not options["text"]:
-        raise ValueError("开启文字贴纸后，贴纸文字不能为空")
-    for key in ("start", "end"):
-        try:
-            number = float(source.get(key, options[key]))
-        except (TypeError, ValueError) as exc:
-            raise ValueError("文字贴纸时间必须是数字") from exc
-        if not math.isfinite(number) or number < 0:
-            raise ValueError("文字贴纸时间不能为负数")
-        options[key] = round(number, 3)
-    if options["timing"] == "custom" and options["end"] - options["start"] < 0.4:
-        raise ValueError("文字贴纸至少需要显示 0.4 秒")
-    return options
-
-
-def sticker_font_size(text: str) -> int:
-    visual_units = sum(1.0 if ord(character) > 255 else 0.56 for character in text)
-    return round(max(42.0, min(72.0, 1480.0 / max(visual_units, 1.0))))
-
-
-def effective_sticker_options(value: dict | None, total_duration: float) -> dict:
-    options = normalize_sticker_options(value)
-    if not options["enabled"]:
-        return options
-    if total_duration <= 0:
-        raise ValueError("视频时长无效，无法添加文字贴纸")
-    if options["timing"] == "full":
-        start, end = 0.0, total_duration
-    else:
-        start = options["start"]
-        end = min(options["end"], total_duration)
-        if start >= total_duration or end - start < 0.4:
-            raise ValueError("文字贴纸的自定义时间超出成品时长")
-    return {
-        **options,
-        "effective_start": round(start, 3),
-        "effective_end": round(end, 3),
-        "effective_duration": round(end - start, 3),
-        "font_size": sticker_font_size(options["text"]),
-    }
-
-
 def build_index_html(
     clips: list[dict],
     total_duration: float,
     transition_duration: float = 0.36,
-    sticker: dict | None = None,
 ) -> str:
     media_lines: list[str] = []
     transition_lines: list[str] = []
@@ -829,32 +706,7 @@ def build_index_html(
                 f'      tl.to("#transition-{i}", {{ opacity: 0, duration: 0.18, ease: "sine.inOut" }}, {transition_start + 0.140:.3f});'
             )
         current += duration
-    sticker_options = effective_sticker_options(sticker, total_duration)
-    sticker_html = ""
-    if sticker_options["enabled"]:
-        sticker_start = sticker_options["effective_start"]
-        sticker_duration = sticker_options["effective_duration"]
-        sticker_end = sticker_options["effective_end"]
-        sticker_html = (
-            f'      <div id="text-sticker" class="clip text-sticker-slot position-{sticker_options["position"]}" '
-            f'data-start="{sticker_start:.3f}" data-duration="{sticker_duration:.3f}" data-track-index="7" '
-            f'data-layout-allow-occlusion>\n'
-            f'        <div id="text-sticker-body" class="text-sticker-body style-{sticker_options["style"]}" '
-            f'style="font-size: {sticker_options["font_size"]}px">{html.escape(sticker_options["text"])}</div>\n'
-            "      </div>"
-        )
-        entrance_duration = min(0.28, sticker_duration * 0.28)
-        timeline_lines.append(
-            f'      tl.fromTo("#text-sticker-body", {{ opacity: 0, y: 28, scale: 0.94 }}, '
-            f'{{ opacity: 1, y: 0, scale: 1, duration: {entrance_duration:.3f}, ease: "back.out(1.45)", immediateRender: false }}, '
-            f'{sticker_start:.3f});'
-        )
-        if sticker_duration >= 0.8:
-            timeline_lines.append(
-                f'      tl.to("#text-sticker-body", {{ opacity: 0, y: -16, scale: 0.98, duration: 0.180, ease: "power2.in" }}, '
-                f'{sticker_end - 0.180:.3f});'
-            )
-    media_html = "\n".join([*media_lines, *transition_lines, *([sticker_html] if sticker_html else [])])
+    media_html = "\n".join([*media_lines, *transition_lines])
     timeline_html = "\n".join(timeline_lines)
     return f"""<!doctype html>
 <html lang="en">
@@ -866,48 +718,6 @@ def build_index_html(
       @font-face {{
         font-family: "Assembly Sans";
         src: local("PingFang SC");
-        font-style: normal;
-        font-weight: 400 900;
-      }}
-      @font-face {{
-        font-family: "Songti SC";
-        src: local("Songti SC");
-        font-style: normal;
-        font-weight: 400 900;
-      }}
-      @font-face {{
-        font-family: "STSong";
-        src: local("STSong");
-        font-style: normal;
-        font-weight: 400 900;
-      }}
-      @font-face {{
-        font-family: "Arial Rounded MT Bold";
-        src: local("Arial Rounded MT Bold");
-        font-style: normal;
-        font-weight: 400 900;
-      }}
-      @font-face {{
-        font-family: "PingFang SC";
-        src: local("PingFang SC");
-        font-style: normal;
-        font-weight: 400 900;
-      }}
-      @font-face {{
-        font-family: "TikTok Sans";
-        src: local("TikTok Sans");
-        font-style: normal;
-        font-weight: 400 900;
-      }}
-      @font-face {{
-        font-family: "Avenir Next Condensed";
-        src: local("Avenir Next Condensed");
-        font-style: normal;
-        font-weight: 400 900;
-      }}
-      @font-face {{
-        font-family: "Arial Narrow";
-        src: local("Arial Narrow");
         font-style: normal;
         font-weight: 400 900;
       }}
@@ -934,71 +744,6 @@ def build_index_html(
         object-fit: cover;
         background: #15110d;
         z-index: 1;
-      }}
-      .text-sticker-slot {{
-        position: absolute;
-        left: 90px;
-        right: 170px;
-        z-index: 20;
-        display: flex;
-        justify-content: center;
-        pointer-events: none;
-      }}
-      .text-sticker-slot.position-top {{ top: 300px; }}
-      .text-sticker-slot.position-center {{ top: 820px; }}
-      .text-sticker-slot.position-bottom {{ bottom: 500px; }}
-      .text-sticker-body {{
-        box-sizing: border-box;
-        max-width: 820px;
-        overflow: hidden;
-        color: #ffffff;
-        font-weight: 850;
-        line-height: 1.16;
-        letter-spacing: 0;
-        text-align: center;
-        overflow-wrap: anywhere;
-        display: -webkit-box;
-        -webkit-box-orient: vertical;
-        -webkit-line-clamp: 2;
-        will-change: transform, opacity;
-      }}
-      .text-sticker-body.style-serif {{
-        padding: 12px 20px 15px;
-        color: #fff8e8;
-        font-family: Georgia, "Songti SC", "STSong", serif;
-        font-weight: 700;
-        letter-spacing: 0.02em;
-        text-shadow: 0 4px 12px rgba(0, 0, 0, 0.82);
-      }}
-      .text-sticker-body.style-bubbly {{
-        padding: 10px 14px;
-        color: #ff78b4;
-        font-family: "Arial Rounded MT Bold", "SF Pro Rounded", "PingFang SC", sans-serif;
-        font-weight: 800;
-        letter-spacing: 0.01em;
-        -webkit-text-stroke: 2px #ffffff;
-        paint-order: stroke fill;
-        text-shadow: 0 4px 10px rgba(0, 0, 0, 0.58);
-      }}
-      .text-sticker-body.style-tiktok {{
-        padding: 10px 14px;
-        color: #ffffff;
-        font-family: "TikTok Sans", "Avenir Next", "PingFang SC", Arial, sans-serif;
-        font-weight: 700;
-        letter-spacing: 0.01em;
-        -webkit-text-stroke: 2px #111111;
-        paint-order: stroke fill;
-        text-shadow: 0 3px 8px rgba(0, 0, 0, 0.82);
-      }}
-      .text-sticker-body.style-cinematic {{
-        padding: 10px 14px;
-        color: #ffffff;
-        font-family: "Avenir Next Condensed", "Arial Narrow", "PingFang SC", sans-serif;
-        font-weight: 800;
-        letter-spacing: 0.035em;
-        -webkit-text-stroke: 3px #111111;
-        paint-order: stroke fill;
-        text-shadow: 0 6px 14px rgba(0, 0, 0, 0.78);
       }}
       .transition-wash {{
         position: absolute;
@@ -1126,14 +871,12 @@ def prepare_project(item: ScriptItem) -> tuple[Path, list[dict]]:
         )
 
     total = sum(clip["duration"] for clip in clips)
-    sticker = effective_sticker_options(item.sticker, total)
-    (project_dir / "index.html").write_text(build_index_html(clips, total, sticker=sticker), encoding="utf-8")
+    (project_dir / "index.html").write_text(build_index_html(clips, total), encoding="utf-8")
     (project_dir / "assembly-plan.json").write_text(
         json.dumps(
             {
                 "clips": clips,
                 "total_duration": total,
-                "sticker": sticker,
                 "caption_mode": normalize_caption_mode(item.caption_mode),
             },
             ensure_ascii=False,
@@ -1194,7 +937,6 @@ def item_from_dict(data: dict) -> ScriptItem:
         cleanup_file_count=int(data.get("cleanup_file_count") or 0),
         cleanup_bytes=int(data.get("cleanup_bytes") or 0),
         caption_mode=normalize_caption_mode(data.get("caption_mode")),
-        sticker=normalize_sticker_options(data.get("sticker")),
         issues=data.get("issues", []),
     )
 

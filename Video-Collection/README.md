@@ -85,7 +85,7 @@ product/
   diagnostics/
 run_logs/
   <timestamp>_<mode>.md
-~/Documents/Obsidian Vault/wiki/视频/03爆款视频/<产品名称>/
+~/Documents/Obsidian Vault/wiki/视频/纯AI视频/01来源素材/<产品名称>/
   <用户名-视频ID-标题>.mp4
   <用户名-视频ID-标题>.json
 ```

@@ -1,6 +1,6 @@
 # OPC Agent Suite
 
-这是 OPC 独立本地控制台和 9 个独立 Agent 的可迁移副本。控制台运行在 `8888`，Agent 运行在 `9991` 到 `9999`。
+这是 OPC 独立本地控制台和 12 个独立 Agent 的可迁移副本。控制台运行在 `8888`，Agent 使用 `9991–9999`、`10001–10003`。
 
 本目录是迁移改造区。原运行目录 `/Users/kesai1/Documents/带货视频产出` 没有被安装脚本修改，仍可继续提供当前服务。
 
@@ -17,7 +17,10 @@
 | 9996 | `Finished-Video-Manager` | 成品管理 |
 | 9997 | `Product-Script-Rewrite` | 产品脚本改写 |
 | 9998 | `Video-Assembly-hd` | 片段合成 |
-| 9999 | `Hybrid-Script-Adaptation` | 混剪脚本适配 |
+| 9999 | `Hybrid-Script-Adaptation` | 钩子与 CTA 脚本适配 |
+| 10001 | `Hybrid-Video-Collection` | 混剪参考视频采集 |
+| 10002 | `Hybrid-Script-Analysis` | 混剪参考视频解析 |
+| 10003 | `Hybrid-Script-Generation` | 钩子与 CTA 脚本复刻裂变 |
 
 ## 新 Mac 安装
 
@@ -54,7 +57,7 @@ export OPC_VIDEO_ASSEMBLY_RUNTIME_SOURCE="/path/to/Video-Assembly-hd/runtime"
 
 ### 让控制台在 macOS 常驻
 
-控制台需要调用宿主机上的 9 个独立 Agent，因此不单独放入 Docker。安装后，`8888` 会在用户登录时自动启动并在异常退出后自动拉起；`9991` 到 `9999` 各自注册为独立 LaunchAgent，但保持按需启动：
+控制台需要调用宿主机上的 12 个独立 Agent，因此不单独放入 Docker。安装后，`8888` 会在用户登录时自动启动并在异常退出后自动拉起；12个Agent各自注册为独立LaunchAgent，但保持按需启动：
 
 ```bash
 ./scripts/install_console_launchagent.sh
