@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 import sys
@@ -211,7 +212,8 @@ class CoreTests(unittest.TestCase):
             md_path = Path(temporary) / "omni-裂变-产品-FR-demo.md"
             md_path.write_text(
                 "# Segment 1：0 - 1\n**[音频文案]** (Voiceover, French): Bonjour\n"
-                "# Segment 2：1 - 2\n**[音频文案]** tout le monde\n",
+                "**[音频文案]**：tout le monde\n"
+                "# Segment 2：1 - 2\n**[音频文案]** （French）：à bientôt\n",
                 encoding="utf-8",
             )
             script = core.caption_script_text(md_path)
@@ -221,8 +223,28 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(core.normalize_caption_mode("karaoke"), "karaoke")
         with self.assertRaisesRegex(ValueError, "字幕模式"):
             core.normalize_caption_mode("classic")
-        self.assertEqual(script, "Bonjour\ntout le monde")
+        self.assertEqual(script, "Bonjour\ntout le monde\nà bientôt")
         self.assertEqual(language, "fr")
+
+    def test_karaoke_style_matches_reference_size_and_position(self) -> None:
+        caption_path = ROOT / "vendor" / "tiktok-karaoke-captions" / "caption.py"
+        spec = importlib.util.spec_from_file_location("karaoke_caption", caption_path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as temporary:
+            ass_path = Path(temporary) / "caption.ass"
+            module.write_ass_tiktok(
+                [[{"text": "three", "start": 0.0, "end": 0.4}]],
+                ass_path,
+                1080,
+                1920,
+            )
+            ass = ass_path.read_text(encoding="utf-8")
+
+        self.assertIn("Style: Default,Roboto Black,76,", ass)
+        self.assertIn("1,4,1,5,40,40,0,1", ass)
+        self.assertIn(r"{\an5\pos(540,1113)}", ass)
 
     def test_sticker_library_loads_presets_by_product_and_country(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -559,9 +559,9 @@ def write_ass_tiktok(chunks: list[list[dict]], out: Path,
                      video_w: int, video_h: int,
                      uppercase: bool = True,
                      font_name: str = CAPTION_FONT_NAME_DEFAULT,
-                     fontsize_ratio: float = 0.055,
+                     fontsize_ratio: float = 0.04,
                      highlight_bgr: str = "&H0000FFFF&",
-                     margin_v_ratio: float = 0.18) -> None:
+                     position_y_ratio: float = 0.58) -> None:
     """Write TikTok-style karaoke ASS captions with per-word color highlighting.
 
     For each chunk we emit N Dialogue events (N = words in chunk). Each event
@@ -569,7 +569,8 @@ def write_ass_tiktok(chunks: list[list[dict]], out: Path,
     being spoken. As Whisper's word timestamps advance, the highlight moves.
     """
     font_size = max(16, int(video_h * fontsize_ratio))
-    margin_v = int(video_h * margin_v_ratio)
+    position_x = video_w // 2
+    position_y = int(video_h * position_y_ratio)
 
     header = (
         "[Script Info]\n"
@@ -588,8 +589,8 @@ def write_ass_tiktok(chunks: list[list[dict]], out: Path,
         "&H00FFFFFF,&H000000FF,&H00000000,&H80000000,"
         "1,0,0,0,"
         "100,100,0,0,"
-        "1,3,1,"
-        f"2,40,40,{margin_v},1\n"
+        "1,4,1,"
+        "5,40,40,0,1\n"
         "\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, "
@@ -614,7 +615,8 @@ def write_ass_tiktok(chunks: list[list[dict]], out: Path,
                     parts.append(txt)
             events.append(
                 f"Dialogue: 0,{format_ass_time(evt_start)},"
-                f"{format_ass_time(evt_end)},Default,,0,0,0,,{' '.join(parts)}"
+                f"{format_ass_time(evt_end)},Default,,0,0,0,,"
+                f"{{\\an5\\pos({position_x},{position_y})}}{' '.join(parts)}"
             )
 
     out.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
