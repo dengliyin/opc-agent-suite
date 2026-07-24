@@ -93,13 +93,20 @@ python3 scripts/analyze_video.py /absolute/path/to/video.mp4
 
 ## 默认业务目录
 
-Web 队列默认从 `config/paths.local.json` 读取视频目录和脚本目录。复制示例配置：
+在 OPC Agent Suite 中，Web 队列优先读取全局环境变量：
+
+```text
+VIDEO_TEARDOWN_INPUT_ROOT
+VIDEO_TEARDOWN_OUTPUT_ROOT
+```
+
+未提供全局环境变量时，独立运行的 9992 会回退到 `config/paths.local.json`。复制示例配置：
 
 ```bash
 cp config/paths.example.json config/paths.local.json
 ```
 
-然后把 `video_dir` 和 `script_dir` 改成自己的本机目录。这两个目录也可以在前端输入框中临时修改。目录下可以继续按产品名称分文件夹，输出会保存到脚本目录的对应产品文件夹下。
+然后把 `video_dir` 和 `script_dir` 改成自己的本机目录。这两个目录也可以在前端输入框中临时修改。目录下可以继续按产品名称分文件夹，输出会保存到脚本目录的对应产品文件夹下。`inputs/` 和 `outputs/` 只保存手动任务副本和处理中间文件，不属于需要人工维护的业务路径。
 
 ## 输出命名
 

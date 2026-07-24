@@ -1,0 +1,17 @@
+services:
+  Hybrid-Script-Adaptation-web:
+    build:
+      context: .
+    container_name: Hybrid-Script-Adaptation-web
+    restart: unless-stopped
+    user: "501:20"
+    working_dir: /app
+    environment:
+      PYTHONPATH: /app
+      PYTHONUNBUFFERED: "1"
+      OPC_VAULT_ROOT: /vault
+    ports:
+      - "127.0.0.1:9999:9999"
+    volumes:
+      - .:/app
+      - "${OPC_VAULT_ROOT:?Set OPC_VAULT_ROOT in .env}:/vault"

@@ -33,6 +33,10 @@ const stickerStyleLabels = {
   tiktok: 'TikTok Sans',
   cinematic: '电影字幕',
 };
+const captionModeLabels = {
+  none: '不生成字幕',
+  karaoke: 'TikTok 卡拉 OK 逐词高亮',
+};
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -104,6 +108,20 @@ function selectedStickerConfig() {
   return configs.every((config) => JSON.stringify(config) === first)
     ? configs[0]
     : normalizeSticker(defaultSticker);
+}
+
+function selectedCaptionMode() {
+  const modes = new Set(
+    reportItems('missing')
+      .filter((item) => selected.has(item.script_dir))
+      .map((item) => Object.hasOwn(captionModeLabels, item.caption_mode) ? item.caption_mode : 'none'),
+  );
+  return modes.size === 1 ? [...modes][0] : 'none';
+}
+
+function updateCaptionMode() {
+  const mode = checkedValue('captionMode', 'none');
+  $('confirmCaptionModeLabel').textContent = captionModeLabels[mode];
 }
 
 function stickerFormIsValid(options = stickerFromForm()) {
@@ -339,6 +357,7 @@ function taskRow(item) {
   const clips = (item.video_paths || []).length;
   const sticker = normalizeSticker(item.sticker);
   const stickerMeta = sticker.enabled ? ` · 贴纸 ${stickerStyleLabels[sticker.style]}` : '';
+  const captionMeta = item.caption_mode === 'karaoke' ? ' · 卡拉 OK 字幕' : '';
   const cleanupMode = item.status === 'done' && item.cleanup_eligible;
   const selectable = item.status === 'missing' || cleanupMode;
   const selectedAttr = (cleanupMode ? cleanupSelected : selected).has(item.script_dir) ? 'checked' : '';
@@ -347,7 +366,7 @@ function taskRow(item) {
     : '';
   const issue = (item.issues || []).join('、');
   const meta = item.status === 'missing'
-    ? `${clips} 个片段 · ${basename(item.md_path)}${stickerMeta}`
+    ? `${clips} 个片段 · ${basename(item.md_path)}${captionMeta}${stickerMeta}`
     : item.status === 'done'
       ? `${basename(item.output_path)}${item.cleanup_eligible ? ` · 待清理 ${item.cleanup_file_count} 个文件 / ${formatBytes(item.cleanup_bytes)}` : ''}`
       : item.status === 'archived'
@@ -518,6 +537,8 @@ function openConfirmModal() {
   $('confirmCount').textContent = selected.size;
   $('confirmOutputPath').textContent = state.report?.output_root || '';
   setRandomStickerMode(false);
+  setCheckedValue('captionMode', selectedCaptionMode());
+  updateCaptionMode();
   applyStickerToForm(selectedStickerConfig());
   $('confirmModal').hidden = false;
   void loadStickerLibraryForSelection();
@@ -589,6 +610,7 @@ async function startAssembly() {
         confirmed: true,
         scan_id: state.report?.scan_id || '',
         script_dirs: [...selected],
+        caption_mode: checkedValue('captionMode', 'none'),
         sticker,
         sticker_random_country: randomStickerMode ? $('stickerCountry').value : '',
       }),
@@ -722,6 +744,9 @@ $('stickerStart').addEventListener('input', updateStickerDesigner);
 $('stickerEnd').addEventListener('input', updateStickerDesigner);
 document.querySelectorAll('input[name="stickerStyle"], input[name="stickerPosition"], input[name="stickerTiming"]').forEach((input) => {
   input.addEventListener('change', updateStickerDesigner);
+});
+document.querySelectorAll('input[name="captionMode"]').forEach((input) => {
+  input.addEventListener('change', updateCaptionMode);
 });
 $('closeCleanupModalBtn').addEventListener('click', closeCleanupModal);
 $('cancelCleanupModalBtn').addEventListener('click', closeCleanupModal);

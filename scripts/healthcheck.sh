@@ -16,7 +16,7 @@ LABELS=("控制台")
 URLS=("http://${KESAI_APP_HOST:-127.0.0.1}:${KESAI_APP_PORT:-8888}/")
 
 if [ "$MODE" != "--console-only" ]; then
-  LABELS+=("视频采集" "脚本解析" "脚本产出" "脚本适配" "视频产出" "成品管理" "产品脚本改写" "片段合成")
+  LABELS+=("视频采集" "脚本解析" "脚本产出" "脚本适配" "片段产出" "成品管理" "产品脚本改写" "片段合成" "混剪脚本适配")
   URLS+=(
     "${OPC_HOT_VIDEO_AGENT_URL:-http://127.0.0.1:9991/}"
     "${OPC_VIDEO_TEARDOWN_AGENT_URL:-http://127.0.0.1:9992/}"
@@ -26,6 +26,7 @@ if [ "$MODE" != "--console-only" ]; then
     "${OPC_FINISHED_VIDEO_MANAGER_URL:-http://127.0.0.1:9996/}"
     "${OPC_PRODUCT_SCRIPT_REWRITE_URL:-http://127.0.0.1:9997/}"
     "${OPC_VIDEO_ASSEMBLY_AGENT_URL:-http://127.0.0.1:9998/}"
+    "${OPC_HYBRID_SCRIPT_ADAPTATION_AGENT_URL:-http://127.0.0.1:9999/}"
   )
 fi
 
@@ -41,4 +42,3 @@ for index in "${!URLS[@]}"; do
 done
 
 exit "$FAILED"
-

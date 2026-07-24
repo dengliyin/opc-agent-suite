@@ -61,16 +61,24 @@ def scan_now() -> dict[str, Any]:
     if not core.PENDING_ROOT.exists():
         raise RuntimeError(f"待拼接目录不存在：{core.PENDING_ROOT}")
     previous = {
-        item.get("script_dir"): item.get("sticker")
+        item.get("script_dir"): {
+            "sticker": item.get("sticker"),
+            "caption_mode": item.get("caption_mode"),
+        }
         for item in read_report().get("items", [])
         if item.get("script_dir")
     }
     items = core.scan_items()
     for item in items:
+        saved = previous.get(item.script_dir) or {}
         try:
-            item.sticker = core.normalize_sticker_options(previous.get(item.script_dir))
+            item.sticker = core.normalize_sticker_options(saved.get("sticker"))
         except ValueError:
             item.sticker = core.normalize_sticker_options(None)
+        try:
+            item.caption_mode = core.normalize_caption_mode(saved.get("caption_mode"))
+        except ValueError:
+            item.caption_mode = core.DEFAULT_CAPTION_MODE
     payload = core.report_payload(items)
     write_json(core.REPORT_PATH, payload)
     return payload
@@ -290,6 +298,7 @@ def confirmed_report(
     script_dirs: list[str],
     sticker: dict[str, Any] | None = None,
     sticker_random_country: str = "",
+    caption_mode: str = core.DEFAULT_CAPTION_MODE,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     report = read_report()
     if not scan_id or report.get("scan_id") != scan_id:
@@ -308,6 +317,9 @@ def confirmed_report(
     if sticker is not None and not isinstance(sticker, dict):
         raise ValueError("文字贴纸设置格式无效")
     sticker_options = core.normalize_sticker_options(sticker)
+    normalized_caption_mode = core.normalize_caption_mode(caption_mode)
+    if normalized_caption_mode == "karaoke" and not core.caption_runtime_ready():
+        raise RuntimeError("TikTok 卡拉 OK 字幕运行依赖不完整")
     randomized_texts: dict[str, str] = {}
     if sticker_random_country:
         if not sticker_options["enabled"]:
@@ -334,6 +346,7 @@ def confirmed_report(
         randomized_texts = dict(zip(selected_paths, assigned))
     for item in report.get("items", []):
         if item.get("script_dir") in selected_paths:
+            item["caption_mode"] = normalized_caption_mode
             item["sticker"] = copy.deepcopy(sticker_options)
             if item["script_dir"] in randomized_texts:
                 item["sticker"]["text"] = randomized_texts[item["script_dir"]]
@@ -503,6 +516,7 @@ class Handler(BaseHTTPRequestHandler):
                     [str(path) for path in payload.get("script_dirs", [])],
                     payload.get("sticker"),
                     str(payload.get("sticker_random_country") or ""),
+                    str(payload.get("caption_mode") or core.DEFAULT_CAPTION_MODE),
                 )
                 self._json(202, {"job": JOB.start(report, selected)})
             elif parsed.path == "/api/cleanup":

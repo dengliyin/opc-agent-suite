@@ -85,8 +85,12 @@ def write_json(path, data):
 
 def local_paths():
     data = read_json(PATHS_PATH)
-    video_dir = Path(str(data.get("video_dir") or DEFAULT_VIDEO_SCAN_DIR)).expanduser()
-    script_dir = Path(str(data.get("script_dir") or DEFAULT_SCRIPT_CHECK_DIR)).expanduser()
+    video_dir = Path(
+        str(os.environ.get("VIDEO_TEARDOWN_INPUT_ROOT") or data.get("video_dir") or DEFAULT_VIDEO_SCAN_DIR)
+    ).expanduser()
+    script_dir = Path(
+        str(os.environ.get("VIDEO_TEARDOWN_OUTPUT_ROOT") or data.get("script_dir") or DEFAULT_SCRIPT_CHECK_DIR)
+    ).expanduser()
     if not video_dir.is_absolute():
         video_dir = SKILL_ROOT / video_dir
     if not script_dir.is_absolute():

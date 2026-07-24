@@ -23,6 +23,8 @@ from typing import Iterable
 APP_ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_ROOT = APP_ROOT / "runtime"
 VENDOR_ROOT = APP_ROOT / "vendor"
+CAPTION_TOOL_ROOT = VENDOR_ROOT / "tiktok-karaoke-captions"
+CAPTION_TOOL_PATH = CAPTION_TOOL_ROOT / "caption.py"
 VAULT_ROOT = Path(
     os.environ.get("OPC_VAULT_ROOT", str(Path.home() / "Documents" / "Obsidian Vault"))
 ).expanduser()
@@ -55,6 +57,27 @@ EXPORT_MARKER_SUFFIX = ".exported.json"
 STICKER_STYLES = ("serif", "bubbly", "tiktok", "cinematic")
 STICKER_POSITIONS = ("top", "center", "bottom")
 STICKER_TIMINGS = ("full", "custom")
+CAPTION_MODES = ("none", "karaoke")
+DEFAULT_CAPTION_MODE = "none"
+COUNTRY_LANGUAGE_CODES = {
+    "AT": "de",
+    "BE": "nl",
+    "BR": "pt",
+    "CA": "en",
+    "CH": "de",
+    "DE": "de",
+    "ES": "es",
+    "FR": "fr",
+    "IE": "en",
+    "IT": "it",
+    "MY": "ms",
+    "NL": "nl",
+    "PH": "en",
+    "TH": "th",
+    "UK": "en",
+    "US": "en",
+    "VN": "vi",
+}
 DEFAULT_STICKER = {
     "enabled": False,
     "text": "",
@@ -88,6 +111,7 @@ class ScriptItem:
     cleanup_eligible: bool = False
     cleanup_file_count: int = 0
     cleanup_bytes: int = 0
+    caption_mode: str = DEFAULT_CAPTION_MODE
     sticker: dict = field(default_factory=lambda: dict(DEFAULT_STICKER))
     issues: list[str] = field(default_factory=list)
 
@@ -363,6 +387,82 @@ def runtime_env() -> dict[str, str]:
     env["HYPERFRAMES_NO_TELEMETRY"] = "1"
     env["DO_NOT_TRACK"] = "1"
     return env
+
+
+def normalize_caption_mode(value: object) -> str:
+    mode = str(value or DEFAULT_CAPTION_MODE)
+    if mode not in CAPTION_MODES:
+        raise ValueError("字幕模式无效")
+    return mode
+
+
+def caption_script_text(md_path: Path) -> str:
+    lines = []
+    for segment in parse_segments(md_path):
+        text = re.sub(r"^\s*\([^)]*\)\s*[:：]\s*", "", segment.audio_text).strip()
+        if text:
+            lines.append(text)
+    return "\n".join(lines)
+
+
+def caption_language(md_path: Path) -> str:
+    country_match = re.search(
+        rf"(?:^|-|_)({'|'.join(COUNTRY_LANGUAGE_CODES)})(?:-|_)",
+        md_path.stem.upper(),
+    )
+    return COUNTRY_LANGUAGE_CODES.get(country_match.group(1), "en") if country_match else "en"
+
+
+def caption_runtime_ready() -> bool:
+    return (
+        CAPTION_TOOL_PATH.is_file()
+        and (CAPTION_TOOL_ROOT / "fonts" / "Roboto-Black.ttf").is_file()
+        and (RUNTIME_ROOT / "bin" / "uvx").is_file()
+    )
+
+
+def run_karaoke_captioner(input_path: Path, output_path: Path, md_path: Path, project_dir: Path) -> None:
+    if not caption_runtime_ready():
+        raise RuntimeError("TikTok 卡拉 OK 字幕运行依赖不完整")
+    caption_dir = project_dir / "captions"
+    caption_dir.mkdir(parents=True, exist_ok=True)
+    script_text = caption_script_text(md_path)
+    script_path = caption_dir / "caption-script.txt"
+    if script_text:
+        script_path.write_text(script_text, encoding="utf-8")
+    command = [
+        sys.executable,
+        str(CAPTION_TOOL_PATH),
+        str(input_path),
+        "--caption-mode",
+        "tiktok",
+        "--model",
+        os.environ.get("VIDEO_ASSEMBLY_WHISPER_MODEL", "medium"),
+        "--language",
+        caption_language(md_path),
+        "--prefer-local",
+        "--out-dir",
+        str(caption_dir),
+        "--out-name",
+        output_path.name,
+    ]
+    if script_text:
+        command.extend(["--script-file", str(script_path)])
+    env = runtime_env()
+    env.pop("DEEPGRAM_API_KEY", None)
+    env["UV_CACHE_DIR"] = str(RUNTIME_ROOT / "cache" / "uv")
+    env["HF_HOME"] = str(RUNTIME_ROOT / "cache" / "huggingface")
+    env["UV_OFFLINE"] = "1"
+    env["HF_HUB_OFFLINE"] = "1"
+    proc = run(command, cwd=CAPTION_TOOL_ROOT, env=env)
+    if proc.returncode != 0:
+        raise RuntimeError(f"TikTok 卡拉 OK 字幕生成失败\n{proc.stdout}")
+    captioned = caption_dir / output_path.name
+    if not captioned.is_file() or captioned.stat().st_size <= 0:
+        raise RuntimeError(f"字幕工具未生成有效成品：{captioned}")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(captioned), str(output_path))
+    verify_finished_output(output_path)
 
 
 def ffmpeg_path() -> str:
@@ -1017,7 +1117,16 @@ def prepare_project(item: ScriptItem) -> tuple[Path, list[dict]]:
     sticker = effective_sticker_options(item.sticker, total)
     (project_dir / "index.html").write_text(build_index_html(clips, total, sticker=sticker), encoding="utf-8")
     (project_dir / "assembly-plan.json").write_text(
-        json.dumps({"clips": clips, "total_duration": total, "sticker": sticker}, ensure_ascii=False, indent=2),
+        json.dumps(
+            {
+                "clips": clips,
+                "total_duration": total,
+                "sticker": sticker,
+                "caption_mode": normalize_caption_mode(item.caption_mode),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
     return project_dir, clips
@@ -1043,7 +1152,11 @@ def assemble_item(item: ScriptItem, skip_existing: bool = True, skip_inspect: bo
     if plan_only:
         print(f"  plan: {project_dir / 'assembly-plan.json'}")
         return
-    run_hyperframes(project_dir, output_path, skip_inspect=skip_inspect)
+    caption_mode = normalize_caption_mode(item.caption_mode)
+    render_path = project_dir / "uncaptioned.mp4" if caption_mode == "karaoke" else output_path
+    run_hyperframes(project_dir, render_path, skip_inspect=skip_inspect)
+    if caption_mode == "karaoke":
+        run_karaoke_captioner(render_path, output_path, Path(item.md_path or ""), project_dir)
     print(f"  output: {output_path} ({output_path.stat().st_size} bytes)")
 
 
@@ -1068,6 +1181,7 @@ def item_from_dict(data: dict) -> ScriptItem:
         cleanup_eligible=bool(data.get("cleanup_eligible")),
         cleanup_file_count=int(data.get("cleanup_file_count") or 0),
         cleanup_bytes=int(data.get("cleanup_bytes") or 0),
+        caption_mode=normalize_caption_mode(data.get("caption_mode")),
         sticker=normalize_sticker_options(data.get("sticker")),
         issues=data.get("issues", []),
     )

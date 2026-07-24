@@ -284,6 +284,16 @@ label, .ruleTitle {
 .confirmRows div { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line-soft); }
 .confirmRows span { color: var(--muted); font-size: 11px; }
 .confirmRows strong { font-size: 11px; overflow-wrap: anywhere; }
+.captionModeField { min-width: 0; margin: 14px 0 0; padding: 0; border: 0; }
+.captionModeField legend { margin-bottom: 6px; color: var(--muted); font-size: 10px; font-weight: 800; text-transform: uppercase; }
+.captionModeSegments { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); }
+.captionModeSegments label { position: relative; min-width: 0; cursor: pointer; }
+.captionModeSegments label + label { border-left: 1px solid var(--line); }
+.captionModeSegments input { position: absolute; opacity: 0; pointer-events: none; }
+.captionModeSegments span { min-height: 52px; display: flex; flex-direction: column; justify-content: center; gap: 3px; padding: 8px 10px; background: #fff; }
+.captionModeSegments b { color: var(--ink); font-size: 10px; }
+.captionModeSegments small { color: var(--subtle); font-size: 9px; }
+.captionModeSegments input:checked + span { background: var(--accent-soft); box-shadow: inset 0 -3px 0 var(--accent); }
 .stickerDesigner { display: grid; grid-template-columns: minmax(0, 1fr) 210px; gap: 14px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
 .stickerControls { min-width: 0; }
 .stickerDesigner label { margin: 0; color: var(--ink); text-transform: none; }
@@ -383,6 +393,8 @@ label, .ruleTitle {
   .modalOverlay { padding: 8px; }
   .modalWindow.stickerModal { max-height: calc(100vh - 16px); }
   .stickerModal .modalBody { max-height: calc(100vh - 150px); }
+  .captionModeSegments { grid-template-columns: 1fr; }
+  .captionModeSegments label + label { border-top: 1px solid var(--line); border-left: 0; }
   .stickerDesigner { grid-template-columns: 1fr; }
   .stickerPreviewPanel { width: min(220px, 100%); justify-self: center; }
   .styleSegments label > span { min-height: 54px; flex-direction: column; justify-content: center; text-align: center; }

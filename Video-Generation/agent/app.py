@@ -330,7 +330,7 @@ def _provider_key(current: Settings) -> str:
 def _api_summary_payload() -> Dict[str, Any]:
     return {
         "api_provider_count": 2,
-        "endpoint_count": 9,
+        "endpoint_count": 7,
         "model_count": 7,
         "description": "当前有 2 个 API 提供方；下方 Agent 功能行决定每个功能使用哪个模型和参数。",
         "api_inventory": [
@@ -340,10 +340,10 @@ def _api_summary_payload() -> Dict[str, Any]:
                 "key_status": "已配置" if omni_settings.otu_api_key else "未配置",
                 "models": [
                     {
-                        "name": "image-4k / gpt-image-2-4K / image2",
-                        "role": "图片生成与图片编辑",
-                        "endpoints": ["/v1/images/generations", "/v1/images/edits"],
-                        "params": ["参数在 Agent 功能行设置"],
+                        "name": "gpt-image-2 / gpt-image-2-2K / gpt-image-2-4K",
+                        "role": "异步图片生成与图片编辑",
+                        "endpoints": ["/v1/videos", "/v1/videos/{task_id}"],
+                        "params": ["JSON 提交任务并轮询结果；参数在 Agent 功能行设置"],
                     },
                     {
                         "name": "omni_flash-10s",
@@ -424,10 +424,7 @@ def _function_api_model_options(stage: str, selected: str) -> List[Dict[str, str
         values = _select_options(
             selected,
             [
-                f"otu:{omni_settings.image_model}",
-                "otu:image-4k",
                 "otu:gpt-image-2-4K",
-                "otu:image2",
                 "grok:G-2.0",
             ],
         )
@@ -509,18 +506,30 @@ def _function_option_detail(current: Settings, stage: str, value: str) -> Dict[s
     api_label = "RunningHub API" if api == "grok" else "OTU API"
     controls = _function_param_controls(current, stage, value)
     if stage == "characters":
-        endpoint = "/openapi/v2/rhart-image-g-2/text-to-image" if api == "grok" else "/v1/images/generations"
+        if api == "grok":
+            endpoint = "/openapi/v2/rhart-image-g-2/text-to-image"
+        elif _is_async_gpt_image_model(model):
+            endpoint = "/v1/videos → /v1/videos/{task_id}"
+        else:
+            endpoint = "/v1/images/generations"
         params = (
             f"aspectRatio={_control_value(controls, 'image_aspect_ratio')}；resolution={_control_value(controls, 'image_resolution')}"
             if api == "grok"
             else f"size={_control_value(controls, 'image_size')}"
+            + ("；异步任务轮询" if _is_async_gpt_image_model(model) else "")
         )
     elif stage == "storyboards":
-        endpoint = "/openapi/v2/rhart-image-g-2/image-to-image" if api == "grok" else "/v1/images/edits"
+        if api == "grok":
+            endpoint = "/openapi/v2/rhart-image-g-2/image-to-image"
+        elif _is_async_gpt_image_model(model):
+            endpoint = "/v1/videos → /v1/videos/{task_id}"
+        else:
+            endpoint = "/v1/images/edits"
         params = (
             f"aspectRatio={_control_value(controls, 'image_aspect_ratio')}；resolution={_control_value(controls, 'image_resolution')}；参考图=产品参考图+当前片段人物图"
             if api == "grok"
             else f"size={_control_value(controls, 'image_size')}；参考图=产品参考图+当前片段人物图"
+            + ("；异步任务轮询" if _is_async_gpt_image_model(model) else "")
         )
     else:
         if api == "grok":
@@ -550,6 +559,10 @@ def _split_api_model(value: str) -> tuple[str, str]:
 
 def _is_skyreels_video_model(model: str) -> bool:
     return "skyreels" in str(model).lower()
+
+
+def _is_async_gpt_image_model(model: str) -> bool:
+    return str(model).lower() in {"gpt-image-2", "gpt-image-2-2k", "gpt-image-2-4k"}
 
 
 def _path_field(key: str, env_key: str, label: str, value: Path, kind: str) -> Dict[str, Any]:

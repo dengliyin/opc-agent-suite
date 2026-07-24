@@ -7,7 +7,7 @@ PLIST_DIR="$HOME/Library/LaunchAgents"
 TEMPLATE_PATH="$ROOT_DIR/scripts/launchd/com.kesai.opc-agent.plist.template"
 LAUNCHER_PATH="$ROOT_DIR/scripts/run_agent_foreground.py"
 LOG_DIR="$HOME/Library/Logs/OPC-Agent-Suite"
-SERVICE_IDS=(collect analyze script adapt assemble finished rewrite compose)
+SERVICE_IDS=(collect analyze script adapt assemble finished rewrite compose hybrid_adapt)
 
 service_dir() {
   case "$1" in
@@ -19,6 +19,7 @@ service_dir() {
     finished) echo "Finished-Video-Manager" ;;
     rewrite) echo "Product-Script-Rewrite" ;;
     compose) echo "Video-Assembly-hd" ;;
+    hybrid_adapt) echo "Hybrid-Script-Adaptation" ;;
     *) return 1 ;;
   esac
 }
@@ -78,4 +79,4 @@ for service_id in "${SERVICE_IDS[@]}"; do
   launchctl bootstrap "$DOMAIN" "$plist_path"
 done
 
-echo "Installed 8 on-demand Agent LaunchAgents."
+echo "Installed 9 on-demand Agent LaunchAgents."

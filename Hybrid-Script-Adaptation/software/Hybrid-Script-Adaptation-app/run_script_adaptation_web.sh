@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")"
+PYTHON_BIN="${PYTHON_BIN:-../../.venv/bin/python}"
+if [ ! -x "$PYTHON_BIN" ]; then
+  PYTHON_BIN="$(command -v python3)"
+fi
+"$PYTHON_BIN" -m opc_engine.features.script_adaptation.script_adaptation_agent_web --port "${1:-9999}"

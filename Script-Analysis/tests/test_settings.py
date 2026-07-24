@@ -66,6 +66,25 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(shared_settings, {"base_url": "https://shared.test", "model": "shared-model"})
         self.assertEqual(local_settings["api_key"], "secret")
 
+    def test_business_paths_prefer_global_environment(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths_file = Path(temp_dir) / "paths.local.json"
+            paths_file.write_text(
+                json.dumps({"video_dir": "/fallback/videos", "script_dir": "/fallback/scripts"}),
+                encoding="utf-8",
+            )
+            with patch.object(self.web_app, "PATHS_PATH", paths_file), patch.dict(
+                self.web_app.os.environ,
+                {
+                    "VIDEO_TEARDOWN_INPUT_ROOT": "/global/videos",
+                    "VIDEO_TEARDOWN_OUTPUT_ROOT": "/global/scripts",
+                },
+            ):
+                video_dir, script_dir = self.web_app.local_paths()
+
+        self.assertEqual(video_dir, Path("/global/videos"))
+        self.assertEqual(script_dir, Path("/global/scripts"))
+
 
 if __name__ == "__main__":
     unittest.main()

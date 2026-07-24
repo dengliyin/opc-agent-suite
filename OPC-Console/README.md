@@ -2,7 +2,7 @@
 
 OPC Agent Suite 的独立总控制台，默认运行在 `http://127.0.0.1:8888/`。
 
-控制台只负责服务调度、状态检测、导航和总览，不读取或修改任何 Agent 的业务配置和产物。
+控制台负责全局路径设置、服务调度、状态检测、导航和总览，不修改各 Agent 的独立业务配置和产物。
 
 ## 启动
 
@@ -20,7 +20,7 @@ OPC Agent Suite 的独立总控制台，默认运行在 `http://127.0.0.1:8888/`
 
 ## macOS 常驻运行
 
-不建议只把控制台放入 Docker，因为控制台需要在宿主机启动 8 个独立 Agent。使用 macOS LaunchAgent 可以在用户登录后自动启动，并在控制台异常退出时自动拉起：
+不建议只把控制台放入 Docker，因为控制台需要在宿主机启动 9 个独立 Agent。使用 macOS LaunchAgent 可以在用户登录后自动启动，并在控制台异常退出时自动拉起：
 
 ```bash
 ./scripts/install_console_launchagent.sh
@@ -38,14 +38,15 @@ OPC Agent Suite 的独立总控制台，默认运行在 `http://127.0.0.1:8888/`
 ./scripts/uninstall_console_launchagent.sh
 ```
 
-LaunchAgent 只常驻 `8888`。`9991–9998` 分别注册为独立但不自启动的 LaunchAgent。Agent 掉线后，控制台的“启动”按钮会执行 `launchctl kickstart -k` 并等待健康检查恢复；重启控制台不会终止已经运行的 Agent。
+LaunchAgent 只常驻 `8888`。`9991–9999` 分别注册为独立但不自启动的 LaunchAgent。Agent 掉线后，控制台的“启动”按钮会执行 `launchctl kickstart -k` 并等待健康检查恢复；重启控制台不会终止已经运行的 Agent。
 
 LaunchAgent 直接使用控制台的 Python 环境加载 `.env` 并启动服务，因此不需要为 `/bin/bash` 授予 Documents 访问权限。
 
 ## 当前职责
 
+- 从项目根目录 `.env` 读取并维护 9 个 Agent 共用的全局默认路径。
 - 展示 OPC 工作流总览。
-- 启动并检测 8 个独立 Agent。
+- 启动并检测 9 个独立 Agent。
 - 跳转到各 Agent 页面。
 - 把所有业务操作交给对应 Agent 页面。
 

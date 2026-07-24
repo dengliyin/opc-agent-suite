@@ -15,9 +15,13 @@ for path in \
   "$ROOT_DIR/runtime/bin/node" \
   "$ROOT_DIR/runtime/bin/ffmpeg" \
   "$ROOT_DIR/runtime/bin/ffprobe" \
+  "$ROOT_DIR/runtime/bin/uvx" \
   "$ROOT_DIR/runtime/hyperframes/package/dist/cli.js" \
   "$ROOT_DIR/runtime/chrome/chrome-headless-shell" \
-  "$ROOT_DIR/vendor/gsap.min.js"
+  "$ROOT_DIR/vendor/gsap.min.js" \
+  "$ROOT_DIR/vendor/tiktok-karaoke-captions/caption.py" \
+  "$ROOT_DIR/vendor/tiktok-karaoke-captions/LICENSE" \
+  "$ROOT_DIR/vendor/tiktok-karaoke-captions/fonts/Roboto-Black.ttf"
 do
   test -f "$path"
 done

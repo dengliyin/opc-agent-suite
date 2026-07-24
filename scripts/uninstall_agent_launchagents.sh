@@ -2,7 +2,7 @@
 set -euo pipefail
 
 DOMAIN="gui/$(id -u)"
-SERVICE_IDS=(collect analyze script adapt assemble finished rewrite compose)
+SERVICE_IDS=(collect analyze script adapt assemble finished rewrite compose hybrid_adapt)
 
 for service_id in "${SERVICE_IDS[@]}"; do
   label="com.kesai.opc-agent.$service_id"
@@ -10,4 +10,4 @@ for service_id in "${SERVICE_IDS[@]}"; do
   rm -f "$HOME/Library/LaunchAgents/$label.plist"
 done
 
-echo "Removed 8 Agent LaunchAgents."
+echo "Removed 9 Agent LaunchAgents."

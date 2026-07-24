@@ -115,6 +115,173 @@ def test_image2_client_prompt_only_omits_image_field(monkeypatch: Any, tmp_path:
     assert output.read_bytes() == expected
 
 
+def test_gpt_image_2_prompt_uses_async_video_endpoint(monkeypatch: Any, tmp_path: Path) -> None:
+    output = tmp_path / "character.png"
+    expected = b"async-character"
+    base_settings = settings_for(tmp_path)
+    settings = Settings(
+        **{
+            **base_settings.__dict__,
+            "image_model": "gpt-image-2-4K",
+            "image_poll_interval_seconds": 0,
+            "image_timeout_seconds": 1,
+        }
+    )
+    polls = 0
+
+    class FakeClient:
+        def __enter__(self) -> "FakeClient":
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            return None
+
+        def post(self, url: str, headers: Dict[str, str], json: Dict[str, Any]) -> FakeResponse:
+            assert url == "https://otuapi.com/v1/videos"
+            assert json == {
+                "model": "gpt-image-2-4K",
+                "prompt": "人物图 prompt",
+                "size": "4096x3072",
+            }
+            return FakeResponse({"id": "task_image_1", "object": "image", "status": "queued", "progress": 0})
+
+        def get(self, url: str, *args: Any, **kwargs: Any) -> FakeResponse:
+            nonlocal polls
+            if url.endswith("/task_image_1"):
+                polls += 1
+                if polls == 1:
+                    return FakeResponse({"id": "task_image_1", "status": "in_progress", "progress": 50})
+                return FakeResponse(
+                    {
+                        "id": "task_image_1",
+                        "status": "completed",
+                        "progress": 100,
+                        "url": "https://cdn.example/character.png",
+                    }
+                )
+            assert url == "https://cdn.example/character.png"
+            return FakeResponse(content=expected)
+
+    monkeypatch.setattr(api_clients.httpx, "Client", lambda timeout: FakeClient())
+
+    result = Image2Client(settings).generate_from_prompt("人物图 prompt", output)
+
+    assert result["task_id"] == "task_image_1"
+    assert output.read_bytes() == expected
+
+
+def test_gpt_image_2_references_use_async_images_array(monkeypatch: Any, tmp_path: Path) -> None:
+    reference = tmp_path / "ref.png"
+    Image.new("RGB", (1024, 1024), (255, 0, 0)).save(reference)
+    output = tmp_path / "storyboard.png"
+    expected = b"async-storyboard"
+    base_settings = settings_for(tmp_path)
+    settings = Settings(
+        **{
+            **base_settings.__dict__,
+            "image_model": "gpt-image-2-4K",
+            "image_poll_interval_seconds": 0,
+            "image_timeout_seconds": 1,
+        }
+    )
+
+    class FakeClient:
+        def __enter__(self) -> "FakeClient":
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            return None
+
+        def post(self, url: str, headers: Dict[str, str], json: Dict[str, Any]) -> FakeResponse:
+            assert url == "https://otuapi.com/v1/videos"
+            assert json["model"] == "gpt-image-2-4K"
+            assert json["size"] == "4096x3072"
+            assert "image" not in json
+            assert len(json["images"]) == 1
+            assert json["images"][0].startswith("data:image/jpeg;base64,")
+            return FakeResponse(
+                {
+                    "id": "task_image_2",
+                    "object": "image",
+                    "status": "completed",
+                    "progress": 100,
+                    "url": "https://cdn.example/storyboard.png",
+                }
+            )
+
+        def get(self, url: str, *args: Any, **kwargs: Any) -> FakeResponse:
+            assert url == "https://cdn.example/storyboard.png"
+            return FakeResponse(content=expected)
+
+    monkeypatch.setattr(api_clients.httpx, "Client", lambda timeout: FakeClient())
+
+    result = Image2Client(settings).generate_with_references("故事版 prompt", [reference], output)
+
+    assert result["task_id"] == "task_image_2"
+    assert output.read_bytes() == expected
+
+
+def test_gpt_image_2_retries_failed_async_task(monkeypatch: Any, tmp_path: Path) -> None:
+    output = tmp_path / "character.png"
+    expected = b"retry-success"
+    base_settings = settings_for(tmp_path)
+    settings = Settings(
+        **{
+            **base_settings.__dict__,
+            "image_model": "gpt-image-2-4K",
+            "image_fallback_models": [],
+            "image_poll_interval_seconds": 0,
+            "image_timeout_seconds": 1,
+        }
+    )
+    submissions = 0
+    progress_messages = []
+
+    class FakeClient:
+        def __enter__(self) -> "FakeClient":
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            return None
+
+        def post(self, url: str, headers: Dict[str, str], json: Dict[str, Any]) -> FakeResponse:
+            nonlocal submissions
+            submissions += 1
+            if submissions == 1:
+                return FakeResponse(
+                    {
+                        "id": "task_failed",
+                        "status": "failed",
+                        "error": {"code": "upstream_error", "message": "temporary"},
+                    }
+                )
+            return FakeResponse(
+                {
+                    "id": "task_success",
+                    "status": "completed",
+                    "progress": 100,
+                    "url": "https://cdn.example/retry.png",
+                }
+            )
+
+        def get(self, url: str, *args: Any, **kwargs: Any) -> FakeResponse:
+            assert url == "https://cdn.example/retry.png"
+            return FakeResponse(content=expected)
+
+    monkeypatch.setattr(api_clients.httpx, "Client", lambda timeout: FakeClient())
+
+    result = Image2Client(settings).generate_from_prompt(
+        "人物图 prompt",
+        output,
+        progress=progress_messages.append,
+    )
+
+    assert submissions == 2
+    assert result["task_id"] == "task_success"
+    assert output.read_bytes() == expected
+    assert any("异步图片任务失败" in message for message in progress_messages)
+
+
 def test_image2_client_falls_back_when_primary_model_unavailable(monkeypatch: Any, tmp_path: Path) -> None:
     output = tmp_path / "character.png"
     expected = b"fallback-bytes"

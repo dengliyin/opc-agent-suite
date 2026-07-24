@@ -70,7 +70,7 @@ For one video:
 .venv/bin/python scripts/analyze_video.py /absolute/path/to/video.mp4
 ```
 
-In the web UI, any local path outside the skill folder must be copied into `inputs/` before the runner starts. Generated teardown files must stay under `outputs/`.
+In the manual web flow, any local path outside the skill folder must be copied into `inputs/` before the runner starts. Manual-run intermediate outputs stay under `outputs/`. In the suite queue flow, business input and final output use `VIDEO_TEARDOWN_INPUT_ROOT` and `VIDEO_TEARDOWN_OUTPUT_ROOT`, falling back to `config/paths.local.json` when those environment variables are absent.
 
 For a folder:
 
@@ -129,7 +129,7 @@ Minimum expected sections:
 
 ## Output Paths
 
-Default outputs stay inside this skill:
+Manual-run intermediate outputs stay inside this skill:
 
 ```text
 outputs/<YYYYMMDD_HHMMSS>/
@@ -137,6 +137,8 @@ outputs/<YYYYMMDD_HHMMSS>/
   <video_stem>_teardown.raw.json
   run_summary.json
 ```
+
+Suite queue runs move the final Markdown into `VIDEO_TEARDOWN_OUTPUT_ROOT` (or the `script_dir` fallback from `config/paths.local.json`).
 
 If the user asks for a summary after a run, report the output paths, success/failure count, and high-level findings. Do not paste the full teardown unless requested.
 

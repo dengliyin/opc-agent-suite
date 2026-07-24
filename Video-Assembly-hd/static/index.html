@@ -39,7 +39,7 @@
         <div class="ruleTitle">拼接规则</div>
         <dl class="ruleList">
           <div><dt>画面</dt><dd>1080 × 1920 · 30 fps</dd></div>
-          <div><dt>字幕</dt><dd>不生成</dd></div>
+          <div><dt>字幕</dt><dd>默认关闭 · 可选逐词高亮</dd></div>
           <div><dt>排序</dt><dd>按“片段N”</dd></div>
           <div><dt>超时</dt><dd>超过目标 8% 进入判断</dd></div>
           <div><dt>语速</dt><dd>有效尾音保留原速</dd></div>
@@ -139,9 +139,22 @@
         <div class="confirmCount"><strong id="confirmCount">0</strong><span>个成品视频</span></div>
         <div class="confirmRows">
           <div><span>执行方式</span><strong>本地离线 · 顺序渲染</strong></div>
-          <div><span>字幕</span><strong>不保留字幕</strong></div>
+          <div><span>字幕</span><strong id="confirmCaptionModeLabel">不生成字幕</strong></div>
           <div><span>输出目录</span><strong id="confirmOutputPath"></strong></div>
         </div>
+        <fieldset class="captionModeField">
+          <legend>字幕模式</legend>
+          <div class="captionModeSegments" role="radiogroup" aria-label="字幕模式">
+            <label>
+              <input type="radio" name="captionMode" value="none" checked />
+              <span><b>不生成字幕</b><small>默认，不增加处理时间</small></span>
+            </label>
+            <label>
+              <input type="radio" name="captionMode" value="karaoke" />
+              <span><b>TikTok 卡拉 OK 逐词高亮</b><small>脚本文案校字，Whisper 对齐时间</small></span>
+            </label>
+          </div>
+        </fieldset>
         <div class="stickerDesigner">
           <div class="stickerControls">
             <div class="stickerToggleRow">
