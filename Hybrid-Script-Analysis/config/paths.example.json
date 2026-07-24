@@ -1,0 +1,5 @@
+{
+  "_说明": "混剪参考视频解析的本地业务目录配置示例。",
+  "video_dir": "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/01参考视频",
+  "script_dir": "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/02解析脚本"
+}

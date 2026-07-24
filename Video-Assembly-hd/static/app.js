@@ -7,8 +7,6 @@ let cleanupSelected = new Set();
 let pollTimer = null;
 let lastJobStatus = 'idle';
 let toastTimer = null;
-let stickerLibrary = null;
-let randomStickerMode = false;
 
 const statusLabels = {
   missing: '待拼接',
@@ -17,22 +15,6 @@ const statusLabels = {
   invalid: '异常',
 };
 
-const defaultSticker = Object.freeze({
-  enabled: false,
-  text: '',
-  style: 'tiktok',
-  position: 'top',
-  timing: 'full',
-  start: 0,
-  end: 3,
-});
-
-const stickerStyleLabels = {
-  serif: '粗体衬线',
-  bubbly: '气泡卡通',
-  tiktok: 'TikTok Sans',
-  cinematic: '电影字幕',
-};
 const captionModeLabels = {
   none: '不生成字幕',
   karaoke: 'TikTok 卡拉 OK 逐词高亮',
@@ -64,21 +46,6 @@ function formatScanTime(value) {
   return `扫描于 ${date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;
 }
 
-function normalizeSticker(value = {}) {
-  const style = Object.hasOwn(stickerStyleLabels, value.style) ? value.style : defaultSticker.style;
-  const position = ['top', 'center', 'bottom'].includes(value.position) ? value.position : defaultSticker.position;
-  const timing = ['full', 'custom'].includes(value.timing) ? value.timing : defaultSticker.timing;
-  return {
-    enabled: value.enabled === true,
-    text: String(value.text || '').replace(/\s+/g, ' ').trim().slice(0, 36),
-    style,
-    position,
-    timing,
-    start: Number.isFinite(Number(value.start)) ? Number(value.start) : defaultSticker.start,
-    end: Number.isFinite(Number(value.end)) ? Number(value.end) : defaultSticker.end,
-  };
-}
-
 function checkedValue(name, fallback) {
   return document.querySelector(`input[name="${name}"]:checked`)?.value || fallback;
 }
@@ -86,28 +53,6 @@ function checkedValue(name, fallback) {
 function setCheckedValue(name, value) {
   const input = document.querySelector(`input[name="${name}"][value="${value}"]`);
   if (input) input.checked = true;
-}
-
-function stickerFromForm() {
-  return normalizeSticker({
-    enabled: $('stickerEnabled').checked,
-    text: $('stickerText').value,
-    style: checkedValue('stickerStyle', defaultSticker.style),
-    position: checkedValue('stickerPosition', defaultSticker.position),
-    timing: checkedValue('stickerTiming', defaultSticker.timing),
-    start: $('stickerStart').value,
-    end: $('stickerEnd').value,
-  });
-}
-
-function selectedStickerConfig() {
-  const items = reportItems('missing').filter((item) => selected.has(item.script_dir));
-  if (!items.length) return normalizeSticker(defaultSticker);
-  const configs = items.map((item) => normalizeSticker(item.sticker));
-  const first = JSON.stringify(configs[0]);
-  return configs.every((config) => JSON.stringify(config) === first)
-    ? configs[0]
-    : normalizeSticker(defaultSticker);
 }
 
 function selectedCaptionMode() {
@@ -122,170 +67,6 @@ function selectedCaptionMode() {
 function updateCaptionMode() {
   const mode = checkedValue('captionMode', 'none');
   $('confirmCaptionModeLabel').textContent = captionModeLabels[mode];
-}
-
-function stickerFormIsValid(options = stickerFromForm()) {
-  if (!options.enabled) return true;
-  if (!options.text || options.text.length > 36) return false;
-  if (options.timing === 'custom') {
-    return options.start >= 0 && options.end - options.start >= 0.4;
-  }
-  return true;
-}
-
-function updateStickerDesigner() {
-  const options = stickerFromForm();
-  const enabled = options.enabled;
-  $('stickerToggleState').textContent = enabled ? randomStickerMode ? '已启用 · 文案随机' : '已启用' : '已关闭';
-  $('stickerText').disabled = !enabled;
-  ['stickerStyleField', 'stickerPositionField', 'stickerTimingField'].forEach((id) => {
-    $(id).disabled = !enabled;
-  });
-  const custom = enabled && options.timing === 'custom';
-  $('stickerCustomTiming').hidden = !custom;
-  $('stickerStart').disabled = !custom;
-  $('stickerEnd').disabled = !custom;
-  $('stickerTextCount').textContent = `${options.text.length} / 36`;
-  $('stickerPreviewStyle').textContent = stickerStyleLabels[options.style];
-  $('stickerPreviewFrame').classList.toggle('disabled', !enabled);
-  $('stickerPreviewText').className = `stickerPreviewText preview-${options.style} preview-${options.position}`;
-  $('stickerPreviewText').textContent = options.text || '文字贴纸';
-  $('stickerPreviewText').style.fontSize = options.text.length > 28 ? '9px' : options.text.length > 18 ? '10px' : '12px';
-  const valid = stickerFormIsValid(options);
-  $('stickerText').setAttribute('aria-invalid', String(enabled && !options.text));
-  $('stickerStart').setAttribute('aria-invalid', String(custom && !valid));
-  $('stickerEnd').setAttribute('aria-invalid', String(custom && !valid));
-  $('confirmRunBtn').disabled = !valid;
-}
-
-function applyStickerToForm(value) {
-  const options = normalizeSticker(value);
-  $('stickerEnabled').checked = options.enabled;
-  $('stickerText').value = options.text;
-  setCheckedValue('stickerStyle', options.style);
-  setCheckedValue('stickerPosition', options.position);
-  setCheckedValue('stickerTiming', options.timing);
-  $('stickerStart').value = options.start;
-  $('stickerEnd').value = options.end;
-  updateStickerDesigner();
-}
-
-function replaceSelectOptions(select, options) {
-  select.replaceChildren(...options.map(({ value, label }) => {
-    const option = document.createElement('option');
-    option.value = value;
-    option.textContent = label;
-    return option;
-  }));
-}
-
-function resetStickerLibrary(message = '请先选择同一产品') {
-  stickerLibrary = null;
-  setRandomStickerMode(false);
-  $('stickerLibraryProduct').textContent = message;
-  replaceSelectOptions($('stickerCountry'), [{ value: '', label: '暂无可选国家' }]);
-  replaceSelectOptions($('stickerPreset'), [{ value: '', label: '手动输入' }]);
-  $('stickerCountry').disabled = true;
-  $('stickerPreset').disabled = true;
-  $('randomStickerBtn').disabled = true;
-  $('stickerPresetTranslation').textContent = '仍可在下方手动输入贴纸文字';
-}
-
-function currentStickerCountry() {
-  return stickerLibrary?.countries?.find((country) => country.code === $('stickerCountry').value) || null;
-}
-
-function currentStickerPreset() {
-  return currentStickerCountry()?.presets?.find((preset) => preset.id === $('stickerPreset').value) || null;
-}
-
-function populateStickerPresets(preferredText = '') {
-  const country = currentStickerCountry();
-  const presets = country?.presets || [];
-  replaceSelectOptions($('stickerPreset'), [
-    { value: '', label: '手动输入' },
-    ...presets.map((preset) => ({ value: preset.id, label: `${preset.id} · ${preset.text}` })),
-  ]);
-  const matched = presets.find((preset) => preset.text === preferredText);
-  $('stickerPreset').value = matched?.id || '';
-  $('stickerPreset').disabled = presets.length === 0;
-  $('randomStickerBtn').disabled = presets.length === 0;
-  $('stickerPresetTranslation').textContent = matched?.translation || '选择预设后显示中文释义';
-}
-
-function setRandomStickerMode(enabled) {
-  randomStickerMode = enabled;
-  $('randomStickerBtn').classList.toggle('active', enabled);
-  $('randomStickerBtn').textContent = enabled ? '已开启随机' : '随机分配';
-}
-
-async function loadStickerLibraryForSelection() {
-  resetStickerLibrary('正在读取产品与国家…');
-  try {
-    const data = await api('/api/sticker-library', {
-      method: 'POST',
-      body: JSON.stringify({
-        scan_id: state.report?.scan_id || '',
-        script_dirs: [...selected],
-      }),
-    });
-    if (!data.library?.available) {
-      resetStickerLibrary(data.library?.reason || '该产品暂无文字贴纸库');
-      return;
-    }
-    stickerLibrary = data.library;
-    $('stickerLibraryProduct').textContent = stickerLibrary.product;
-    replaceSelectOptions(
-      $('stickerCountry'),
-      stickerLibrary.countries.map((country) => ({
-        value: country.code,
-        label: `${country.name} (${country.code})`,
-      })),
-    );
-    $('stickerCountry').disabled = false;
-    const existingText = $('stickerText').value.trim();
-    const matchedCountry = stickerLibrary.countries.find((country) => (
-      country.presets.some((preset) => preset.text === existingText)
-    ));
-    $('stickerCountry').value = matchedCountry?.code || stickerLibrary.countries[0].code;
-    populateStickerPresets(existingText);
-  } catch (error) {
-    resetStickerLibrary(error.message);
-  }
-}
-
-function applyStickerPreset() {
-  const preset = currentStickerPreset();
-  if (!preset) {
-    $('stickerPresetTranslation').textContent = '选择预设后显示中文释义';
-    return;
-  }
-  $('stickerText').value = preset.text;
-  $('stickerPresetTranslation').textContent = preset.translation;
-  updateStickerDesigner();
-}
-
-function enableRandomStickerMode() {
-  const presets = currentStickerCountry()?.presets || [];
-  if (!presets.length) return;
-  const currentId = $('stickerPreset').value;
-  const candidates = presets.length > 1 ? presets.filter((preset) => preset.id !== currentId) : presets;
-  const preview = candidates[Math.floor(Math.random() * candidates.length)];
-  $('stickerPreset').value = preview.id;
-  $('stickerEnabled').checked = true;
-  setRandomStickerMode(true);
-  applyStickerPreset();
-  $('stickerPresetTranslation').textContent = `随机分配已开启：每条视频使用不同文案。当前预览：${preview.translation}`;
-}
-
-function handleStickerTextInput() {
-  setRandomStickerMode(false);
-  const preset = currentStickerPreset();
-  if (preset && preset.text !== $('stickerText').value.trim()) {
-    $('stickerPreset').value = '';
-    $('stickerPresetTranslation').textContent = '已切换为手动输入';
-  }
-  updateStickerDesigner();
 }
 
 async function api(path, options = {}) {
@@ -355,8 +136,6 @@ function groupedItems(items) {
 function taskRow(item) {
   const scriptName = basename(item.script_dir);
   const clips = (item.video_paths || []).length;
-  const sticker = normalizeSticker(item.sticker);
-  const stickerMeta = sticker.enabled ? ` · 贴纸 ${stickerStyleLabels[sticker.style]}` : '';
   const captionMeta = item.caption_mode === 'karaoke' ? ' · 卡拉 OK 字幕' : '';
   const cleanupMode = item.status === 'done' && item.cleanup_eligible;
   const selectable = item.status === 'missing' || cleanupMode;
@@ -366,7 +145,7 @@ function taskRow(item) {
     : '';
   const issue = (item.issues || []).join('、');
   const meta = item.status === 'missing'
-    ? `${clips} 个片段 · ${basename(item.md_path)}${captionMeta}${stickerMeta}`
+    ? `${clips} 个片段 · ${basename(item.md_path)}${captionMeta}`
     : item.status === 'done'
       ? `${basename(item.output_path)}${item.cleanup_eligible ? ` · 待清理 ${item.cleanup_file_count} 个文件 / ${formatBytes(item.cleanup_bytes)}` : ''}`
       : item.status === 'archived'
@@ -536,13 +315,11 @@ function openConfirmModal() {
   }
   $('confirmCount').textContent = selected.size;
   $('confirmOutputPath').textContent = state.report?.output_root || '';
-  setRandomStickerMode(false);
   setCheckedValue('captionMode', selectedCaptionMode());
   updateCaptionMode();
-  applyStickerToForm(selectedStickerConfig());
+  $('confirmRunBtn').disabled = false;
   $('confirmModal').hidden = false;
-  void loadStickerLibraryForSelection();
-  ($('stickerEnabled').checked ? $('stickerText') : $('confirmRunBtn')).focus();
+  $('confirmRunBtn').focus();
 }
 
 function closeConfirmModal() {
@@ -597,11 +374,6 @@ async function cleanupMedia() {
 }
 
 async function startAssembly() {
-  const sticker = stickerFromForm();
-  if (!stickerFormIsValid(sticker)) {
-    showToast(sticker.text ? '自定义显示时间至少需要 0.4 秒' : '请输入贴纸文字', true);
-    return;
-  }
   $('confirmRunBtn').disabled = true;
   try {
     const data = await api('/api/assemble', {
@@ -611,8 +383,6 @@ async function startAssembly() {
         scan_id: state.report?.scan_id || '',
         script_dirs: [...selected],
         caption_mode: checkedValue('captionMode', 'none'),
-        sticker,
-        sticker_random_country: randomStickerMode ? $('stickerCountry').value : '',
       }),
     });
     state.job = data.job;
@@ -624,7 +394,7 @@ async function startAssembly() {
   } catch (error) {
     showToast(error.message, true);
   } finally {
-    if (!$('confirmModal').hidden) updateStickerDesigner();
+    if (!$('confirmModal').hidden) $('confirmRunBtn').disabled = false;
   }
 }
 
@@ -726,25 +496,6 @@ $('closeModalBtn').addEventListener('click', closeConfirmModal);
 $('cancelModalBtn').addEventListener('click', closeConfirmModal);
 $('confirmRunBtn').addEventListener('click', startAssembly);
 $('confirmModal').addEventListener('click', (event) => { if (event.target === $('confirmModal')) closeConfirmModal(); });
-$('stickerEnabled').addEventListener('change', () => {
-  if (!$('stickerEnabled').checked) setRandomStickerMode(false);
-  updateStickerDesigner();
-});
-$('stickerText').addEventListener('input', handleStickerTextInput);
-$('stickerCountry').addEventListener('change', () => {
-  setRandomStickerMode(false);
-  populateStickerPresets();
-});
-$('stickerPreset').addEventListener('change', () => {
-  setRandomStickerMode(false);
-  applyStickerPreset();
-});
-$('randomStickerBtn').addEventListener('click', enableRandomStickerMode);
-$('stickerStart').addEventListener('input', updateStickerDesigner);
-$('stickerEnd').addEventListener('input', updateStickerDesigner);
-document.querySelectorAll('input[name="stickerStyle"], input[name="stickerPosition"], input[name="stickerTiming"]').forEach((input) => {
-  input.addEventListener('change', updateStickerDesigner);
-});
 document.querySelectorAll('input[name="captionMode"]').forEach((input) => {
   input.addEventListener('change', updateCaptionMode);
 });

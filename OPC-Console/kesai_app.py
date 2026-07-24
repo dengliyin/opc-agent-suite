@@ -38,6 +38,9 @@ def agent_python(agent_dir: Path) -> str:
 
 VIDEO_COLLECTION_DIR = WORKSPACE_ROOT / "Video-Collection"
 SCRIPT_ANALYSIS_DIR = WORKSPACE_ROOT / "Script-Analysis"
+HYBRID_VIDEO_COLLECTION_DIR = WORKSPACE_ROOT / "Hybrid-Video-Collection"
+HYBRID_SCRIPT_ANALYSIS_DIR = WORKSPACE_ROOT / "Hybrid-Script-Analysis"
+HYBRID_SCRIPT_GENERATION_DIR = WORKSPACE_ROOT / "Hybrid-Script-Generation"
 SCRIPT_GENERATION_DIR = WORKSPACE_ROOT / "Script-Generation"
 SCRIPT_ADAPTATION_DIR = WORKSPACE_ROOT / "Script-Adaptation"
 SCRIPT_ADAPTATION_APP_DIR = SCRIPT_ADAPTATION_DIR / "software" / "Script-Adaptation-app"
@@ -60,6 +63,9 @@ def build_services() -> dict[str, dict]:
         "rewrite": service_url("OPC_PRODUCT_SCRIPT_REWRITE_URL", "http://127.0.0.1:9997/"),
         "compose": service_url("OPC_VIDEO_ASSEMBLY_AGENT_URL", "http://127.0.0.1:9998/"),
         "hybrid_adapt": service_url("OPC_HYBRID_SCRIPT_ADAPTATION_AGENT_URL", "http://127.0.0.1:9999/"),
+        "hybrid_collect": service_url("OPC_HYBRID_VIDEO_COLLECTION_AGENT_URL", "http://127.0.0.1:10001/"),
+        "hybrid_analyze": service_url("OPC_HYBRID_SCRIPT_ANALYSIS_AGENT_URL", "http://127.0.0.1:10002/"),
+        "hybrid_script": service_url("OPC_HYBRID_SCRIPT_GENERATION_AGENT_URL", "http://127.0.0.1:10003/"),
     }
     services = {
         "collect": {
@@ -120,12 +126,33 @@ def build_services() -> dict[str, dict]:
             "command": [agent_python(VIDEO_ASSEMBLY_DIR), str(VIDEO_ASSEMBLY_DIR / "app" / "server.py"), "--host", "127.0.0.1", "--port", str(service_port(urls["compose"], 9998))],
         },
         "hybrid_adapt": {
-            "label": "混剪脚本适配",
-            "description": "把包含钩子和 CTA 的参考脚本适配成视频模型片段指令",
+            "label": "钩子与 CTA 脚本适配",
+            "description": "把复刻裂变后的钩子与 CTA 脚本适配成视频模型片段指令",
             "url": urls["hybrid_adapt"],
             "cwd": HYBRID_SCRIPT_ADAPTATION_DIR,
             "launch_cwd": HYBRID_SCRIPT_ADAPTATION_APP_DIR,
             "command": [agent_python(HYBRID_SCRIPT_ADAPTATION_DIR), "-m", "opc_engine.features.script_adaptation.script_adaptation_agent_web", "--port", str(service_port(urls["hybrid_adapt"], 9999))],
+        },
+        "hybrid_collect": {
+            "label": "混剪参考视频采集",
+            "description": "按类型和产品下载钩子或 CTA 参考视频",
+            "url": urls["hybrid_collect"],
+            "cwd": HYBRID_VIDEO_COLLECTION_DIR,
+            "command": [agent_python(HYBRID_VIDEO_COLLECTION_DIR), "-m", "hot_video_agent", "web", "--host", "127.0.0.1", "--port", str(service_port(urls["hybrid_collect"], 10001))],
+        },
+        "hybrid_analyze": {
+            "label": "混剪参考视频解析",
+            "description": "按类型和产品把参考视频解析成 Markdown",
+            "url": urls["hybrid_analyze"],
+            "cwd": HYBRID_SCRIPT_ANALYSIS_DIR,
+            "command": [agent_python(HYBRID_SCRIPT_ANALYSIS_DIR), str(HYBRID_SCRIPT_ANALYSIS_DIR / "scripts" / "web_app.py"), "--host", "127.0.0.1", "--port", str(service_port(urls["hybrid_analyze"], 10002))],
+        },
+        "hybrid_script": {
+            "label": "钩子与 CTA 脚本复刻裂变",
+            "description": "把解析脚本复刻为产品脚本并批量生成可独立使用的变体",
+            "url": urls["hybrid_script"],
+            "cwd": HYBRID_SCRIPT_GENERATION_DIR,
+            "command": [agent_python(HYBRID_SCRIPT_GENERATION_DIR), "-m", "opc_engine.features.script_generation.script_generation_agent_web", "--port", str(service_port(urls["hybrid_script"], 10003))],
         },
     }
     for service_id, service in services.items():
@@ -137,15 +164,22 @@ SERVICES = build_services()
 
 GLOBAL_PATH_FIELDS = (
     ("OPC_VAULT_ROOT", "资料库根目录", "所有 Agent 共用的内容资料库根目录", "$HOME/Documents/Obsidian Vault"),
-    ("VIDEO_TEARDOWN_INPUT_ROOT", "业务输入", "9992 扫描待解析爆款视频的目录", "${OPC_VAULT_ROOT}/wiki/视频/03爆款视频"),
-    ("VIDEO_TEARDOWN_OUTPUT_ROOT", "业务输出", "9992 保存最终拆解 Markdown 的目录", "${OPC_VAULT_ROOT}/wiki/视频/04爆款视频脚本"),
-    ("SCRIPT_ROOT", "Omni 脚本输入", "9995 读取的 Omni 适配脚本目录", "${OPC_VAULT_ROOT}/wiki/视频/06产品适配后的脚本/omni"),
-    ("GROK_SCRIPT_ROOT", "Grok 脚本输入", "9995 读取的 Grok 适配脚本目录", "${OPC_VAULT_ROOT}/wiki/视频/06产品适配后的脚本/grok"),
+    ("VIDEO_TEARDOWN_INPUT_ROOT", "来源素材", "9991 写入、9992 扫描的爆款视频目录", "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/01来源素材"),
+    ("VIDEO_TEARDOWN_OUTPUT_ROOT", "参考脚本", "9992 与 9997 写入、9993 读取的参考脚本目录", "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/02参考脚本"),
+    ("PRODUCT_SCRIPT_ROOT", "产品脚本", "9993 保存、9994 读取的正式产品脚本目录", "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/03产品脚本"),
+    ("HYBRID_VIDEO_TEARDOWN_INPUT_ROOT", "混剪参考视频", "10002 扫描10001下载结果的目录", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/01参考视频"),
+    ("HYBRID_VIDEO_TEARDOWN_OUTPUT_ROOT", "混剪解析脚本", "10002 保存分类解析 Markdown 的目录", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/02解析脚本"),
+    ("HYBRID_SCRIPT_GENERATION_INPUT_ROOT", "混剪解析脚本", "10003 扫描10002解析结果的目录", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/02解析脚本"),
+    ("HYBRID_SCRIPT_GENERATION_OUTPUT_ROOT", "复刻裂变脚本", "10003 保存复刻稿与裂变稿的目录", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/03复刻裂变脚本"),
+    ("SCRIPT_ROOT", "Omni 脚本输入", "9995 读取的 Omni 适配脚本目录", "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/04适配脚本/omni"),
+    ("GROK_SCRIPT_ROOT", "Grok 脚本输入", "9995 读取的 Grok 适配脚本目录", "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/04适配脚本/grok"),
     ("REFERENCE_ROOT", "产品参考图", "9995 读取的产品底图目录", "${OPC_VAULT_ROOT}/wiki/产品/产品底图"),
-    ("VIDEO_OUTPUT_ROOT", "Omni 视频输出", "9995 保存 Omni 视频片段的目录", "${OPC_VAULT_ROOT}/wiki/视频/10omni视频片段"),
-    ("GROK_VIDEO_OUTPUT_ROOT", "Grok 视频输出", "9995 保存 Grok 视频片段的目录", "${OPC_VAULT_ROOT}/wiki/视频/10grok视频片段"),
-    ("VIDEO_ASSEMBLY_PENDING_ROOT", "待拼接视频", "9998 扫描待拼接片段的目录", "${OPC_VAULT_ROOT}/wiki/视频/视频片段 （待拼接）"),
-    ("VIDEO_ASSEMBLY_OUTPUT_ROOT", "成品视频输出", "9998 与成品管理使用的输出目录", "${OPC_VAULT_ROOT}/wiki/视频/成品视频"),
+    ("VIDEO_OUTPUT_ROOT", "Omni 视频输出", "9995 保存 Omni 视频片段的目录", "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/05AI片段/omni"),
+    ("GROK_VIDEO_OUTPUT_ROOT", "Grok 视频输出", "9995 保存 Grok 视频片段的目录", "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/05AI片段/grok"),
+    ("VIDEO_ASSEMBLY_PENDING_ROOT", "合成工作区", "9995 导出、9998 扫描待拼接内容的目录", "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/06合成工作区"),
+    ("VIDEO_ASSEMBLY_OUTPUT_ROOT", "成品视频", "9998 输出、9996 管理的统一产品成品目录", "${OPC_VAULT_ROOT}/wiki/视频/成品视频"),
+    ("VIDEO_TITLE_LIBRARY_ROOT", "视频标题库", "9996 读取的全线路共享标题与标签目录", "${OPC_VAULT_ROOT}/wiki/视频/成品视频/视频标题库"),
+    ("SCRIPT_MISTAKE_BOOK_ROOT", "脚本错题本", "9993 与 10003 共享的产品级脚本纠错知识库", "${OPC_VAULT_ROOT}/wiki/视频/共享知识库/脚本错题本"),
 )
 
 GLOBAL_PATH_GROUPS = (
@@ -162,6 +196,30 @@ GLOBAL_PATH_GROUPS = (
         "keys": ("VIDEO_TEARDOWN_INPUT_ROOT", "VIDEO_TEARDOWN_OUTPUT_ROOT"),
     },
     {
+        "id": "9993",
+        "label": "9993 · 脚本产出",
+        "description": "正式产品脚本输出；9994 以此作为业务输入",
+        "keys": ("PRODUCT_SCRIPT_ROOT",),
+    },
+    {
+        "id": "script_knowledge",
+        "label": "9993 / 10003 · 脚本知识库",
+        "description": "两条脚本生产线路共享，按产品名读取同名错题本 Markdown",
+        "keys": ("SCRIPT_MISTAKE_BOOK_ROOT",),
+    },
+    {
+        "id": "10002",
+        "label": "10002 · 混剪参考视频解析",
+        "description": "保持混剪-钩子|混剪-CTA/<产品名>目录层级",
+        "keys": ("HYBRID_VIDEO_TEARDOWN_INPUT_ROOT", "HYBRID_VIDEO_TEARDOWN_OUTPUT_ROOT"),
+    },
+    {
+        "id": "10003",
+        "label": "10003 · 钩子与 CTA 脚本复刻裂变",
+        "description": "按混剪-钩子|混剪-CTA/<产品名>/<来源脚本>保持目录层级",
+        "keys": ("HYBRID_SCRIPT_GENERATION_INPUT_ROOT", "HYBRID_SCRIPT_GENERATION_OUTPUT_ROOT"),
+    },
+    {
         "id": "9995",
         "label": "9995 · 片段产出",
         "description": "Omni 与 Grok 的脚本输入、产品参考图和视频片段输出",
@@ -173,15 +231,20 @@ GLOBAL_PATH_GROUPS = (
         "description": "待拼接视频片段的扫描目录和最终成品输出目录",
         "keys": ("VIDEO_ASSEMBLY_PENDING_ROOT", "VIDEO_ASSEMBLY_OUTPUT_ROOT"),
     },
+    {
+        "id": "9996",
+        "label": "9996 · 成品管理",
+        "description": "标题库由所有成品视频线路共享；成品目录复用 9998 的输出路径",
+        "keys": ("VIDEO_TITLE_LIBRARY_ROOT",),
+    },
 )
 
 OTHER_AGENT_PATH_NOTES = (
-    {"port": "9991", "label": "视频采集", "note": "爆款视频库继承全局资料库根目录"},
-    {"port": "9993", "label": "脚本产出", "note": "产品资料与脚本输出默认继承全局资料库根目录"},
-    {"port": "9994", "label": "脚本适配", "note": "输入输出路径通过 Agent 配置继承全局资料库根目录"},
-    {"port": "9996", "label": "成品管理", "note": "成品视频和标题库继承全局资料库根目录"},
-    {"port": "9997", "label": "产品脚本改写", "note": "爆款脚本和产品资料继承全局资料库根目录"},
+    {"port": "9991", "label": "视频采集", "note": "输出复用 9992 的“来源素材”路径"},
+    {"port": "9994", "label": "脚本适配", "note": "读取 9993 产品脚本，写入 04适配脚本/{veo,omni,grok}"},
+    {"port": "9997", "label": "产品脚本改写", "note": "输入输出复用 9992 的“参考脚本”路径"},
     {"port": "9999", "label": "混剪脚本适配", "note": "输入输出路径由独立 Agent 配置管理"},
+    {"port": "10001", "label": "混剪参考视频采集", "note": "输出到AI实拍混剪/01参考视频/<类型>/<产品名>"},
 )
 
 
@@ -404,13 +467,13 @@ main{max-width:1180px;margin:auto;padding:64px 24px 80px}header{display:flex;jus
 @media(max-width:700px){main{padding-top:38px}header{align-items:start;flex-direction:column}.summary{white-space:normal}.workflowHead{align-items:start;flex-direction:column}.workflowDescription{text-align:left}.flow{grid-template-columns:1fr}.destination .card{width:100%}}
 </style>
 </head>
-<body><main><header><div><h1>OPC 内容量化增长引擎</h1><p>按三条视频生产线路组织现有 Agent。相同 Agent 在不同线路中共用同一个运行服务，业务参数和产物仍由对应 Agent 管理。</p></div><div class="headerTools"><a class="button" href="/settings/paths">全局路径设置</a><div class="summary" id="summary">正在检测服务…</div></div></header><section class="workflows" id="workflows"></section><section class="destination"><div class="destinationHead"><div class="destinationTitle">统一归口 · 成品管理与发布</div><div class="destinationDescription">三条线路的最终成片统一进入成品目录，由同一个 Agent 扫描、管理和发布。</div></div><div class="flow" id="destination"></div></section><p class="note">控制台端口 8888 · 已接入 Agent 端口 9991–9999 · 10000 待开发</p></main>
+<body><main><header><div><h1>OPC 内容量化增长引擎</h1><p>按三条视频生产线路组织现有 Agent。相同 Agent 在不同线路中共用同一个运行服务，业务参数和产物仍由对应 Agent 管理。</p></div><div class="headerTools"><a class="button" href="/settings/paths">全局路径设置</a><div class="summary" id="summary">正在检测服务…</div></div></header><section class="workflows" id="workflows"></section><section class="destination"><div class="destinationHead"><div class="destinationTitle">统一归口 · 成品管理与发布</div><div class="destinationDescription">三条线路的最终成片统一进入成品目录，由同一个 Agent 扫描、管理和发布。</div></div><div class="flow" id="destination"></div></section><p class="note">控制台端口 8888 · 已接入 12 个 Agent · 10000 待开发</p></main>
 <script>
 const workflowsHost=document.querySelector('#workflows'),destination=document.querySelector('#destination'),summary=document.querySelector('#summary');
 const workflowLines=[
   {title:'线路 1 · 爆款复刻',description:'从爆款视频采集开始，完成纯 AI 脚本、片段与成片生产。',steps:['collect','analyze','script','adapt','assemble','compose']},
   {title:'线路 2 · 产品脚本改写',description:'从产品脚本改写开始，继续进入纯 AI 片段生产与合成。',steps:['rewrite','script','adapt','assemble','compose']},
-  {title:'线路 3 · AI＋实拍混剪',description:'复用采集、解析和片段产出，混合 AI 首尾片段与产品实拍素材。',steps:['collect','analyze','hybrid_adapt',{id:'assemble',label:'钩子与 CTA 片段产出'},{port:'10000',label:'AI＋实拍混剪',description:'编排 AI 与实拍片段并完成原创差异处理。'}]}
+  {title:'线路 3 · AI＋实拍混剪',description:'独立采集、解析、复刻裂变钩子/CTA参考视频，混合 AI 首尾片段与产品实拍素材。',steps:['hybrid_collect','hybrid_analyze','hybrid_script','hybrid_adapt',{id:'assemble',label:'钩子与 CTA 片段产出'},{port:'10000',label:'AI＋实拍混剪',description:'编排 AI 与实拍片段并完成原创差异处理。'}]}
 ];
 let services=[];
 const startingServices=new Set();
@@ -437,7 +500,7 @@ main{max-width:980px;margin:auto;padding:48px 24px 80px}header{display:flex;just
 </style>
 </head>
 <body><main>
-<header><div><h1>全局路径设置</h1><p>这些值直接来自项目根目录的 <code>.env</code>，并作为 9991–9999 的全局默认路径。变量写法会原样保留。</p></div><a class="button" href="/">返回控制台</a></header>
+<header><div><h1>全局路径设置</h1><p>这些值直接来自项目根目录的 <code>.env</code>，并作为已接入 Agent 的全局默认路径。变量写法会原样保留。</p></div><a class="button" href="/">返回控制台</a></header>
 <div class="envFile" id="envFile"></div>
 <section class="groups" id="fields">正在读取路径…</section>
 <div class="actions"><span class="message" id="message">保存后，新启动的 Agent 会读取新路径；已运行 Agent 需要重启。</span><button class="primary" id="saveButton" onclick="savePaths()">保存全局路径</button></div>
@@ -465,6 +528,9 @@ ROUTE_TO_SERVICE = {
     "/rewrite": "rewrite",
     "/compose": "compose",
     "/hybrid-adapt": "hybrid_adapt",
+    "/hybrid-collect": "hybrid_collect",
+    "/hybrid-analyze": "hybrid_analyze",
+    "/hybrid-script": "hybrid_script",
 }
 
 

@@ -1,5 +1,5 @@
 {
-  "_说明": "混剪脚本适配智能体主配置。所有路径都按本文件所在目录解析，避免依赖外部配置目录。",
+  "_说明": "钩子与 CTA 脚本适配智能体主配置。所有路径都按本文件所在目录解析，避免依赖外部配置目录。",
   "product_project": {
     "_说明": "内部输出归档目录。混剪脚本 Markdown 本身作为钩子和 CTA 上下文来源。",
     "product_project_slug": "hybrid_script_adaptation_workspace"
@@ -16,14 +16,14 @@
     "script_adaptation_target_model": "omni",
     "script_adaptation_segment_seconds": 10,
     "script_adaptation_input_dirs": [
-      "${OPC_VAULT_ROOT}/wiki/视频/04爆款视频脚本/混剪-钩子",
-      "${OPC_VAULT_ROOT}/wiki/视频/04爆款视频脚本/混剪-CTA"
+      "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/03复刻裂变脚本/混剪-钩子",
+      "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/03复刻裂变脚本/混剪-CTA"
     ],
-    "script_adaptation_output_root": "${OPC_VAULT_ROOT}/wiki/视频/混剪适配后的脚本/omni",
+    "script_adaptation_output_root": "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/04适配脚本/omni",
     "script_adaptation_output_roots": {
-      "veo": "${OPC_VAULT_ROOT}/wiki/视频/混剪适配后的脚本/veo",
-      "omni": "${OPC_VAULT_ROOT}/wiki/视频/混剪适配后的脚本/omni",
-      "grok": "${OPC_VAULT_ROOT}/wiki/视频/混剪适配后的脚本/grok"
+      "veo": "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/04适配脚本/veo",
+      "omni": "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/04适配脚本/omni",
+      "grok": "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/04适配脚本/grok"
     }
   },
   "files": {

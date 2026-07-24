@@ -6,7 +6,6 @@ import copy
 import json
 import mimetypes
 import os
-import random
 import signal
 import subprocess
 import sys
@@ -61,22 +60,14 @@ def scan_now() -> dict[str, Any]:
     if not core.PENDING_ROOT.exists():
         raise RuntimeError(f"待拼接目录不存在：{core.PENDING_ROOT}")
     previous = {
-        item.get("script_dir"): {
-            "sticker": item.get("sticker"),
-            "caption_mode": item.get("caption_mode"),
-        }
+        item.get("script_dir"): item.get("caption_mode")
         for item in read_report().get("items", [])
         if item.get("script_dir")
     }
     items = core.scan_items()
     for item in items:
-        saved = previous.get(item.script_dir) or {}
         try:
-            item.sticker = core.normalize_sticker_options(saved.get("sticker"))
-        except ValueError:
-            item.sticker = core.normalize_sticker_options(None)
-        try:
-            item.caption_mode = core.normalize_caption_mode(saved.get("caption_mode"))
+            item.caption_mode = core.normalize_caption_mode(previous.get(item.script_dir))
         except ValueError:
             item.caption_mode = core.DEFAULT_CAPTION_MODE
     payload = core.report_payload(items)
@@ -296,8 +287,6 @@ JOB = AssemblyJob()
 def confirmed_report(
     scan_id: str,
     script_dirs: list[str],
-    sticker: dict[str, Any] | None = None,
-    sticker_random_country: str = "",
     caption_mode: str = core.DEFAULT_CAPTION_MODE,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     report = read_report()
@@ -314,42 +303,12 @@ def confirmed_report(
     unknown = [path for path in selected_paths if path not in missing]
     if unknown:
         raise ValueError("选择项不属于本次扫描，请重新扫描")
-    if sticker is not None and not isinstance(sticker, dict):
-        raise ValueError("文字贴纸设置格式无效")
-    sticker_options = core.normalize_sticker_options(sticker)
     normalized_caption_mode = core.normalize_caption_mode(caption_mode)
     if normalized_caption_mode == "karaoke" and not core.caption_runtime_ready():
         raise RuntimeError("TikTok 卡拉 OK 字幕运行依赖不完整")
-    randomized_texts: dict[str, str] = {}
-    if sticker_random_country:
-        if not sticker_options["enabled"]:
-            raise ValueError("随机分配文案前请先启用文字贴纸")
-        products = {str(missing[path].get("product") or "") for path in selected_paths}
-        if len(products) != 1:
-            raise ValueError("随机分配文案时只能选择同一产品")
-        library = core.load_sticker_library(products.pop())
-        country = next(
-            (item for item in library["countries"] if item["code"] == sticker_random_country),
-            None,
-        )
-        if not country or not country["presets"]:
-            raise ValueError("所选销售国家暂无可用的贴纸文案")
-        texts = [preset["text"] for preset in country["presets"]]
-        assigned: list[str] = []
-        generator = random.SystemRandom()
-        while len(assigned) < len(selected_paths):
-            batch = list(texts)
-            generator.shuffle(batch)
-            if assigned and len(batch) > 1 and assigned[-1] == batch[0]:
-                batch.append(batch.pop(0))
-            assigned.extend(batch)
-        randomized_texts = dict(zip(selected_paths, assigned))
     for item in report.get("items", []):
         if item.get("script_dir") in selected_paths:
             item["caption_mode"] = normalized_caption_mode
-            item["sticker"] = copy.deepcopy(sticker_options)
-            if item["script_dir"] in randomized_texts:
-                item["sticker"]["text"] = randomized_texts[item["script_dir"]]
     write_json(core.REPORT_PATH, report)
     selected = [missing[path] for path in selected_paths]
     payload = copy.deepcopy(report)
@@ -360,34 +319,6 @@ def confirmed_report(
     payload["confirmed_at"] = time.time()
     payload["confirmed_script_dirs"] = selected_paths
     return payload, selected
-
-
-def sticker_library_for_selection(scan_id: str, script_dirs: list[str]) -> dict[str, Any]:
-    report = read_report()
-    if not scan_id or report.get("scan_id") != scan_id:
-        raise ValueError("扫描结果已变化，请重新扫描后再选择文案")
-    missing = {
-        item["script_dir"]: item
-        for item in report.get("items", [])
-        if item.get("status") == "missing"
-    }
-    selected_paths = list(dict.fromkeys(script_dirs))
-    unknown = [path for path in selected_paths if path not in missing]
-    if not selected_paths or unknown:
-        raise ValueError("请先选择本次扫描中的待拼接项目")
-    products = sorted({str(missing[path].get("product") or "") for path in selected_paths})
-    if len(products) != 1:
-        return {
-            "available": False,
-            "product": "",
-            "path": "",
-            "countries": [],
-            "reason": "已混选多个产品，请选择同一产品后调用文案库",
-        }
-    library = core.load_sticker_library(products[0])
-    if not library["available"]:
-        library["reason"] = "该产品暂无可用的文字贴纸库"
-    return library
 
 
 def confirmed_cleanup_items(scan_id: str, script_dirs: list[str]) -> list[core.ScriptItem]:
@@ -499,12 +430,6 @@ class Handler(BaseHTTPRequestHandler):
                     raise RuntimeError("拼接运行中，暂不能重新扫描")
                 report = scan_now()
                 self._json(200, {"report": report, "outputs": output_items(report)})
-            elif parsed.path == "/api/sticker-library":
-                library = sticker_library_for_selection(
-                    str(payload.get("scan_id") or ""),
-                    [str(path) for path in payload.get("script_dirs", [])],
-                )
-                self._json(200, {"library": library})
             elif parsed.path == "/api/assemble":
                 if payload.get("confirmed") is not True:
                     raise ValueError("需要明确确认后才能开始拼接")
@@ -514,8 +439,6 @@ class Handler(BaseHTTPRequestHandler):
                 report, selected = confirmed_report(
                     str(payload.get("scan_id") or ""),
                     [str(path) for path in payload.get("script_dirs", [])],
-                    payload.get("sticker"),
-                    str(payload.get("sticker_random_country") or ""),
                     str(payload.get("caption_mode") or core.DEFAULT_CAPTION_MODE),
                 )
                 self._json(202, {"job": JOB.start(report, selected)})

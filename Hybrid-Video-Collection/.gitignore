@@ -1,0 +1,10 @@
+config.json
+.env
+.venv/
+run_logs/
+browser-profile/
+projects/
+product/
+__pycache__/
+*.pyc
+.DS_Store

@@ -13,11 +13,12 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 
 mkdir -p \
-  "$OPC_VAULT_ROOT/wiki/视频/06产品适配后的脚本/omni" \
-  "$OPC_VAULT_ROOT/wiki/视频/06产品适配后的脚本/grok" \
+  "$OPC_VAULT_ROOT/wiki/视频/纯AI视频/04适配脚本/omni" \
+  "$OPC_VAULT_ROOT/wiki/视频/纯AI视频/04适配脚本/grok" \
   "$OPC_VAULT_ROOT/wiki/产品/产品底图" \
-  "$OPC_VAULT_ROOT/wiki/视频/10omni视频片段" \
-  "$OPC_VAULT_ROOT/wiki/视频/10grok视频片段"
+  "$OPC_VAULT_ROOT/wiki/视频/纯AI视频/05AI片段/omni" \
+  "$OPC_VAULT_ROOT/wiki/视频/纯AI视频/05AI片段/grok" \
+  "$OPC_VAULT_ROOT/wiki/视频/纯AI视频/06合成工作区"
 
 if [ ! -f .env ]; then
   cp .env.example .env

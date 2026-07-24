@@ -42,7 +42,7 @@ class StageSpec:
 STAGES: dict[str, StageSpec] = {
     "adapt": StageSpec(
         name="adapt",
-        label="混剪脚本适配",
+        label="钩子与 CTA 脚本适配",
         purpose="把包含钩子和 CTA 的参考脚本适配成文生图 JSON、视频片段 CSV 和完整 Markdown 交付包。",
         workflow_inputs=("script_adaptation",),
         runner=workflow.run_adapt,
@@ -245,7 +245,7 @@ def load_local_agent_config() -> dict[str, Any]:
 
 
 class ScriptAdaptationAgent:
-    name = "混剪脚本适配智能体"
+    name = "钩子与 CTA 脚本适配智能体"
 
     def infer_stage(self, task: str) -> tuple[str | None, list[tuple[str, int]]]:
         text = task.lower()

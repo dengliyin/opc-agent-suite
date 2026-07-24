@@ -15,12 +15,12 @@
     "_说明": "脚本适配任务参数。target_model 用于提示词变量，segment_seconds 是每段视频生成时长上限。",
     "script_adaptation_target_model": "omni",
     "script_adaptation_segment_seconds": 10,
-    "script_adaptation_input_dir": "${OPC_VAULT_ROOT}/wiki/视频/05产品视频脚本",
-    "script_adaptation_output_root": "${OPC_VAULT_ROOT}/wiki/视频/06产品适配后的脚本/veo",
+    "script_adaptation_input_dir": "${PRODUCT_SCRIPT_ROOT}",
+    "script_adaptation_output_root": "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/04适配脚本/veo",
     "script_adaptation_output_roots": {
-      "veo": "${OPC_VAULT_ROOT}/wiki/视频/06产品适配后的脚本/veo",
-      "omni": "${OPC_VAULT_ROOT}/wiki/视频/06产品适配后的脚本/omni",
-      "grok": "${OPC_VAULT_ROOT}/wiki/视频/06产品适配后的脚本/grok"
+      "veo": "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/04适配脚本/veo",
+      "omni": "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/04适配脚本/omni",
+      "grok": "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/04适配脚本/grok"
     }
   },
   "files": {

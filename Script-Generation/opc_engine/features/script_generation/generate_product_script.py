@@ -42,13 +42,23 @@ LOCAL_MODEL_SETTINGS_PATH = CONFIG_DIR / "model_settings.json"
 VAULT_ROOT = Path(
     os.environ.get("OPC_VAULT_ROOT", str(Path.home() / "Documents" / "Obsidian Vault"))
 ).expanduser()
-SCRIPT_OUTPUT_SOURCE_ROOT = VAULT_ROOT / "wiki" / "视频" / "05产品视频脚本"
+SCRIPT_OUTPUT_SOURCE_ROOT = Path(
+    os.environ.get(
+        "PRODUCT_SCRIPT_ROOT",
+        str(VAULT_ROOT / "wiki" / "视频" / "纯AI视频" / "03产品脚本"),
+    )
+).expanduser()
 DEFAULT_PROMPT_PATH = CONFIG_DIR / "script_generation_rewrite_prompt.md"
 DEFAULT_PROMPT_CONFIG_PATH = "opc_engine/features/script_generation/config/script_generation_rewrite_prompt.md"
 DEFAULT_MUTATION_PROMPT_PATH = CONFIG_DIR / "script_generation_mutation_prompt.md"
 DEFAULT_MUTATION_PROMPT_CONFIG_PATH = "opc_engine/features/script_generation/config/script_generation_mutation_prompt.md"
 LEGACY_CONTENT_KNOWLEDGE_CONFIG_PATH = "opc_engine/features/script_generation/config/cross_border_ecommerce_knowledge_base.md"
-DEFAULT_CONTENT_KNOWLEDGE_PATH = VAULT_ROOT / "wiki" / "视频" / "07错题本"
+DEFAULT_CONTENT_KNOWLEDGE_PATH = Path(
+    os.environ.get(
+        "SCRIPT_MISTAKE_BOOK_ROOT",
+        str(VAULT_ROOT / "wiki" / "视频" / "共享知识库" / "脚本错题本"),
+    )
+).expanduser()
 DEFAULT_CONTENT_KNOWLEDGE_CONFIG_PATH = DEFAULT_CONTENT_KNOWLEDGE_PATH.as_posix()
 DEFAULT_TIMEOUT = 120
 DEFAULT_MAX_OUTPUT_TOKENS = 24000

@@ -55,9 +55,24 @@ VAULT_ROOT = Path(
     os.environ.get("OPC_VAULT_ROOT", str(Path.home() / "Documents" / "Obsidian Vault"))
 ).expanduser()
 PRODUCT_INFO_SOURCE_DIR = VAULT_ROOT / "wiki" / "产品" / "产品信息"
-HOT_SCRIPT_SOURCE_ROOT = VAULT_ROOT / "wiki" / "视频" / "04爆款视频脚本"
-SCRIPT_OUTPUT_SOURCE_ROOT = VAULT_ROOT / "wiki" / "视频" / "05产品视频脚本"
-SCRIPT_MISTAKE_BOOK_SOURCE_ROOT = VAULT_ROOT / "wiki" / "视频" / "07错题本"
+HOT_SCRIPT_SOURCE_ROOT = Path(
+    os.environ.get(
+        "VIDEO_TEARDOWN_OUTPUT_ROOT",
+        str(VAULT_ROOT / "wiki" / "视频" / "纯AI视频" / "02参考脚本"),
+    )
+).expanduser()
+SCRIPT_OUTPUT_SOURCE_ROOT = Path(
+    os.environ.get(
+        "PRODUCT_SCRIPT_ROOT",
+        str(VAULT_ROOT / "wiki" / "视频" / "纯AI视频" / "03产品脚本"),
+    )
+).expanduser()
+SCRIPT_MISTAKE_BOOK_SOURCE_ROOT = Path(
+    os.environ.get(
+        "SCRIPT_MISTAKE_BOOK_ROOT",
+        str(VAULT_ROOT / "wiki" / "视频" / "共享知识库" / "脚本错题本"),
+    )
+).expanduser()
 INPUT_KEYS = (
     "script_product_document_path",
     "script_reference_script_path",
@@ -1861,7 +1876,7 @@ HTML_PAGE = r"""<!doctype html>
       list.innerHTML = '';
       if (!refs.length) {
         list.innerHTML = '<div class="meta">当前产品名下没有匹配到爆款脚本。</div>';
-        $('selectedScriptMeta').textContent = '请确认产品名和 04爆款视频脚本 下的产品文件夹名称一致。';
+        $('selectedScriptMeta').textContent = '请确认产品名和 02参考脚本 下的产品文件夹名称一致。';
         return;
       }
       $('selectedScriptMeta').textContent = selectedReferencePath

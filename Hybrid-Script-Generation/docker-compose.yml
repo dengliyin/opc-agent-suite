@@ -1,0 +1,21 @@
+services:
+  Hybrid-Script-Generation:
+    build:
+      context: .
+    container_name: Hybrid-Script-Generation
+    restart: unless-stopped
+    working_dir: /app
+    ports:
+      - "127.0.0.1:10003:10003"
+    environment:
+      KESAI_APP_HOST: "0.0.0.0"
+      KESAI_APP_PORT: "10003"
+      KESAI_APP_NO_OPEN: "1"
+      KESAI_MAX_CONCURRENT_TASK_GROUPS: "3"
+      KESAI_MAX_API_CONCURRENT_REQUESTS: "10"
+      KESAI_API_CONCURRENCY_STATE_PATH: "/tmp/kesai_hybrid_script_generation_api_slots.json"
+      OPC_VAULT_ROOT: "/vault"
+      TZ: "Asia/Shanghai"
+    volumes:
+      - .:/app
+      - "${OPC_VAULT_ROOT:?Set OPC_VAULT_ROOT in .env}:/vault"

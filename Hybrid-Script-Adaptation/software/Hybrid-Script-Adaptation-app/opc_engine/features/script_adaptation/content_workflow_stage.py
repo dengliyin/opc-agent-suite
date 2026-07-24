@@ -216,6 +216,9 @@ def output_dir_for_stage(stage, config, anchor=""):
     if stage == "adapt":
         external_root = script_adaptation_output_root(config)
         if external_root:
+            relative_dir = Path(str(config.get("script_adaptation_output_relative_dir") or "").strip())
+            if str(relative_dir) not in {"", "."} and not relative_dir.is_absolute() and ".." not in relative_dir.parts:
+                return external_root / relative_dir
             return external_root / product_folder_from_script(config, anchor)
     if stage == "metrics":
         return product_report_dir("data_attribution", config)

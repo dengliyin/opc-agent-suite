@@ -9,11 +9,12 @@ services:
       PYTHONUNBUFFERED: "1"
       ADAPTATION_AGENT_URL: "${ADAPTATION_AGENT_URL:-http://host.docker.internal:8788}"
       OPC_VAULT_ROOT: /vault
-      SCRIPT_ROOT: /vault/wiki/视频/06产品适配后的脚本/omni
-      GROK_SCRIPT_ROOT: /vault/wiki/视频/06产品适配后的脚本/grok
+      SCRIPT_ROOT: /vault/wiki/视频/纯AI视频/04适配脚本/omni
+      GROK_SCRIPT_ROOT: /vault/wiki/视频/纯AI视频/04适配脚本/grok
       REFERENCE_ROOT: /vault/wiki/产品/产品底图
-      VIDEO_OUTPUT_ROOT: /vault/wiki/视频/10omni视频片段
-      GROK_VIDEO_OUTPUT_ROOT: /vault/wiki/视频/10grok视频片段
+      VIDEO_OUTPUT_ROOT: /vault/wiki/视频/纯AI视频/05AI片段/omni
+      GROK_VIDEO_OUTPUT_ROOT: /vault/wiki/视频/纯AI视频/05AI片段/grok
+      VIDEO_ASSEMBLY_PENDING_ROOT: /vault/wiki/视频/纯AI视频/06合成工作区
     ports:
       - "${HOST_BIND:-127.0.0.1}:${PORT:-9995}:8876"
     volumes:

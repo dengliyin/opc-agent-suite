@@ -12,7 +12,12 @@ from .config import product_slug, safe_name
 VAULT_ROOT = Path(
     os.environ.get("OPC_VAULT_ROOT", str(Path.home() / "Documents" / "Obsidian Vault"))
 ).expanduser()
-HOT_VIDEO_LIBRARY_ROOT = VAULT_ROOT / "wiki" / "视频" / "03爆款视频"
+HOT_VIDEO_LIBRARY_ROOT = Path(
+    os.environ.get(
+        "VIDEO_TEARDOWN_INPUT_ROOT",
+        str(VAULT_ROOT / "wiki" / "视频" / "纯AI视频" / "01来源素材"),
+    )
+).expanduser()
 
 
 class ProjectPaths:

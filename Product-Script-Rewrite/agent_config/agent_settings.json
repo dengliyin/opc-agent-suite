@@ -6,7 +6,7 @@
     "max_output_tokens": 32768
   },
   "paths": {
-    "hot_scripts_root": "${OPC_VAULT_ROOT}/wiki/视频/04爆款视频脚本",
+    "hot_scripts_root": "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/02参考脚本",
     "product_info_root": "${OPC_VAULT_ROOT}/wiki/产品/产品信息"
   },
   "files": {

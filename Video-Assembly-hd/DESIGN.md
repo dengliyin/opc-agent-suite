@@ -21,7 +21,7 @@ Clean commercial short-video assembly for product selling clips. The source vide
 
 - Gentle caption lift and opacity entrance.
 - Short warm wash at segment boundaries.
-- No jumpy stickers, no large title cards, no decorative cards.
+- No decorative text overlays, large title cards, or decorative cards.
 
 ## What NOT to Do
 

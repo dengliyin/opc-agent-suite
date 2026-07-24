@@ -1,0 +1,23 @@
+{
+  "_说明": "视频拆解智能体共享配置。除 API Key 和本机路径外，修改后应提交到 Git。",
+  "base_url": "https://zexapi.com",
+  "model": "gemini-3.5-flash",
+  "max_output_tokens": 32768,
+  "timeout_seconds": 240,
+  "temperature": 0.2,
+  "output_dir": "outputs",
+  "prompt_file": "config/video_teardown_prompt.md",
+  "knowledge_base_file": "config/hot_content_knowledge_base.md",
+  "output_contract_file": "references/teardown-output-contract.md",
+  "_字段说明": {
+    "base_url": "Gemini 兼容接口 Base URL。",
+    "model": "默认视频分析模型。",
+    "max_output_tokens": "单次拆解最大输出 token 数。",
+    "timeout_seconds": "单次接口请求超时时间。",
+    "temperature": "拆解任务建议低温，减少编造。",
+    "output_dir": "默认输出目录，路径相对本智能体文件夹。",
+    "prompt_file": "拆解提示词文件，路径相对本智能体文件夹。",
+    "knowledge_base_file": "爆款内容知识库文件，路径相对本智能体文件夹。",
+    "output_contract_file": "输出格式与验收标准，路径相对本智能体文件夹。"
+  }
+}
