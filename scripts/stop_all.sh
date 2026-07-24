@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${OPC_ENV_FILE:-${ROOT_DIR}/.env}"
 CONSOLE_LAUNCHD_LABEL="com.kesai.opc-console"
-AGENT_SERVICE_IDS=(collect analyze script adapt assemble finished rewrite compose)
+AGENT_SERVICE_IDS=(collect analyze script adapt assemble finished rewrite compose hybrid_adapt)
 
 if command -v launchctl >/dev/null 2>&1; then
   for service_id in "${AGENT_SERVICE_IDS[@]}"; do
@@ -34,6 +34,7 @@ urls = [
     os.getenv('OPC_FINISHED_VIDEO_MANAGER_URL', 'http://127.0.0.1:9996/'),
     os.getenv('OPC_PRODUCT_SCRIPT_REWRITE_URL', 'http://127.0.0.1:9997/'),
     os.getenv('OPC_VIDEO_ASSEMBLY_AGENT_URL', 'http://127.0.0.1:9998/'),
+    os.getenv('OPC_HYBRID_SCRIPT_ADAPTATION_AGENT_URL', 'http://127.0.0.1:9999/'),
 ]
 print(' '.join(str(urlparse(url).port) for url in urls if urlparse(url).port))
 PY

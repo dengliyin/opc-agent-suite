@@ -206,6 +206,24 @@ class CoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "36"):
             core.normalize_sticker_options({"enabled": True, "text": "字" * 37})
 
+    def test_caption_mode_script_and_language_are_normalized(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            md_path = Path(temporary) / "omni-裂变-产品-FR-demo.md"
+            md_path.write_text(
+                "# Segment 1：0 - 1\n**[音频文案]** (Voiceover, French): Bonjour\n"
+                "# Segment 2：1 - 2\n**[音频文案]** tout le monde\n",
+                encoding="utf-8",
+            )
+            script = core.caption_script_text(md_path)
+            language = core.caption_language(md_path)
+
+        self.assertEqual(core.normalize_caption_mode(None), "none")
+        self.assertEqual(core.normalize_caption_mode("karaoke"), "karaoke")
+        with self.assertRaisesRegex(ValueError, "字幕模式"):
+            core.normalize_caption_mode("classic")
+        self.assertEqual(script, "Bonjour\ntout le monde")
+        self.assertEqual(language, "fr")
+
     def test_sticker_library_loads_presets_by_product_and_country(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -317,17 +335,23 @@ class CoreTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            with patch.object(server.core, "REPORT_PATH", report_path):
+            with (
+                patch.object(server.core, "REPORT_PATH", report_path),
+                patch.object(server.core, "caption_runtime_ready", return_value=True),
+            ):
                 confirmed, selected = server.confirmed_report(
                     "current",
                     ["/one"],
                     {"enabled": True, "text": "新品上市", "style": "cinematic", "position": "center", "timing": "full"},
+                    caption_mode="karaoke",
                 )
             persisted = json.loads(report_path.read_text(encoding="utf-8"))
 
         self.assertEqual(selected[0]["sticker"]["style"], "cinematic")
+        self.assertEqual(selected[0]["caption_mode"], "karaoke")
         self.assertEqual(confirmed["items"][0]["sticker"]["text"], "新品上市")
         self.assertEqual(persisted["items"][0]["sticker"]["position"], "center")
+        self.assertEqual(persisted["items"][0]["caption_mode"], "karaoke")
         self.assertNotIn("sticker", persisted["items"][1])
 
     def test_confirmation_randomizes_distinct_sticker_texts_per_video(self) -> None:
@@ -394,6 +418,7 @@ class CoreTests(unittest.TestCase):
                                     "position": "bottom",
                                     "timing": "full",
                                 },
+                                "caption_mode": "karaoke",
                             }
                         ]
                     }
@@ -419,6 +444,46 @@ class CoreTests(unittest.TestCase):
 
         self.assertEqual(payload["items"][0]["sticker"]["text"], "限时优惠")
         self.assertEqual(payload["items"][0]["sticker"]["style"], "serif")
+        self.assertEqual(payload["items"][0]["caption_mode"], "karaoke")
+
+    def test_assemble_karaoke_renders_temporary_video_then_captions_final_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project_dir = root / "project"
+            project_dir.mkdir()
+            md_path = root / "demo.md"
+            md_path.write_text("# Segment 1：0 - 1\n**[音频文案]** Hello world\n", encoding="utf-8")
+            output_path = root / "output" / "demo.mp4"
+            item = core.ScriptItem(
+                model="omni",
+                date="2026-07-23",
+                product="产品",
+                script_dir=str(root),
+                md_path=str(md_path),
+                video_paths=[str(root / "clip.mp4")],
+                output_path=str(output_path),
+                status="missing",
+                caption_mode="karaoke",
+            )
+
+            def render(_project, path, skip_inspect=False):
+                path.write_bytes(b"uncaptioned")
+
+            def caption(input_path, final_path, script_path, _project):
+                self.assertEqual(input_path, project_dir / "uncaptioned.mp4")
+                self.assertEqual(script_path, md_path)
+                final_path.parent.mkdir(parents=True)
+                final_path.write_bytes(b"captioned")
+
+            with (
+                patch.object(core, "prepare_project", return_value=(project_dir, [{"index": 1, "actual_duration": 1.0, "target_duration": 1.0, "duration": 1.0, "action": "target_or_actual"}])),
+                patch.object(core, "run_hyperframes", side_effect=render) as renderer,
+                patch.object(core, "run_karaoke_captioner", side_effect=caption) as captioner,
+            ):
+                core.assemble_item(item, skip_existing=False)
+
+        self.assertEqual(renderer.call_args.args[1], project_dir / "uncaptioned.mp4")
+        captioner.assert_called_once()
 
     def test_ui_contract_includes_output_panel_and_modal_sticker_designer(self) -> None:
         html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
@@ -438,12 +503,14 @@ class CoreTests(unittest.TestCase):
             "stickerPositionField",
             "stickerTimingField",
             "stickerPreviewText",
+            "confirmCaptionModeLabel",
             "openOutputBtn",
             "outputs",
         ):
             self.assertIn(required, ids)
             self.assertIn(required, javascript)
         self.assertEqual(set(re.findall(r'name="stickerStyle" value="([^"]+)"', html)), set(core.STICKER_STYLES))
+        self.assertEqual(set(re.findall(r'name="captionMode" value="([^"]+)"', html)), set(core.CAPTION_MODES))
         for style in core.STICKER_STYLES:
             preview = re.search(rf"\.stickerPreviewText\.preview-{style} \{{([^}}]+)\}}", css).group(1)
             self.assertNotIn("background:", preview)

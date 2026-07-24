@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import tempfile
 from unittest import mock
 import unittest
 from pathlib import Path
@@ -28,8 +29,8 @@ class ConsoleBoundaryTests(unittest.TestCase):
         self.assertEqual(self.app.ROOT, CONSOLE_ROOT)
         self.assertEqual(self.app.WORKSPACE_ROOT, WORKSPACE_ROOT)
 
-    def test_console_orchestrates_exactly_eight_agents(self):
-        self.assertEqual(len(self.app.SERVICES), 8)
+    def test_console_orchestrates_exactly_nine_agents(self):
+        self.assertEqual(len(self.app.SERVICES), 9)
         self.assertEqual(set(self.app.ROUTE_TO_SERVICE.values()), set(self.app.SERVICES))
 
     def test_every_service_runs_from_its_agent_directory(self):
@@ -69,6 +70,105 @@ class ConsoleBoundaryTests(unittest.TestCase):
         self.assertIn("await waitForService(id)", html)
         self.assertIn("Agent 启动超时", html)
 
+    def test_console_groups_agents_into_three_workflow_lines(self):
+        html = self.app.INDEX_HTML
+
+        self.assertIn("线路 1 · 爆款复刻", html)
+        self.assertIn("线路 2 · 产品脚本改写", html)
+        self.assertIn("线路 3 · AI＋实拍混剪", html)
+        self.assertIn("统一归口 · 成品管理与发布", html)
+        self.assertIn("steps:['collect','analyze','script','adapt','assemble','compose']", html)
+        self.assertIn("steps:['rewrite','script','adapt','assemble','compose']", html)
+
+    def test_agent_cards_do_not_render_descriptions(self):
+        self.assertNotIn('<p class="desc">', self.app.INDEX_HTML)
+
+    def test_agent_cards_use_equal_dimensions(self):
+        html = self.app.INDEX_HTML
+
+        self.assertIn("grid-template-columns:repeat(6,minmax(0,1fr))", html)
+        self.assertIn(".card{display:flex;flex-direction:column;height:160px", html)
+        self.assertIn(".destination .card{width:calc((100% - 50px)/6)", html)
+
+    def test_future_hybrid_mix_agent_is_a_display_only_placeholder(self):
+        html = self.app.INDEX_HTML
+
+        self.assertIn("'hybrid_adapt'", html)
+        self.assertIn("port:'10000',label:'AI＋实拍混剪'", html)
+        self.assertIn("暂未接入", html)
+        self.assertEqual(len(self.app.SERVICES), 9)
+        service_urls = [str(service.get("url", "")) for service in self.app.SERVICES.values()]
+        self.assertTrue(any(":9999" in url for url in service_urls))
+        self.assertFalse(any(":10000" in url for url in service_urls))
+
+    def test_console_exposes_global_path_settings_page(self):
+        self.assertIn('href="/settings/paths"', self.app.INDEX_HTML)
+        self.assertIn("全局路径设置", self.app.PATH_SETTINGS_HTML)
+        self.assertIn("/api/global-paths", self.app.PATH_SETTINGS_HTML)
+        group_labels = {group["label"] for group in self.app.GLOBAL_PATH_GROUPS}
+        self.assertIn("9992 · 脚本解析", group_labels)
+        self.assertIn("9995 · 片段产出", group_labels)
+        self.assertIn("9998 · 片段合成", group_labels)
+        self.assertIn("其他 Agent", self.app.PATH_SETTINGS_HTML)
+
+    def test_global_paths_are_read_from_current_env_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_file = Path(temp_dir) / ".env"
+            env_file.write_text(
+                'OPC_VAULT_ROOT="/tmp/opc vault"\n'
+                'SCRIPT_ROOT="${OPC_VAULT_ROOT}/scripts"\n',
+                encoding="utf-8",
+            )
+
+            payload = self.app.global_paths_payload(env_file)
+            settings = {item["key"]: item for item in payload["paths"]}
+
+        self.assertEqual(settings["OPC_VAULT_ROOT"]["value"], "/tmp/opc vault")
+        self.assertEqual(settings["SCRIPT_ROOT"]["value"], "${OPC_VAULT_ROOT}/scripts")
+        self.assertEqual(settings["SCRIPT_ROOT"]["resolved"], "/tmp/opc vault/scripts")
+        self.assertEqual(settings["OPC_VAULT_ROOT"]["group"], "shared")
+        self.assertEqual(settings["SCRIPT_ROOT"]["group"], "9995")
+        self.assertEqual(settings["VIDEO_TEARDOWN_INPUT_ROOT"]["group"], "9992")
+        self.assertEqual(
+            settings["VIDEO_TEARDOWN_INPUT_ROOT"]["resolved"],
+            "/tmp/opc vault/wiki/视频/03爆款视频",
+        )
+
+    def test_saving_global_paths_preserves_non_path_env_values(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_file = Path(temp_dir) / ".env"
+            env_file.write_text(
+                'OPC_VAULT_ROOT="/old"\n'
+                'SCRIPT_ROOT="${OPC_VAULT_ROOT}/scripts"\n'
+                'MODELMESH_API_KEY="keep-me"\n',
+                encoding="utf-8",
+            )
+
+            payload = self.app.save_global_paths(
+                {
+                    "OPC_VAULT_ROOT": "/new vault",
+                    "SCRIPT_ROOT": "${OPC_VAULT_ROOT}/new scripts",
+                },
+                env_file,
+            )
+            saved = env_file.read_text(encoding="utf-8")
+
+        self.assertIn('MODELMESH_API_KEY="keep-me"', saved)
+        self.assertIn('OPC_VAULT_ROOT="/new vault"', saved)
+        self.assertIn('SCRIPT_ROOT="${OPC_VAULT_ROOT}/new scripts"', saved)
+        settings = {item["key"]: item for item in payload["paths"]}
+        self.assertEqual(settings["SCRIPT_ROOT"]["resolved"], "/new vault/new scripts")
+
+    def test_global_path_save_rejects_relative_and_unknown_paths(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_file = Path(temp_dir) / ".env"
+            env_file.write_text('OPC_VAULT_ROOT="/old"\n', encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "绝对路径"):
+                self.app.save_global_paths({"OPC_VAULT_ROOT": "relative/path"}, env_file)
+            with self.assertRaisesRegex(ValueError, "未知路径配置"):
+                self.app.save_global_paths({"UNSUPPORTED_PATH": "/tmp"}, env_file)
+
     def test_start_service_bootstraps_an_unregistered_launch_agent(self):
         with (
             mock.patch.object(self.app, "service_running", return_value=False),
@@ -100,6 +200,7 @@ class ConsoleBoundaryTests(unittest.TestCase):
             "Script-Analysis",
             "Script-Generation",
             "Script-Adaptation",
+            "Hybrid-Script-Adaptation",
             "Video-Generation",
             "Finished-Video-Manager",
             "Product-Script-Rewrite",
@@ -115,6 +216,14 @@ class ConsoleBoundaryTests(unittest.TestCase):
         command = self.app.SERVICES["script"]["command"]
         expected = WORKSPACE_ROOT / "Script-Generation" / ".venv" / "bin" / "python"
         self.assertEqual(Path(command[0]), expected)
+
+    def test_hybrid_adaptation_agent_uses_its_independent_environment(self):
+        service = self.app.SERVICES["hybrid_adapt"]
+        expected = WORKSPACE_ROOT / "Hybrid-Script-Adaptation" / ".venv" / "bin" / "python"
+
+        self.assertEqual(Path(service["command"][0]), expected)
+        self.assertEqual(service["cwd"], WORKSPACE_ROOT / "Hybrid-Script-Adaptation")
+        self.assertEqual(service["url"], "http://127.0.0.1:9999/")
 
     def test_double_click_launcher_bootstraps_missing_environment(self):
         launcher = (WORKSPACE_ROOT / "启动OPC集合控制台.command").read_text(encoding="utf-8")

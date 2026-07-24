@@ -57,6 +57,7 @@ COMPONENTS=(
   "Script-Analysis"
   "Script-Generation"
   "Script-Adaptation"
+  "Hybrid-Script-Adaptation"
   "Video-Generation"
   "Finished-Video-Manager"
   "Product-Script-Rewrite"

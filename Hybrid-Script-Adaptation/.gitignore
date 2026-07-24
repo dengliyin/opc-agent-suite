@@ -1,0 +1,23 @@
+# Local OS/editor files
+.DS_Store
+*.swp
+*.tmp
+
+# Python runtime
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Runtime outputs and private config
+software/Hybrid-Script-Adaptation-app/projects/
+software/Hybrid-Script-Adaptation-app/outputs/
+software/Hybrid-Script-Adaptation-app/app_config.json
+software/Hybrid-Script-Adaptation-app/fastmoss_config.json
+software/Hybrid-Script-Adaptation-app/**/agent_secrets.local.json
+software/Hybrid-Script-Adaptation-app/**/backups/
+software/Hybrid-Script-Adaptation-app/**/*.bak
+software/Hybrid-Script-Adaptation-app/**/*.bak_*
+
+# Local logs
+*.log

@@ -49,13 +49,29 @@ class Image2Client:
                     if progress:
                         progress(f"调用图片模型 {model}，第 {attempt}/{attempts} 次尝试，prompt {len(normalized_prompt)} 字符")
                     try:
-                        if progress:
-                            progress("请求 /v1/images/generations（纯文生图）")
-                        body = self._post_generations_json(client, headers, model, normalized_prompt, [])
-                        image_bytes = _extract_image_bytes(client, body)
+                        if _is_async_gpt_image_model(model):
+                            body, image_bytes = self._generate_async_image(
+                                client,
+                                headers,
+                                model,
+                                normalized_prompt,
+                                [],
+                                progress,
+                            )
+                        else:
+                            if progress:
+                                progress("请求 /v1/images/generations（纯文生图）")
+                            body = self._post_generations_json(client, headers, model, normalized_prompt, [])
+                            image_bytes = _extract_image_bytes(client, body)
                         ensure_parent(output_path)
                         output_path.write_bytes(image_bytes)
-                        return {"path": str(output_path), "model": model, "response_keys": sorted(body.keys()), "attempt": attempt}
+                        return {
+                            "path": str(output_path),
+                            "model": model,
+                            "task_id": body.get("id"),
+                            "response_keys": sorted(body.keys()),
+                            "attempt": attempt,
+                        }
                     except httpx.HTTPStatusError as exc:
                         last_error = exc
                         if _is_model_unavailable_error(exc) and model_index < len(candidates) - 1:
@@ -77,8 +93,16 @@ class Image2Client:
                         if progress:
                             progress(f"图片接口网络/超时错误，{delay:.0f}s 后重试")
                         time.sleep(delay)
+                    except ApiError as exc:
+                        last_error = exc
+                        if attempt >= attempts:
+                            raise
+                        delay = self.settings.image_retry_base_seconds * attempt
+                        if progress:
+                            progress(f"异步图片任务失败，{delay:.0f}s 后重新提交：{exc}")
+                        time.sleep(delay)
 
-        raise ApiError(f"image2 调用失败：{last_error}")
+        raise ApiError(f"图片生成调用失败：{last_error}")
 
     def generate_with_references(
         self,
@@ -90,7 +114,7 @@ class Image2Client:
         if not self.settings.otu_api_key:
             raise ApiError("OTU_API_KEY 未配置")
         if not image_paths:
-            raise ApiError("image2 调用缺少参考图")
+            raise ApiError("图片生成调用缺少参考图")
 
         headers = {"Authorization": f"Bearer {self.settings.otu_api_key}"}
         attempts = max(1, self.settings.image_retry_attempts)
@@ -117,22 +141,38 @@ class Image2Client:
                             if progress:
                                 summary = "，".join(_describe_file(path) for path in upload_paths)
                                 progress(f"上传参考图：{summary}")
-                            try:
-                                if progress:
-                                    progress("请求 /v1/images/generations")
-                                body = self._post_generations_json(client, headers, model, normalized_prompt, upload_paths)
-                            except httpx.HTTPStatusError as exc:
-                                if _is_model_unavailable_error(exc):
-                                    raise
-                                if exc.response.status_code not in {400, 404, 405, 415, 422}:
-                                    raise
-                                if progress:
-                                    progress(f"generations 不接受该请求({exc.response.status_code})，fallback 到 /v1/images/edits")
-                                body = self._post_edits_multipart(client, headers, model, normalized_prompt, upload_paths)
-                        image_bytes = _extract_image_bytes(client, body)
+                            if _is_async_gpt_image_model(model):
+                                body, image_bytes = self._generate_async_image(
+                                    client,
+                                    headers,
+                                    model,
+                                    normalized_prompt,
+                                    upload_paths,
+                                    progress,
+                                )
+                            else:
+                                try:
+                                    if progress:
+                                        progress("请求 /v1/images/generations")
+                                    body = self._post_generations_json(client, headers, model, normalized_prompt, upload_paths)
+                                except httpx.HTTPStatusError as exc:
+                                    if _is_model_unavailable_error(exc):
+                                        raise
+                                    if exc.response.status_code not in {400, 404, 405, 415, 422}:
+                                        raise
+                                    if progress:
+                                        progress(f"generations 不接受该请求({exc.response.status_code})，fallback 到 /v1/images/edits")
+                                    body = self._post_edits_multipart(client, headers, model, normalized_prompt, upload_paths)
+                                image_bytes = _extract_image_bytes(client, body)
                         ensure_parent(output_path)
                         output_path.write_bytes(image_bytes)
-                        return {"path": str(output_path), "model": model, "response_keys": sorted(body.keys()), "attempt": attempt}
+                        return {
+                            "path": str(output_path),
+                            "model": model,
+                            "task_id": body.get("id"),
+                            "response_keys": sorted(body.keys()),
+                            "attempt": attempt,
+                        }
                     except httpx.HTTPStatusError as exc:
                         last_error = exc
                         if _is_model_unavailable_error(exc) and model_index < len(candidates) - 1:
@@ -154,8 +194,95 @@ class Image2Client:
                         if progress:
                             progress(f"图片接口网络/超时错误，{delay:.0f}s 后重试")
                         time.sleep(delay)
+                    except ApiError as exc:
+                        last_error = exc
+                        if attempt >= attempts:
+                            raise
+                        delay = self.settings.image_retry_base_seconds * attempt
+                        if progress:
+                            progress(f"异步图片任务失败，{delay:.0f}s 后重新提交：{exc}")
+                        time.sleep(delay)
 
-        raise ApiError(f"image2 调用失败：{last_error}")
+        raise ApiError(f"图片生成调用失败：{last_error}")
+
+    def _generate_async_image(
+        self,
+        client: httpx.Client,
+        headers: Dict[str, str],
+        model: str,
+        prompt: str,
+        image_paths: List[Path],
+        progress: Optional[Callable[[str], None]],
+    ) -> tuple[Dict[str, Any], bytes]:
+        payload: Dict[str, Any] = {
+            "model": model,
+            "prompt": prompt,
+            "size": self.settings.image_size,
+        }
+        if image_paths:
+            payload["images"] = [_image_to_data_uri(path) for path in image_paths[:8]]
+        if progress:
+            mode = f"图生图，参考图 {len(image_paths[:8])} 张" if image_paths else "纯文生图"
+            progress(f"提交 /v1/videos 异步图片任务（{mode}）")
+        response = client.post(self.settings.video_url, headers=headers, json=payload)
+        response.raise_for_status()
+        completed = self._wait_for_async_image(client, headers, response.json(), progress)
+        image_url = completed.get("url")
+        if not image_url:
+            raise ApiError(f"gpt-image-2 任务完成但未返回 url：{json.dumps(completed, ensure_ascii=False)[:500]}")
+        if progress:
+            progress(f"异步图片任务 {completed.get('id') or ''} 已完成，下载结果")
+        image_response = client.get(image_url, follow_redirects=True, timeout=900.0)
+        try:
+            image_response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise ApiError(_format_http_status_error("gpt-image-2 图片下载失败", exc)) from exc
+        return completed, image_response.content
+
+    def _wait_for_async_image(
+        self,
+        client: httpx.Client,
+        headers: Dict[str, str],
+        task: Dict[str, Any],
+        progress: Optional[Callable[[str], None]],
+    ) -> Dict[str, Any]:
+        task_id = task.get("id")
+        if not task_id:
+            raise ApiError(f"gpt-image-2 未返回任务 ID：{json.dumps(task, ensure_ascii=False)[:500]}")
+
+        latest = task
+        deadline = time.monotonic() + self.settings.image_timeout_seconds
+        last_reported_status = ""
+        last_reported_at = 0.0
+        status_url = f"{self.settings.video_url.rstrip('/')}/{task_id}"
+        while time.monotonic() < deadline:
+            status = str(latest.get("status") or "").lower()
+            if status == "completed":
+                return latest
+            if status == "failed":
+                error_payload = latest.get("error", latest)
+                raise ApiError(f"gpt-image-2 任务失败：{json.dumps(error_payload, ensure_ascii=False)}")
+            now = time.monotonic()
+            if progress and (status != last_reported_status or now - last_reported_at >= 30):
+                progress(f"异步图片任务 {task_id} 状态：{status or 'unknown'}，进度 {latest.get('progress', 0)}%")
+                last_reported_status = status
+                last_reported_at = now
+            time.sleep(self.settings.image_poll_interval_seconds)
+            try:
+                response = client.get(status_url, headers=headers)
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                if not _is_retryable_status(exc.response.status_code):
+                    raise ApiError(_format_http_status_error("gpt-image-2 轮询失败", exc)) from exc
+                if progress:
+                    progress(f"异步图片轮询临时返回 HTTP {exc.response.status_code}，继续等待任务 {task_id}")
+                continue
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                if progress:
+                    progress(f"异步图片轮询网络/超时错误，继续等待任务 {task_id}：{exc}")
+                continue
+            latest = response.json()
+        raise ApiError(f"gpt-image-2 任务超时：{task_id}")
 
     def _post_generations_json(
         self,
@@ -705,6 +832,10 @@ def _extract_image_bytes(client: httpx.Client, body: Dict[str, Any]) -> bytes:
         return response.content
 
     raise ApiError(f"image2 响应缺少 b64_json/url：{json.dumps(first, ensure_ascii=False)[:500]}")
+
+
+def _is_async_gpt_image_model(model: str) -> bool:
+    return str(model).lower() in {"gpt-image-2", "gpt-image-2-2k", "gpt-image-2-4k"}
 
 
 def _decode_base64_image(value: str) -> bytes:

@@ -27,7 +27,8 @@ source "$ENV_FILE"
 set +a
 PORT="${KESAI_APP_PORT:-8888}"
 
-if [ ! -f "$HOME/Library/LaunchAgents/com.kesai.opc-agent.collect.plist" ]; then
+if [ ! -f "$HOME/Library/LaunchAgents/com.kesai.opc-agent.collect.plist" ] || \
+   [ ! -f "$HOME/Library/LaunchAgents/com.kesai.opc-agent.hybrid_adapt.plist" ]; then
   "$ROOT_DIR/scripts/install_agent_launchagents.sh"
 fi
 

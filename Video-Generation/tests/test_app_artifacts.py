@@ -4,7 +4,14 @@ import pytest
 from fastapi import HTTPException
 
 from agent import app as app_module
-from agent.app import ArtifactDeleteRequest, ScriptDeleteRequest, _delete_artifact, _delete_scripts
+from agent.app import (
+    ArtifactDeleteRequest,
+    ScriptDeleteRequest,
+    _api_summary_payload,
+    _delete_artifact,
+    _delete_scripts,
+    _function_api_model_options,
+)
 from agent.config import Settings
 from agent.files import character_image_path, storyboard_image_path, video_output_path
 from agent.product_lock import storyboard_meta_path
@@ -127,3 +134,17 @@ def test_delete_scripts_rejects_script_in_active_job(monkeypatch, tmp_path: Path
     assert exc.value.status_code == 409
     assert script.exists()
     assert all(path.exists() for path in assets)
+
+
+def test_otu_image_ui_only_exposes_async_gpt_image_2() -> None:
+    summary = _api_summary_payload()
+    otu_models = next(item["models"] for item in summary["api_inventory"] if item["api"] == "OTU API")
+    image_models = [item for item in otu_models if "图片" in item["role"]]
+
+    assert summary["endpoint_count"] == 7
+    assert [item["name"] for item in image_models] == ["gpt-image-2 / gpt-image-2-2K / gpt-image-2-4K"]
+    assert image_models[0]["endpoints"] == ["/v1/videos", "/v1/videos/{task_id}"]
+
+    options = _function_api_model_options("characters", "otu:gpt-image-2-4K")
+    otu_values = [item["value"] for item in options if item["value"].startswith("otu:")]
+    assert otu_values == ["otu:gpt-image-2-4K"]
