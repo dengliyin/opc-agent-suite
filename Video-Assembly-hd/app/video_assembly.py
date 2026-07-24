@@ -398,8 +398,11 @@ def normalize_caption_mode(value: object) -> str:
 
 def caption_script_text(md_path: Path) -> str:
     lines = []
-    for segment in parse_segments(md_path):
-        text = re.sub(r"^\s*\([^)]*\)\s*[:：]\s*", "", segment.audio_text).strip()
+    source = md_path.read_text(encoding="utf-8")
+    for raw_text in re.findall(r"\*\*\[音频文案\]\*\*\s*[:：]?\s*([^\n]+)", source):
+        text = raw_text.strip().strip('"')
+        text = re.sub(r"^\s*(?:\([^)]*\)|（[^）]*）)\s*[:：]?\s*", "", text)
+        text = text.lstrip(":： ").strip()
         if text:
             lines.append(text)
     return "\n".join(lines)
@@ -457,6 +460,15 @@ def run_karaoke_captioner(input_path: Path, output_path: Path, md_path: Path, pr
     proc = run(command, cwd=CAPTION_TOOL_ROOT, env=env)
     if proc.returncode != 0:
         raise RuntimeError(f"TikTok 卡拉 OK 字幕生成失败\n{proc.stdout}")
+    whisper_path = caption_dir / f"{input_path.stem}-whisper.json"
+    if script_text and whisper_path.is_file():
+        whisper = json.loads(whisper_path.read_text(encoding="utf-8"))
+        observed_words = sum(len(segment.get("words") or []) for segment in whisper.get("segments", []))
+        expected_words = len(script_text.split())
+        if observed_words < max(2, expected_words // 4):
+            proc = run(command[:-2], cwd=CAPTION_TOOL_ROOT, env=env)
+            if proc.returncode != 0:
+                raise RuntimeError(f"TikTok 卡拉 OK 字幕无脚本重试失败\n{proc.stdout}")
     captioned = caption_dir / output_path.name
     if not captioned.is_file() or captioned.stat().st_size <= 0:
         raise RuntimeError(f"字幕工具未生成有效成品：{captioned}")
