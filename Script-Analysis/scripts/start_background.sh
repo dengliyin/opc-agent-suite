@@ -8,6 +8,9 @@ OUT_LOG="$PROJECT_DIR/logs/web_app.out.log"
 ERR_LOG="$PROJECT_DIR/logs/web_app.err.log"
 SESSION_NAME="Script-Analysis-app"
 PYTHON_BIN="${PYTHON_BIN:-${PROJECT_DIR}/.venv/bin/python}"
+LABEL="com.kesai.opc-agent.analyze"
+DOMAIN="gui/$(id -u)"
+PLIST_PATH="$HOME/Library/LaunchAgents/$LABEL.plist"
 
 if [ ! -x "$PYTHON_BIN" ]; then
   PYTHON_BIN="$(command -v python3)"
@@ -30,43 +33,45 @@ listener_pid() {
   lsof -tiTCP:9992 -sTCP:LISTEN 2>/dev/null | head -n 1 || true
 }
 
+# Remove the legacy screen watchdog so launchd is the only process manager.
+legacy_session=""
+if command -v screen >/dev/null 2>&1; then
+  legacy_session="$(screen -list 2>/dev/null | awk -v name="$SESSION_NAME" '$1 ~ ("[.]" name "$") { print $1; exit }')"
+fi
+if [[ -n "$legacy_session" ]]; then
+  legacy_listener="$(listener_pid)"
+  legacy_pgid=""
+  if [[ -n "$legacy_listener" ]]; then
+    legacy_pgid="$(ps -o pgid= -p "$legacy_listener" 2>/dev/null | tr -d '[:space:]')"
+  fi
+  screen -S "$legacy_session" -X quit >/dev/null 2>&1 || true
+  for _ in $(seq 1 20); do
+    [[ -z "$(listener_pid)" ]] && break
+    sleep 0.2
+  done
+  if [[ -n "$legacy_listener" ]] && kill -0 "$legacy_listener" 2>/dev/null; then
+    if [[ -n "$legacy_pgid" ]]; then
+      kill -TERM -- "-$legacy_pgid" 2>/dev/null || true
+    else
+      kill -TERM "$legacy_listener" 2>/dev/null || true
+    fi
+  fi
+fi
+
 if command -v xattr >/dev/null 2>&1; then
   xattr -dr com.apple.quarantine "$PROJECT_DIR" 2>/dev/null || true
 fi
 
-if ready; then
-  pid="$(listener_pid)"
-  if [[ -n "$pid" ]]; then
-    echo "$pid" > "$PID_FILE"
-  fi
-  echo "Web 服务已在运行: $APP_URL"
-  open "$APP_URL" >/dev/null 2>&1 || true
-  exit 0
-fi
-
-if pid="$(listener_pid)" && [[ -n "$pid" ]]; then
-  echo "端口 9992 已被其他程序占用，PID: $pid"
-  lsof -nP -iTCP:9992 -sTCP:LISTEN || true
+if [[ ! -f "$PLIST_PATH" ]]; then
+  echo "缺少 LaunchAgent：$PLIST_PATH" >&2
+  echo "请先运行项目根目录 scripts/install_agent_launchagents.sh。" >&2
   exit 1
 fi
 
-cd "$PROJECT_DIR"
-if command -v screen >/dev/null 2>&1; then
-  screen -S "$SESSION_NAME" -X quit >/dev/null 2>&1 || true
-  screen -dmS "$SESSION_NAME" /bin/bash -lc "
-cd '$PROJECT_DIR'
-while true; do
-  echo \"[\$(date '+%Y-%m-%d %H:%M:%S')] start web_app.py\" >> '$OUT_LOG'
-  '$PYTHON_BIN' '$PROJECT_DIR/scripts/web_app.py' --host 127.0.0.1 --port 9992 >> '$OUT_LOG' 2>> '$ERR_LOG'
-  code=\$?
-  echo \"[\$(date '+%Y-%m-%d %H:%M:%S')] web_app.py exited with code \$code; restart in 2s\" >> '$ERR_LOG'
-  sleep 2
-done
-"
-else
-  echo "系统缺少 screen，无法创建稳定后台会话。"
-  exit 1
+if ! launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
+  launchctl bootstrap "$DOMAIN" "$PLIST_PATH"
 fi
+launchctl kickstart -k "$DOMAIN/$LABEL"
 
 for _ in $(seq 1 30); do
   if ready; then
@@ -76,8 +81,8 @@ for _ in $(seq 1 30); do
     fi
     echo "Web 服务已启动: $APP_URL"
     echo "PID: $pid"
-    echo "screen 会话: $SESSION_NAME"
-    echo "日志: $OUT_LOG / $ERR_LOG"
+    echo "LaunchAgent: $LABEL"
+    echo "日志: $HOME/Library/Logs/OPC-Agent-Suite/analyze.log"
     open "$APP_URL" >/dev/null 2>&1 || true
     exit 0
   fi
