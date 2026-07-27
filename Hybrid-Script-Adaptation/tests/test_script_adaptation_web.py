@@ -6,10 +6,11 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-
 APP_ROOT = Path(__file__).parents[1] / "software/Hybrid-Script-Adaptation-app"
 MODULE_PATH = APP_ROOT / "opc_engine/features/script_adaptation/script_adaptation_agent_web.py"
 sys.path.insert(0, str(APP_ROOT))
+from opc_engine.features.script_adaptation import script_adaptation_agent as agent
+
 SPEC = importlib.util.spec_from_file_location("script_adaptation_agent_web", MODULE_PATH)
 assert SPEC and SPEC.loader
 web = importlib.util.module_from_spec(SPEC)
@@ -43,6 +44,18 @@ def test_status_record_uses_preloaded_log_without_reading_directory(monkeypatch,
 
 
 class HybridAgentConfigurationTests(unittest.TestCase):
+    def test_vault_root_is_detected_when_process_environment_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            vault_root = Path(temp_dir) / "Obsidian Vault"
+            (vault_root / "wiki/视频/AI实拍混剪").mkdir(parents=True)
+            with patch.dict(agent.os.environ, {}, clear=True), patch.object(
+                agent,
+                "VAULT_ROOT_CANDIDATES",
+                (vault_root,),
+            ):
+                agent.ensure_vault_root_environment()
+                self.assertEqual(agent.os.environ["OPC_VAULT_ROOT"], str(vault_root))
+
     def test_hybrid_agent_has_independent_identity_and_default_paths(self) -> None:
         settings_path = (
             Path(__file__).parents[1]
@@ -116,3 +129,57 @@ class HybridAgentConfigurationTests(unittest.TestCase):
                 output_dir,
                 output_root.resolve() / "混剪-钩子" / "产品A" / "来源脚本A",
             )
+
+    def test_fixed_duration_models_receive_exact_black_silent_padding_plan(self) -> None:
+        source_text = "### 镜头 1 (00:00.000 - 00:07.500)\n\n* **[做什么动作]** 保持原动作。\n"
+
+        omni_note = web.workflow.fixed_duration_padding_note(source_text, "omni", 10)
+        veo_note = web.workflow.fixed_duration_padding_note(source_text, "veo", 8)
+        grok_note = web.workflow.fixed_duration_padding_note(source_text, "grok", 30)
+
+        self.assertIn("- 本段有效内容时长：7.500秒", omni_note)
+        self.assertIn("- 技术占位时长：2.500秒", omni_note)
+        self.assertIn("- 模型片段时长：10.000秒", omni_note)
+        self.assertIn("- 技术占位时长：0.500秒", veo_note)
+        self.assertEqual(grok_note, "")
+
+    def test_padding_validation_rejects_missing_or_incorrect_machine_fields(self) -> None:
+        source_text = "### 镜头 1 (00:00.000 - 00:07.500)\n"
+        valid_padding = """
+- 原脚本总时长：7.500秒
+- 本段有效内容时长：7.500秒
+- 有效内容结束：7.500秒
+- 技术占位开始：7.500秒
+- 技术占位时长：2.500秒
+- 模型片段时长：10.000秒
+[TECHNICAL_PADDING: BLACK_SILENT]
+技术占位为纯黑画面、完全静音、无人物、无产品、无字幕、无贴纸、无动作、无转场内容。
+"""
+
+        self.assertEqual(
+            web.fixed_duration_padding_issues(valid_padding, source_text, "omni", 10),
+            [],
+        )
+        issues = web.fixed_duration_padding_issues(
+            valid_padding.replace("2.500秒", "3.000秒", 1),
+            source_text,
+            "omni",
+            10,
+        )
+        self.assertTrue(any("技术占位时长应为 2.500秒" in issue for issue in issues))
+
+    def test_no_padding_is_allowed_when_source_exactly_fills_segment(self) -> None:
+        source_text = "### 镜头 1 (00:00.000 - 00:10.000)\n"
+
+        self.assertEqual(
+            web.fixed_duration_padding_issues("", source_text, "omni", 10),
+            [],
+        )
+        self.assertTrue(
+            web.fixed_duration_padding_issues(
+                "[TECHNICAL_PADDING: BLACK_SILENT]",
+                source_text,
+                "omni",
+                10,
+            )
+        )

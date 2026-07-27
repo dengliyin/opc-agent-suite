@@ -332,16 +332,21 @@ def normalize_caption_mode(value: object) -> str:
     return mode
 
 
-def caption_script_text(md_path: Path) -> str:
-    lines = []
+def caption_has_no_speech(md_path: Path) -> bool:
+    audio_texts = []
     source = md_path.read_text(encoding="utf-8")
     for raw_text in re.findall(r"\*\*\[音频文案\]\*\*\s*[:：]?\s*([^\n]+)", source):
         text = raw_text.strip().strip('"')
         text = re.sub(r"^\s*(?:\([^)]*\)|（[^）]*）)\s*[:：]?\s*", "", text)
         text = text.lstrip(":： ").strip()
         if text:
-            lines.append(text)
-    return "\n".join(lines)
+            audio_texts.append(text)
+    return bool(audio_texts) and all(
+        ("无人物口播" in text or "无口播" in text)
+        and "无旁白" in text
+        and "无对白" in text
+        for text in audio_texts
+    )
 
 
 def caption_language(md_path: Path) -> str:
@@ -361,14 +366,15 @@ def caption_runtime_ready() -> bool:
 
 
 def run_karaoke_captioner(input_path: Path, output_path: Path, md_path: Path, project_dir: Path) -> None:
+    if caption_has_no_speech(md_path):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(input_path, output_path)
+        verify_finished_output(output_path)
+        return
     if not caption_runtime_ready():
         raise RuntimeError("TikTok 卡拉 OK 字幕运行依赖不完整")
     caption_dir = project_dir / "captions"
     caption_dir.mkdir(parents=True, exist_ok=True)
-    script_text = caption_script_text(md_path)
-    script_path = caption_dir / "caption-script.txt"
-    if script_text:
-        script_path.write_text(script_text, encoding="utf-8")
     command = [
         sys.executable,
         str(CAPTION_TOOL_PATH),
@@ -385,8 +391,6 @@ def run_karaoke_captioner(input_path: Path, output_path: Path, md_path: Path, pr
         "--out-name",
         output_path.name,
     ]
-    if script_text:
-        command.extend(["--script-file", str(script_path)])
     env = runtime_env()
     env.pop("DEEPGRAM_API_KEY", None)
     env["UV_CACHE_DIR"] = str(RUNTIME_ROOT / "cache" / "uv")
@@ -396,15 +400,6 @@ def run_karaoke_captioner(input_path: Path, output_path: Path, md_path: Path, pr
     proc = run(command, cwd=CAPTION_TOOL_ROOT, env=env)
     if proc.returncode != 0:
         raise RuntimeError(f"TikTok 卡拉 OK 字幕生成失败\n{proc.stdout}")
-    whisper_path = caption_dir / f"{input_path.stem}-whisper.json"
-    if script_text and whisper_path.is_file():
-        whisper = json.loads(whisper_path.read_text(encoding="utf-8"))
-        observed_words = sum(len(segment.get("words") or []) for segment in whisper.get("segments", []))
-        expected_words = len(script_text.split())
-        if observed_words < max(2, expected_words // 4):
-            proc = run(command[:-2], cwd=CAPTION_TOOL_ROOT, env=env)
-            if proc.returncode != 0:
-                raise RuntimeError(f"TikTok 卡拉 OK 字幕无脚本重试失败\n{proc.stdout}")
     captioned = caption_dir / output_path.name
     if not captioned.is_file() or captioned.stat().st_size <= 0:
         raise RuntimeError(f"字幕工具未生成有效成品：{captioned}")

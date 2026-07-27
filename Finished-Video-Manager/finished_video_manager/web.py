@@ -148,12 +148,17 @@ def save_publish_records(records: list[dict[str, Any]]) -> None:
 
 
 def parse_bitbrowser_profile_name(name: str) -> dict[str, str]:
-    parts = [part.strip() for part in str(name or "").split("-", 4)]
+    raw_name = str(name or "").strip()
+    parts = [part.strip() for part in raw_name.split("-", 4)]
     country = parts[0].upper() if len(parts) > 0 else ""
     shop_name = parts[1] if len(parts) > 1 else ""
     shop_type = parts[2] if len(parts) > 2 else ""
     account_type = parts[3] if len(parts) > 3 else ""
     account_name = parts[4] if len(parts) > 4 else ""
+    if country not in COUNTRY_NAMES and ("美区" in raw_name or "美国" in raw_name):
+        country = "US"
+        if len(parts) == 1:
+            shop_name = raw_name
     store_name = "-".join(part for part in [shop_name, shop_type] if part)
     return {
         "country": country,
@@ -1324,6 +1329,7 @@ def append_publish_record(
     ai_generated: bool,
     visibility: str,
     publish_mode: str = "auto",
+    attach_product: bool = True,
 ) -> dict[str, Any]:
     records = load_publish_records()
     config = load_publish_config()
@@ -1355,6 +1361,7 @@ def append_publish_record(
         "store_name": account.get("store_name", ""),
         "account_type": account.get("account_type", ""),
         "product_id": product_id,
+        "attach_product": attach_product,
         "publish_mode": publish_mode,
         "ai_generated": ai_generated,
         "visibility": visibility,
@@ -1374,6 +1381,7 @@ def publish_tiktok_video(
     ai_generated: bool = True,
     visibility: str = "public",
     execution_mode: str = "visible",
+    attach_product: bool = True,
 ) -> dict[str, Any]:
     if visibility != "public":
         raise ValueError("当前脚本只允许发布为所有人可见")
@@ -1410,7 +1418,11 @@ def publish_tiktok_video(
         hashtags = re.findall(r"(?<!\S)#[^\s#]+", caption)
         if caption_input and not tiktok_hashtags_are_mentions(caption_input, hashtags):
             raise RuntimeError("发布文案中的标签没有全部选择为 TikTok hashtag，停止发布")
-        product_result = add_tiktok_product_link(page, product_id, product_short_name)
+        product_result = (
+            add_tiktok_product_link(page, product_id, product_short_name)
+            if attach_product
+            else {"product_linked": False}
+        )
         if ai_generated and not set_tiktok_ai_label(page, True):
             raise RuntimeError("AI 标识未确认开启，停止发布")
         if not ensure_tiktok_public_visibility(page):
@@ -1418,7 +1430,15 @@ def publish_tiktok_video(
         if not wait_for_tiktok_upload_complete(page):
             raise RuntimeError("视频在 180 秒内没有确认上传完成，停止发布")
         publish_result = click_tiktok_publish_button(page)
-        record = append_publish_record(video_path, profile_id, product_id, ai_generated, visibility, "auto")
+        record = append_publish_record(
+            video_path,
+            profile_id,
+            product_id,
+            ai_generated,
+            visibility,
+            "auto",
+            attach_product,
+        )
         close_result = close_confirmed_tiktok_publish_page(page)
         return {
             **result,
@@ -1943,6 +1963,7 @@ def get_publish_queue() -> PublishQueue:
 
 def build_queue_tasks(payload: dict[str, Any]) -> list[dict[str, Any]]:
     profile_id = str(payload.get("profile_id", "")).strip()
+    attach_product = bool(payload.get("attach_product", True))
     raw_tasks = payload.get("tasks") or []
     if not profile_id:
         raise ValueError("请选择一个比特浏览器窗口")
@@ -1975,14 +1996,17 @@ def build_queue_tasks(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 f"账号国家与视频不匹配：{profile.get('country') or '未识别'} / {country or '未识别'} / {video['name']}"
             )
         product_code = str(video.get("product_code", ""))
-        product_id = product_id_for_account(config, product_code, country, profile)
-        if not product_id:
-            product_id = str(((config.get("product_links") or {}).get(product_code) or {}).get(country, {}).get(profile_id, ""))
-        if not product_id:
-            raise ValueError(f"商品 ID 未配置：{product_code} / {country} / {profile.get('store_name', '')}")
-        product_short_name = str(((config.get("product_short_names") or {}).get(product_code) or {}).get(country) or "")
-        if not product_short_name:
-            raise ValueError(f"商品简称未配置：{product_code} / {country}")
+        product_id = ""
+        product_short_name = ""
+        if attach_product:
+            product_id = product_id_for_account(config, product_code, country, profile)
+            if not product_id:
+                product_id = str(((config.get("product_links") or {}).get(product_code) or {}).get(country, {}).get(profile_id, ""))
+            if not product_id:
+                raise ValueError(f"商品 ID 未配置：{product_code} / {country} / {profile.get('store_name', '')}")
+            product_short_name = str(((config.get("product_short_names") or {}).get(product_code) or {}).get(country) or "")
+            if not product_short_name:
+                raise ValueError(f"商品简称未配置：{product_code} / {country}")
         caption = str(raw_task.get("caption", "")).strip()
         if not caption:
             raise ValueError(f"发布文案为空：{video['name']}")
@@ -1999,6 +2023,7 @@ def build_queue_tasks(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 "caption": caption,
                 "product_id": product_id,
                 "product_short_name": product_short_name,
+                "attach_product": attach_product,
                 "ai_generated": bool(payload.get("ai_generated", True)),
                 "visibility": "public",
             }
@@ -2019,6 +2044,7 @@ def run_tiktok_publish_locked(task: dict[str, Any]) -> dict[str, Any]:
             bool(task.get("ai_generated", True)),
             str(task.get("visibility", "public")),
             str(task.get("execution_mode", "visible")),
+            bool(task.get("attach_product", True)),
         )
     finally:
         PUBLISH_LOCK.release()
@@ -2426,7 +2452,7 @@ HTML = r"""<!doctype html>
     .publishMeta.warn { color:var(--red); border-color:rgba(180,35,24,.45); }
     .settingsRow {
       display:grid;
-      grid-template-columns:1fr 1fr;
+      grid-template-columns:1fr 1fr 1fr;
       gap:8px;
       margin-top:8px;
       align-items:stretch;
@@ -2572,6 +2598,10 @@ HTML = r"""<!doctype html>
         <select id="bitProfile" onchange="onBitProfileChange()"></select>
         <div id="productIdLine" class="publishMeta">请选择视频和 TikTok 账号窗口后显示商品 ID。</div>
         <div class="settingsRow">
+          <label class="optionRow">
+            <span>挂载商品链接</span>
+            <input id="attachProduct" type="checkbox" checked onchange="renderPublishContext()" />
+          </label>
           <label class="optionRow">
             <span>标注为 AI 生成内容</span>
             <input id="aiGenerated" type="checkbox" checked />
@@ -2969,6 +2999,7 @@ HTML = r"""<!doctype html>
       const profileId = document.getElementById('bitProfile').value;
       const profile = selectedProfileItem();
       const batchVideos = selectedQueueVideos();
+      const attachProduct = document.getElementById('attachProduct').checked;
       if (batchVideos.length) {
         if (!profileId || !profile) {
           host.className = 'publishMeta warn';
@@ -2977,10 +3008,15 @@ HTML = r"""<!doctype html>
         }
         const invalid = batchVideos.filter(item => {
           const country = (item.countries || [])[0] || '';
-          return item.published || country !== profile.country || !productIdFor(item, profileId) || !productShortNameFor(item);
+          return item.published
+            || country !== profile.country
+            || (attachProduct && (!productIdFor(item, profileId) || !productShortNameFor(item)));
         });
         host.className = `publishMeta ${invalid.length ? 'warn' : ''}`;
-        host.innerHTML = `<strong>批量任务</strong>：${batchVideos.length} 个视频<br><strong>窗口</strong>：${escapeHtml(profile.name)}<br><strong>校验</strong>：${invalid.length ? `${invalid.length} 个视频的国家或商品映射不完整` : '可以加入队列'}<br><strong>间隔</strong>：每个任务完成后 10 秒`;
+        const validationText = invalid.length
+          ? `${invalid.length} 个视频的国家${attachProduct ? '或商品映射' : ''}不完整`
+          : `可以加入队列（${attachProduct ? '挂载商品链接' : '不挂商品链接'}）`;
+        host.innerHTML = `<strong>批量任务</strong>：${batchVideos.length} 个视频<br><strong>窗口</strong>：${escapeHtml(profile.name)}<br><strong>校验</strong>：${validationText}<br><strong>间隔</strong>：每个任务完成后 10 秒`;
         return;
       }
       if (!video || !profileId) {
@@ -2994,6 +3030,11 @@ HTML = r"""<!doctype html>
       const accountName = profile ? profile.name : profileId;
       const storeName = profile ? (profile.store_name || '未解析店铺') : '';
       const accountType = profile ? (profile.account_type || '未解析账号类型') : '';
+      if (!attachProduct) {
+        host.className = 'publishMeta';
+        host.innerHTML = `<strong>商品链接</strong>：不挂载<br><strong>产品/国家</strong>：${escapeHtml(video.product_code)} / ${escapeHtml(country)}<br><strong>窗口</strong>：${escapeHtml(accountName)}`;
+        return;
+      }
       if (!productId) {
         host.className = 'publishMeta warn';
         host.innerHTML = `<strong>商品 ID 未配置</strong>：${escapeHtml(video.product_code)} / ${escapeHtml(country || '未识别国家')} / ${escapeHtml(storeName)} / ${escapeHtml(accountType)}。请先补充商品 ID 映射。`;
@@ -3110,6 +3151,7 @@ HTML = r"""<!doctype html>
       const videos = selectedQueueVideos();
       const profileId = document.getElementById('bitProfile').value;
       const profile = selectedProfileItem();
+      const attachProduct = document.getElementById('attachProduct').checked;
       if (!videos.length) return setPublishStatus('请勾选至少一个未发布视频。', 'error');
       if (!profileId || !profile) return setPublishStatus('请选择一个比特浏览器窗口。', 'error');
 
@@ -3118,15 +3160,15 @@ HTML = r"""<!doctype html>
         const country = (video.countries || [])[0] || '';
         if (video.published) return setPublishStatus(`已发布视频不能入队：${video.name}`, 'error');
         if (country !== profile.country) return setPublishStatus(`账号国家与视频不匹配：${profile.country} / ${country}`, 'error');
-        if (!productIdFor(video, profileId)) return setPublishStatus(`商品 ID 未配置：${video.product_code} / ${country}`, 'error');
-        if (!productShortNameFor(video)) return setPublishStatus(`商品简称未配置：${video.product_code} / ${country}`, 'error');
+        if (attachProduct && !productIdFor(video, profileId)) return setPublishStatus(`商品 ID 未配置：${video.product_code} / ${country}`, 'error');
+        if (attachProduct && !productShortNameFor(video)) return setPublishStatus(`商品简称未配置：${video.product_code} / ${country}`, 'error');
         let caption = '';
         try { caption = randomCaptionForVideo(video, profile); }
         catch (err) { return setPublishStatus(err.message, 'error'); }
         tasks.push({video_path: video.path, caption});
       }
 
-      if (!window.confirm(`按当前顺序加入 ${tasks.length} 个自动发布任务？\n账号：${profile.name}\n任务间隔：10 秒\n\n加入后处于待执行状态，不会立即发布。`)) return;
+      if (!window.confirm(`按当前顺序加入 ${tasks.length} 个自动发布任务？\n账号：${profile.name}\n商品链接：${attachProduct ? '挂载' : '不挂载'}\n任务间隔：10 秒\n\n加入后处于待执行状态，不会立即发布。`)) return;
       setPublishStatus(`正在加入 ${tasks.length} 个队列任务...`, '');
       const res = await fetch('/api/queue/enqueue', {
         method:'POST',
@@ -3134,6 +3176,7 @@ HTML = r"""<!doctype html>
         body:JSON.stringify({
           profile_id:profileId,
           tasks,
+          attach_product:attachProduct,
           ai_generated:document.getElementById('aiGenerated').checked,
         }),
       });
@@ -3689,7 +3732,7 @@ RECORDS_HTML = r"""<!doctype html>
           <td>${escapeHtml(row.product_code || '')}</td>
           <td>${escapeHtml(row.country || '')}</td>
           <td>${escapeHtml(row.account_name || row.profile_id || '')}</td>
-          <td>${escapeHtml(row.product_id || '')}</td>
+          <td>${row.attach_product === false ? '不挂车' : escapeHtml(row.product_id || '')}</td>
           <td>${row.ai_generated ? '是' : '否'}</td>
           <td>${escapeHtml(row.visibility || '')}</td>
           <td>${escapeHtml(row.published_at || '')}</td>
@@ -3902,7 +3945,7 @@ QUEUE_HTML = r"""<!doctype html>
       return `<tr>
         <td>${task.position}</td><td><span class="status ${escapeHtml(task.status)}">${escapeHtml(statusLabels[task.status] || task.status)}</span><br><small>尝试 ${task.attempts}</small></td>
         <td class="videoName">${escapeHtml(task.video_name)}</td><td>${escapeHtml(task.product_code)} / ${escapeHtml(task.country)}</td>
-        <td>${escapeHtml(task.profile_name)}</td><td class="caption">${escapeHtml(task.caption)}</td><td>${escapeHtml(task.product_id)}</td>
+        <td>${escapeHtml(task.profile_name)}</td><td class="caption">${escapeHtml(task.caption)}</td><td>${task.attach_product ? escapeHtml(task.product_id) : '不挂车'}</td>
         <td>${time}</td><td class="error">${escapeHtml(task.error || '')}</td><td><div class="actions">${taskActions(task)}</div></td>
       </tr>`;
     }

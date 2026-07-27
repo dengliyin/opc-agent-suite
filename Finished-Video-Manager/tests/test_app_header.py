@@ -9,6 +9,7 @@ from finished_video_manager.web import (
     QUEUE_HTML,
     bitbrowser_open_payload,
     list_bitbrowser_profiles,
+    parse_bitbrowser_profile_name,
     render_app_page,
 )
 
@@ -61,6 +62,15 @@ class AppHeaderTest(unittest.TestCase):
             ["es-9", "fr-14", "fr-13", "ie-11", "unknown"],
         )
 
+    def test_us_alias_profile_names_are_recognized(self) -> None:
+        direct = parse_bitbrowser_profile_name("美区珠宝")
+        prefixed = parse_bitbrowser_profile_name("gtdcsab-美区珠宝")
+
+        self.assertEqual(direct["country"], "US")
+        self.assertEqual(direct["store_name"], "美区珠宝")
+        self.assertEqual(prefixed["country"], "US")
+        self.assertEqual(prefixed["store_name"], "美区珠宝")
+
     def test_publish_page_has_no_group_management_controls(self) -> None:
         self.assertNotIn('id="bitGroup"', HTML)
         self.assertNotIn('/api/bitbrowser/groups', HTML)
@@ -71,6 +81,12 @@ class AppHeaderTest(unittest.TestCase):
         self.assertNotIn('onclick="autoPublish()"', HTML)
         self.assertNotIn('/api/tiktok/manual-upload', HTML)
         self.assertNotIn('/api/tiktok/publish', HTML)
+
+    def test_product_link_is_enabled_by_default_and_sent_to_queue(self) -> None:
+        self.assertIn('id="attachProduct" type="checkbox" checked', HTML)
+        self.assertIn("attach_product:attachProduct", HTML)
+        self.assertIn("if (attachProduct && !productIdFor(video, profileId))", HTML)
+        self.assertIn("商品链接：${attachProduct ? '挂载' : '不挂载'}", HTML)
 
     def test_home_video_grid_is_paginated_without_preloading(self) -> None:
         self.assertIn('const PAGE_SIZE = 24;', HTML)

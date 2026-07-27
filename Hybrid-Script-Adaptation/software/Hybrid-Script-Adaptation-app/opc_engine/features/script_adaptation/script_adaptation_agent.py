@@ -24,6 +24,10 @@ AGENT_DIR = Path(__file__).resolve().parent
 AGENT_CONFIG_DIR = AGENT_DIR / "agent_config"
 AGENT_SETTINGS_PATH = AGENT_CONFIG_DIR / "agent_settings.json"
 AGENT_SECRETS_PATH = AGENT_CONFIG_DIR / "agent_secrets.local.json"
+VAULT_ROOT_CANDIDATES = (
+    Path("/Volumes/seafer/Obsidian Vault"),
+    Path.home() / "Documents/Obsidian Vault",
+)
 
 
 @dataclass(frozen=True)
@@ -191,6 +195,15 @@ def expand_environment(value: Any) -> Any:
     return value
 
 
+def ensure_vault_root_environment() -> None:
+    if os.environ.get("OPC_VAULT_ROOT"):
+        return
+    for candidate in VAULT_ROOT_CANDIDATES:
+        if (candidate / "wiki/视频/AI实拍混剪").is_dir():
+            os.environ["OPC_VAULT_ROOT"] = str(candidate)
+            return
+
+
 def resolve_agent_config_file(value: Any) -> Path:
     text = str(value or "").strip()
     if not text:
@@ -207,6 +220,7 @@ def resolve_agent_config_file(value: Any) -> Path:
 
 
 def load_local_agent_config() -> dict[str, Any]:
+    ensure_vault_root_environment()
     settings = read_json_object(AGENT_SETTINGS_PATH)
     if not settings:
         raise SystemExit(f"缺少智能体主配置: {AGENT_SETTINGS_PATH}")

@@ -409,6 +409,49 @@ def read_optional_text(path: Path | None) -> str:
     return path.read_text(encoding="utf-8", errors="ignore")
 
 
+def fixed_duration_padding_issues(
+    text: str,
+    source_text: str,
+    target_model: str,
+    segment_seconds: Any = None,
+) -> list[str]:
+    target_model = normalize_target_model(target_model)
+    if target_model not in {"omni", "veo"}:
+        return []
+    seconds = segment_seconds_for_target(target_model, segment_seconds)
+    plan = workflow.fixed_duration_padding_plan(source_text, seconds)
+    if not plan:
+        return []
+    marker = "[TECHNICAL_PADDING: BLACK_SILENT]"
+    if plan["padding_duration"] < 0.001:
+        return ["原脚本恰好填满固定时长，不应出现技术占位"] if marker in text else []
+    issues: list[str] = []
+    if text.count(marker) != 1:
+        issues.append("最后一个片段必须且只能包含一个黑屏静音技术占位标记")
+
+    expected_fields = {
+        "原脚本总时长": plan["source_duration"],
+        "本段有效内容时长": plan["last_content_duration"],
+        "有效内容结束": plan["last_content_duration"],
+        "技术占位开始": plan["last_content_duration"],
+        "技术占位时长": plan["padding_duration"],
+        "模型片段时长": plan["segment_seconds"],
+    }
+    for label, expected in expected_fields.items():
+        match = re.search(rf"{re.escape(label)}[：:]\s*(\d+(?:\.\d+)?)\s*(?:秒|s)", text, flags=re.I)
+        if not match:
+            issues.append(f"缺少技术占位字段：{label}")
+            continue
+        actual = float(match.group(1))
+        if abs(actual - expected) > 0.01:
+            issues.append(f"{label}应为 {expected:.3f}秒，当前为 {actual:.3f}秒")
+    if "纯黑" not in text:
+        issues.append("技术占位必须明确为纯黑画面")
+    if not any(token in text for token in ("完全静音", "静音", "无音频", "无声音")):
+        issues.append("技术占位必须明确为完全静音")
+    return issues
+
+
 def segmented_markdown_output_validation_text(
     text: str,
     source_text: str = "",
@@ -550,9 +593,10 @@ def segmented_markdown_output_validation_text(
     issues.extend(workflow.omni_embedded_script_reset_issues(content))
     if target_model == "omni":
         issues.extend(workflow.omni_segment_count_issues(content, source_text, segment_seconds_for_target(target_model, segment_seconds)))
+        issues.extend(fixed_duration_padding_issues(content, source_text, target_model, segment_seconds))
     elif target_model == "grok" and source_duration and parsed_durations:
         total_duration = sum(parsed_durations)
-        tolerance = max(1.0, source_duration * 0.05)
+        tolerance = max(0.1, source_duration * 0.01)
         if total_duration > source_duration + tolerance:
             issues.append(f"Grok Segment 总时长 {total_duration:.1f}s 明显超过原脚本总时长 {source_duration:.1f}s")
         if total_duration < source_duration - tolerance:
@@ -591,6 +635,7 @@ def adaptation_output_validation(
         return {"valid": False, "state": "json_missing", "message": image_error or "缺 JSON"}
 
     issues = adaptation_contract_issues(text, image_data)
+    issues.extend(fixed_duration_padding_issues(text, read_optional_text(source_path), normalized_target, segment_seconds))
     if issues:
         return {"valid": False, "state": "contract_mismatch", "message": "；".join(issues)}
     return {"valid": True, "state": "done", "message": "已适配"}
