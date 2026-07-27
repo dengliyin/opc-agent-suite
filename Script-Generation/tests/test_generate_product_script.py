@@ -160,6 +160,257 @@ class GenerateProductScriptTests(unittest.TestCase):
             self.assertEqual(len(output_paths), 1)
             self.assertEqual(enforce_timeline.call_count, 1)
 
+    def test_audio_parser_uses_real_target_language_line_after_delivery_description(self):
+        script = """### 镜头 1 (00:00.000 - 00:01.000)
+
+* **[音频文案]** on-screen。男子喘着粗气，语速急促。
+(意大利语): “Ma che dice questo adesso?”
+"""
+
+        profiles = generate_product_script.extract_audio_profiles(script)
+
+        self.assertEqual(profiles["001"]["audio"], "(意大利语): “Ma che dice questo adesso?”")
+        self.assertEqual(profiles["001"]["word_count"], 5)
+
+    def test_audio_fit_uses_shot_duration_and_rejects_overlong_italian_dialogue(self):
+        script = """### 镜头 1 (00:00.000 - 00:01.000)
+
+* **[声音/语气]**：男子急促地说。
+* **[音频文案]**：(意大利语): “Uno due tre quattro cinque sei sette otto nove dieci undici.”（中文翻译对照：测试。）
+"""
+
+        issues = generate_product_script.validate_audio_fit(script)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0]["shot_key"], "001")
+        self.assertEqual(issues[0]["word_count"], 11)
+        self.assertEqual(issues[0]["max_word_count"], 2)
+
+    def test_overlong_spoken_dialogue_is_rejected_before_markdown_is_written(self):
+        reference = """### 镜头 1 (00:00.000 - 00:01.000)
+
+* **[音频文案]**：(意大利语): “Ciao.”（中文翻译对照：你好。）
+"""
+        clone = """### 镜头 1 (00:00.000 - 00:01.000)
+
+* **[音频文案]**：(意大利语): “Uno due tre quattro cinque sei sette otto nove dieci undici.”（中文翻译对照：测试。）
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            output_dir = root / "outputs"
+            reference_path = root / "IT-author-1234567890123456789.md"
+            reference_path.write_text(reference, encoding="utf-8")
+            config = {
+                "script_reference_script_path": str(reference_path),
+                "script_product_document_path": str(root / "DRN-E99Pro无人机-产品信息.md"),
+            }
+
+            with self.assertRaisesRegex(RuntimeError, "真实口播仍超过镜头时长"):
+                generate_product_script.write_script_outputs(
+                    config,
+                    str(output_dir),
+                    clone,
+                    {},
+                )
+
+            self.assertFalse(list(output_dir.glob("*.md")))
+
+    def test_audio_repair_shortens_real_dialogue_and_preserves_reference_timeline(self):
+        reference = """### 镜头 1 (00:00.000 - 00:01.000)
+
+* **[音频文案]**：(意大利语): “Ciao.”（中文翻译对照：你好。）
+"""
+        overlong = """### 镜头 1 (00:00.000 - 00:02.000)
+
+* **[声音/语气]**：男子急促地说。
+* **[音频文案]**：(意大利语): “Uno due tre quattro cinque sei.”（中文翻译对照：测试。）
+"""
+        repaired = """### 镜头 1 (00:00.000 - 00:03.000)
+
+* **[声音/语气]**：男子急促地说。
+* **[音频文案]**：(意大利语): “Solo ora.”（中文翻译对照：就是现在。）
+"""
+        config = {"script_target_language": "意大利语"}
+        args = argparse.Namespace(backend="api")
+
+        with patch.object(
+            generate_product_script,
+            "call_text_model",
+            return_value=(repaired, {"id": "repair"}, "openai-chat", "content"),
+        ) as call_model:
+            result, metadata = generate_product_script.repair_script_audio(
+                config,
+                args,
+                overlong,
+                reference,
+                "测试音频缩写",
+            )
+
+        self.assertEqual(call_model.call_count, 1)
+        self.assertIn("镜头 1 (00:00.000 - 00:01.000)", result)
+        self.assertIn("Solo ora", result)
+        self.assertFalse(generate_product_script.validate_audio_fit(result))
+        self.assertTrue(metadata["repair_requested"])
+
+    def test_silent_reference_shot_removes_generated_voice_fields_only(self):
+        reference = """### 镜头 1 (00:00.000 - 00:01.000)
+
+[背景音乐] 悬疑音乐
+
+### 镜头 2 (00:01.000 - 00:03.000)
+
+[音频文案] (意大利语): “Guarda qui.”（中文翻译对照：看这里。）
+"""
+        generated = """### 镜头 1 (00:00.000 - 00:01.000)
+
+* **[声音/语气]**：紧张急促。
+* **[音频文案]** on-screen。男子大喊。
+(意大利语): “Corri subito.”
+* **[音频交付模式]** on-screen
+* **[背景音乐]**：悬疑音乐
+
+### 镜头 2 (00:01.000 - 00:03.000)
+
+* **[声音/语气]**：自然。
+* **[音频文案]**：(意大利语): “Guarda qui.”（中文翻译对照：看这里。）
+* **[音频交付模式]** voiceover
+"""
+
+        corrected, warnings = generate_product_script.enforce_reference_audio_structure(reference, generated)
+
+        first_shot, second_shot = corrected.split("### 镜头 2", 1)
+        self.assertNotIn("[声音/语气]", first_shot)
+        self.assertNotIn("[音频文案]", first_shot)
+        self.assertNotIn("[音频交付模式]", first_shot)
+        self.assertNotIn("Corri subito", first_shot)
+        self.assertIn("[背景音乐]", first_shot)
+        self.assertIn("[音频文案]", second_shot)
+        self.assertIn("Guarda qui", second_shot)
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("镜头 ['001']", warnings[0])
+
+    def test_all_silent_reference_saves_clone_without_model_added_audio(self):
+        reference = """### 镜头 1 (00:00.000 - 00:01.000)
+
+[背景音乐] 轻快音乐
+"""
+        clone = """### 镜头 1 (00:00.000 - 00:01.000)
+
+* **[声音/语气]**：兴奋。
+* **[音频文案]**：(意大利语): “Compra ora.”（中文翻译对照：立即购买。）
+* **[音频交付模式]** voiceover
+* **[背景音乐]**：轻快音乐
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            reference_path = root / "IT-author-1234567890123456789.md"
+            reference_path.write_text(reference, encoding="utf-8")
+            config = {
+                "script_reference_script_path": str(reference_path),
+                "script_product_document_path": str(root / "DRN-E99Pro无人机-产品信息.md"),
+            }
+
+            output_paths, _raw_paths = generate_product_script.write_script_outputs(
+                config,
+                str(root / "outputs"),
+                clone,
+                {},
+            )
+
+            saved = output_paths[0].read_text(encoding="utf-8")
+            self.assertNotIn("[声音/语气]", saved)
+            self.assertNotIn("[音频文案]", saved)
+            self.assertNotIn("[音频交付模式]", saved)
+            self.assertIn("[背景音乐]", saved)
+
+    def test_subject_type_lock_detects_skeleton_replaced_by_real_person(self):
+        reference = """### 镜头 1 (00:00.000 - 00:02.000)
+
+[主体] 一个头顶稀疏的人体骨骼模型。
+
+### 镜头 2 (00:02.000 - 00:04.000)
+
+[主体] 无人物主体，画面中心为毛囊动画。
+"""
+        generated = """### 镜头 1 (00:00.000 - 00:02.000)
+
+* **[主体]**：一个30岁的意大利真人男性，头顶发量稀疏。
+
+### 镜头 2 (00:02.000 - 00:04.000)
+
+* **[主体]**：一个年轻真人女性正在观察头皮。
+"""
+
+        issues = generate_product_script.validate_subject_type_lock(reference, generated)
+
+        self.assertEqual([issue["shot_key"] for issue in issues], ["001", "002"])
+        self.assertEqual(issues[0]["reference_type"], "skeleton")
+        self.assertEqual(issues[0]["generated_type"], "human")
+        self.assertEqual(issues[1]["reference_type"], "no_person")
+
+    def test_subject_type_repair_restores_skeleton_and_reference_timeline(self):
+        reference = """### 镜头 1 (00:00.000 - 00:02.000)
+
+[主体] 一个头顶稀疏的人体骨骼模型。
+"""
+        generated = """### 镜头 1 (00:00.000 - 00:03.000)
+
+* **[主体]**：一个30岁的意大利真人男性。
+"""
+        repaired = """### 镜头 1 (00:00.000 - 00:04.000)
+
+* **[主体]**：一个头顶稀疏、穿意大利家居服的人体骨骼模型。
+"""
+        config = {}
+        args = argparse.Namespace(backend="api")
+
+        with patch.object(
+            generate_product_script,
+            "call_text_model",
+            return_value=(repaired, {"id": "subject-repair"}, "openai-chat", "content"),
+        ):
+            result, metadata = generate_product_script.repair_script_subject_type(
+                config,
+                args,
+                generated,
+                reference,
+                "测试主体类型纠正",
+            )
+
+        self.assertIn("镜头 1 (00:00.000 - 00:02.000)", result)
+        self.assertIn("人体骨骼模型", result)
+        self.assertFalse(generate_product_script.validate_subject_type_lock(reference, result))
+        self.assertTrue(metadata["repair_requested"])
+
+    def test_subject_type_mismatch_is_rejected_before_markdown_is_written(self):
+        reference = """### 镜头 1 (00:00.000 - 00:02.000)
+
+[主体] 一个头顶稀疏的人体骨骼模型。
+"""
+        generated = """### 镜头 1 (00:00.000 - 00:02.000)
+
+* **[主体]**：一个30岁的意大利真人男性。
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            output_dir = root / "outputs"
+            reference_path = root / "IT-author-1234567890123456789.md"
+            reference_path.write_text(reference, encoding="utf-8")
+            config = {
+                "script_reference_script_path": str(reference_path),
+                "script_product_document_path": str(root / "TR05-TROIL生发精华-产品信息.md"),
+            }
+
+            with self.assertRaisesRegex(RuntimeError, "主体类型校验失败"):
+                generate_product_script.write_script_outputs(
+                    config,
+                    str(output_dir),
+                    generated,
+                    {},
+                )
+
+            self.assertFalse(list(output_dir.glob("*.md")))
+
     def test_recloning_overwrites_existing_clone_and_raw_response(self):
         reference = """### 镜头 1 (00:00.000 - 00:01.000)
 """

@@ -194,7 +194,7 @@ class CoreTests(unittest.TestCase):
         self.assertNotIn("http://", html)
         self.assertNotIn("https://", html)
 
-    def test_caption_mode_script_and_language_are_normalized(self) -> None:
+    def test_caption_mode_language_and_no_speech_are_normalized(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             md_path = Path(temporary) / "omni-裂变-产品-FR-demo.md"
             md_path.write_text(
@@ -203,15 +203,80 @@ class CoreTests(unittest.TestCase):
                 "# Segment 2：1 - 2\n**[音频文案]** （French）：à bientôt\n",
                 encoding="utf-8",
             )
-            script = core.caption_script_text(md_path)
             language = core.caption_language(md_path)
+            silent_path = Path(temporary) / "omni-裂变-产品-IT-demo.md"
+            silent_path.write_text(
+                "# Segment 1：0 - 1\n"
+                "**[音频文案]**：无人物口播、无旁白、无对白、无歌词。仅保留环境声。\n"
+                "# Segment 2：1 - 2\n"
+                "**[音频文案]**：无口播、无旁白、无对白。仅保留背景音乐。\n",
+                encoding="utf-8",
+            )
+            has_speech = core.caption_has_no_speech(md_path)
+            has_no_speech = core.caption_has_no_speech(silent_path)
 
         self.assertEqual(core.normalize_caption_mode(None), "none")
         self.assertEqual(core.normalize_caption_mode("karaoke"), "karaoke")
         with self.assertRaisesRegex(ValueError, "字幕模式"):
             core.normalize_caption_mode("classic")
-        self.assertEqual(script, "Bonjour\ntout le monde\nà bientôt")
         self.assertEqual(language, "fr")
+        self.assertFalse(has_speech)
+        self.assertTrue(has_no_speech)
+
+    def test_karaoke_skips_whisper_when_script_has_no_speech(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            input_path = root / "uncaptioned.mp4"
+            input_path.write_bytes(b"video")
+            output_path = root / "output" / "final.mp4"
+            md_path = root / "omni-裂变-产品-IT-demo.md"
+            md_path.write_text(
+                "**[音频文案]**：无人物口播、无旁白、无对白、无歌词。仅保留环境声。\n",
+                encoding="utf-8",
+            )
+            with (
+                patch.object(core, "caption_runtime_ready", return_value=False),
+                patch.object(core, "run") as runner,
+                patch.object(core, "verify_finished_output"),
+            ):
+                core.run_karaoke_captioner(input_path, output_path, md_path, root)
+            output_bytes = output_path.read_bytes()
+
+        runner.assert_not_called()
+        self.assertEqual(output_bytes, b"video")
+
+    def test_karaoke_uses_country_language_and_raw_whisper_text(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            input_path = root / "uncaptioned.mp4"
+            input_path.write_bytes(b"video")
+            output_path = root / "output" / "final.mp4"
+            md_path = root / "omni-裂变-产品-IT-demo.md"
+            md_path.write_text(
+                "**[音频文案]**：Questa è una vera voce italiana.\n",
+                encoding="utf-8",
+            )
+            captured = {}
+
+            def caption(command, cwd=None, env=None):
+                captured["command"] = command
+                captioned = root / "captions" / output_path.name
+                captioned.parent.mkdir(exist_ok=True)
+                captioned.write_bytes(b"captioned")
+                return core.subprocess.CompletedProcess(command, 0, "")
+
+            with (
+                patch.object(core, "caption_runtime_ready", return_value=True),
+                patch.object(core, "runtime_env", return_value={}),
+                patch.object(core, "run", side_effect=caption),
+                patch.object(core, "verify_finished_output"),
+            ):
+                core.run_karaoke_captioner(input_path, output_path, md_path, root)
+            output_bytes = output_path.read_bytes()
+
+        self.assertEqual(captured["command"][captured["command"].index("--language") + 1], "it")
+        self.assertNotIn("--script-file", captured["command"])
+        self.assertEqual(output_bytes, b"captioned")
 
     def test_karaoke_style_matches_reference_size_and_position(self) -> None:
         caption_path = ROOT / "vendor" / "tiktok-karaoke-captions" / "caption.py"

@@ -782,6 +782,57 @@ def expected_omni_segment_count(source_text, segment_seconds=10):
     return max(1, int(math.ceil((duration - 0.001) / seconds))), duration
 
 
+def fixed_duration_padding_plan(source_text, segment_seconds):
+    duration = omni_source_duration_seconds(source_text)
+    if duration is None:
+        return None
+    seconds = max(float(segment_seconds or 1), 1.0)
+    remainder = duration % seconds
+    if remainder < 0.001 or seconds - remainder < 0.001:
+        remainder = seconds
+        padding = 0.0
+    else:
+        padding = seconds - remainder
+    return {
+        "source_duration": duration,
+        "segment_seconds": seconds,
+        "last_content_duration": remainder,
+        "padding_duration": padding,
+    }
+
+
+def fixed_duration_padding_note(source_text, target_model, segment_seconds):
+    target_key = str(target_model or "").strip().lower()
+    if target_key not in {"omni", "veo"}:
+        return ""
+    plan = fixed_duration_padding_plan(source_text, segment_seconds)
+    if not plan:
+        return ""
+    if plan["padding_duration"] < 0.001:
+        return (
+            f"\n{str(target_model).title()} 原始时长保真要求：\n"
+            f"原脚本有效总时长为 {plan['source_duration']:.3f}s，恰好填满固定时长片段。"
+            "不得延长、缩短或新增技术占位。\n"
+        )
+    return (
+        f"\n{str(target_model).title()} 固定时长技术占位硬性要求：\n"
+        f"原脚本有效总时长为 {plan['source_duration']:.3f}s；"
+        f"最后一个 Segment 只有 {plan['last_content_duration']:.3f}s 原始内容，"
+        f"必须在尾部增加 {plan['padding_duration']:.3f}s 黑屏静音技术占位，"
+        f"使该 Segment 达到 {plan['segment_seconds']:.3f}s。\n"
+        "不得通过慢动作、延长停留、重复动作、补充台词、增加空镜或新增剧情来填满时长。\n"
+        "技术占位不属于原脚本镜头，不得拆成新的 Segment；必须原样输出以下机器标记：\n"
+        f"- 原脚本总时长：{plan['source_duration']:.3f}秒\n"
+        f"- 本段有效内容时长：{plan['last_content_duration']:.3f}秒\n"
+        f"- 有效内容结束：{plan['last_content_duration']:.3f}秒\n"
+        f"- 技术占位开始：{plan['last_content_duration']:.3f}秒\n"
+        f"- 技术占位时长：{plan['padding_duration']:.3f}秒\n"
+        f"- 模型片段时长：{plan['segment_seconds']:.3f}秒\n"
+        "[TECHNICAL_PADDING: BLACK_SILENT]\n"
+        "占位区必须描述为纯黑画面、完全静音、无人物、无产品、无字幕、无贴纸、无动作、无转场内容。\n"
+    )
+
+
 def omni_segment_count_issues(output_text, source_text="", segment_seconds=10):
     expected_count, duration = expected_omni_segment_count(source_text, segment_seconds)
     if expected_count is None:
@@ -1165,6 +1216,7 @@ def build_adaptation_prompt(config, source_text, target_model, segment_seconds, 
             "所有 Segment 标题时长相加必须接近原视频总时长，不能明显放大总时长。\n"
             f"如果原片总时长不超过 {segment_seconds}s，优先输出 1 个 Segment；超过 {segment_seconds}s 时按该上限自然拆分，优先使用更少、更完整的长片段。\n"
         )
+    padding_note = fixed_duration_padding_note(source_for_prompt, target_model, segment_seconds)
     return f"""{prompt_template}
 
 ---
@@ -1180,6 +1232,7 @@ def build_adaptation_prompt(config, source_text, target_model, segment_seconds, 
 适配备注：
 {notes or "无"}
 {segment_count_note}
+{padding_note}
 
 ---
 

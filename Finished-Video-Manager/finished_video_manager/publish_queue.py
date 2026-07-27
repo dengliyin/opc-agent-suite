@@ -62,6 +62,7 @@ class PublishQueue:
                     caption TEXT NOT NULL,
                     product_id TEXT NOT NULL,
                     product_short_name TEXT NOT NULL,
+                    attach_product INTEGER NOT NULL DEFAULT 1,
                     ai_generated INTEGER NOT NULL DEFAULT 1,
                     visibility TEXT NOT NULL DEFAULT 'public',
                     attempts INTEGER NOT NULL DEFAULT 0,
@@ -77,6 +78,10 @@ class PublishQueue:
             if "execution_mode_override" not in columns:
                 connection.execute(
                     "ALTER TABLE queue_tasks ADD COLUMN execution_mode_override TEXT NOT NULL DEFAULT ''"
+                )
+            if "attach_product" not in columns:
+                connection.execute(
+                    "ALTER TABLE queue_tasks ADD COLUMN attach_product INTEGER NOT NULL DEFAULT 1"
                 )
             connection.execute(
                 """
@@ -150,8 +155,8 @@ class PublishQueue:
                     INSERT INTO queue_tasks (
                         batch_id, position, status, video_path, video_name, product_code, country,
                         profile_id, profile_name, caption, product_id, product_short_name,
-                        ai_generated, visibility, created_at
-                    ) VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        attach_product, ai_generated, visibility, created_at
+                    ) VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         batch_id,
@@ -165,6 +170,7 @@ class PublishQueue:
                         str(task.get("caption", "")).strip(),
                         str(task.get("product_id", "")).strip(),
                         str(task.get("product_short_name", "")).strip(),
+                        1 if task.get("attach_product", True) else 0,
                         1 if task.get("ai_generated", True) else 0,
                         str(task.get("visibility", "public")).strip() or "public",
                         created_at,
@@ -187,6 +193,7 @@ class PublishQueue:
         for row in rows:
             row["video_path"] = self._resolve_video_path(str(row.get("video_path", "")))
             row["ai_generated"] = bool(row.get("ai_generated"))
+            row["attach_product"] = bool(row.get("attach_product"))
             counts[row["status"]] = counts.get(row["status"], 0) + 1
         return {
             "tasks": rows,
@@ -287,6 +294,7 @@ class PublishQueue:
             task = dict(row)
             task["video_path"] = self._resolve_video_path(str(task.get("video_path", "")))
             task["ai_generated"] = bool(task.get("ai_generated"))
+            task["attach_product"] = bool(task.get("attach_product"))
             retry_visible = str(task.get("execution_mode_override", "")) == "visible"
             task["execution_mode"] = "visible" if retry_visible else execution_mode
 

@@ -38,7 +38,8 @@ Caption rules:
 - expose exactly two choices: `none` (不生成字幕) and `karaoke` (TikTok 卡拉 OK 逐词高亮)
 - default to `none`
 - render the assembled video first, then burn karaoke captions only when `karaoke` is selected
-- use each Segment's `[音频文案]` as the authoritative caption copy and local Whisper word timestamps for alignment
+- use the sales-country code in the filename to select the language and use local Whisper's actual transcript as the caption copy
+- when every Segment's `[音频文案]` explicitly says there is no voiceover, narration, or dialogue, skip captions
 - use the vendored `tiktok-karaoke-captions` implementation and fonts
 - never use Deepgram or another remote transcription API
 

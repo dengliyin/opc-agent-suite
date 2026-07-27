@@ -18,12 +18,49 @@ def task(name: str, profile_id: str = "profile-1") -> dict:
         "caption": "Test caption #one #two #three #four #five",
         "product_id": "123",
         "product_short_name": "Test product",
+        "attach_product": True,
         "ai_generated": True,
         "visibility": "public",
     }
 
 
 class PublishQueueTest(unittest.TestCase):
+    def test_product_link_choice_is_saved_and_forwarded(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            calls = []
+            queued = task("without-product")
+            queued["attach_product"] = False
+            queued["product_id"] = ""
+            queued["product_short_name"] = ""
+            queue = PublishQueue(
+                Path(directory) / "queue.sqlite3",
+                lambda item: calls.append(item) or {},
+                interval_seconds=0,
+            )
+            queue.enqueue([queued])
+
+            payload = queue.payload()
+            self.assertFalse(payload["tasks"][0]["attach_product"])
+            self.assertEqual(payload["tasks"][0]["product_id"], "")
+
+            queue.start()
+            queue.control("resume")
+            deadline = time.time() + 2
+            while time.time() < deadline and not calls:
+                time.sleep(0.05)
+            queue.stop()
+
+            self.assertFalse(calls[0]["attach_product"])
+
+    def test_legacy_tasks_default_to_attaching_product(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            queued = task("legacy")
+            queued.pop("attach_product")
+            queue = PublishQueue(Path(directory) / "queue.sqlite3", lambda item: {})
+            queue.enqueue([queued])
+
+            self.assertTrue(queue.payload()["tasks"][0]["attach_product"])
+
     def test_closes_profile_after_last_consecutive_task(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             calls = []
