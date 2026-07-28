@@ -115,6 +115,45 @@ def test_scan_scripts_reads_product_md(tmp_path: Path) -> None:
     assert scripts[0].segments[0].character_prompt == "A"
 
 
+def test_hybrid_scan_and_output_preserve_type_and_product(tmp_path: Path) -> None:
+    settings = Settings(
+        **{
+            **settings_for(tmp_path).__dict__,
+            "provider_label": "混剪 Omni",
+            "api_base_path": "/hybrid-omni/api",
+            "workflow": "hybrid_omni",
+        }
+    )
+    settings.reference_root.mkdir(parents=True)
+    (settings.reference_root / "P1.jpg").write_bytes(b"jpg")
+    markdown = (
+        "# Segment 1：00:00 - 00:01\n"
+        "## A. 人物造型参考板提示词\n"
+        "A\n"
+        "## B. 故事板图片提示词\n"
+        "B\n"
+    )
+    hook = settings.script_root / "混剪-钩子" / "P1" / "来源A" / "hook.md"
+    cta = settings.script_root / "混剪-CTA" / "P1" / "来源B" / "cta.md"
+    hook.parent.mkdir(parents=True)
+    cta.parent.mkdir(parents=True)
+    hook.write_text(markdown, encoding="utf-8")
+    cta.write_text(markdown, encoding="utf-8")
+
+    scripts = scan_scripts(settings)
+
+    assert [(item.script_type, item.product_name) for item in scripts] == [
+        ("混剪-CTA", "P1"),
+        ("混剪-钩子", "P1"),
+    ]
+    hook_script = next(item for item in scripts if item.script_type == "混剪-钩子")
+    payload = script_to_dict(settings, hook_script)
+    assert payload["script_type"] == "混剪-钩子"
+    assert video_output_path(settings, "P1", hook, 1) == (
+        settings.video_output_root / "混剪-钩子" / "P1" / "hook-片段1-omni.mp4"
+    )
+
+
 def test_scan_scripts_matches_reference_with_code_prefix(tmp_path: Path) -> None:
     settings = settings_for(tmp_path)
     product_dir = settings.script_root / "海蓝之谜精粹水"

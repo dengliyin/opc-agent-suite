@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>AI＋实拍混剪智能体</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <p class="eyebrow">PORT 10000 · HYBRID VIDEO MIXER</p>
+        <h1>AI＋实拍混剪智能体</h1>
+        <p class="lead">AI 钩子 → 产品介绍音频＋展示/使用实拍 → AI CTA。先生成可检查的编排方案，再渲染成片。</p>
+      </div>
+      <button id="refreshButton" class="secondary">重新扫描素材</button>
+    </header>
+
+    <section class="summary" id="summary">正在扫描素材库…</section>
+
+    <div class="layout">
+      <section class="panel controls">
+        <div class="section-title"><span>01</span><h2>选择素材</h2></div>
+        <label>产品<select id="product"></select></label>
+        <label>已生成片段来源<select id="model"></select></label>
+        <label>开头 AI 钩子视频<select id="hook"></select></label>
+        <label>产品介绍音频<select id="audio"></select></label>
+        <label>结尾 AI CTA 视频<select id="cta"></select></label>
+
+        <div class="section-title spaced"><span>02</span><h2>编排设置</h2></div>
+        <div class="grid">
+          <label>成片数量<input id="count" type="number" min="1" max="20" value="1"></label>
+          <label>随机种子<input id="seed" type="number" placeholder="自动"></label>
+          <label>单镜头最短/秒<input id="minClip" type="number" min="0.6" max="8" step="0.1" value="1.6"></label>
+          <label>单镜头最长/秒<input id="maxClip" type="number" min="0.6" max="12" step="0.1" value="4.2"></label>
+        </div>
+        <label>原创差异处理
+          <select id="originality">
+            <option value="standard">标准：素材轮换＋轻微画面差异</option>
+            <option value="enhanced">增强：增加入点、节奏和构图差异</option>
+          </select>
+        </label>
+        <p class="hint">不会改写钩子、CTA 或产品音频。若 AI 片段末尾是技术性黑屏静音，会在合成时自动裁掉。</p>
+        <div class="actions">
+          <button id="planButton">生成编排方案</button>
+          <button id="renderButton" class="accent" disabled>确认并渲染</button>
+        </div>
+        <div class="message" id="message"></div>
+      </section>
+
+      <section class="panel">
+        <div class="section-title"><span>03</span><h2>方案预览</h2></div>
+        <div id="planEmpty" class="empty">选择素材后生成方案，这里会显示每一条成片的完整时间线。</div>
+        <div id="plan"></div>
+      </section>
+    </div>
+
+    <section class="panel task-panel">
+      <div class="section-title"><span>04</span><h2>渲染状态</h2></div>
+      <div class="task-head"><strong id="taskStatus">空闲</strong><span id="taskMessage"></span></div>
+      <pre id="logs">暂无运行日志</pre>
+    </section>
+
+    <section class="panel">
+      <div class="section-title"><span>05</span><h2>最近成片</h2></div>
+      <div id="outputs" class="empty">暂无 AI＋实拍混剪成片</div>
+    </section>
+
+    <section class="paths" id="paths"></section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

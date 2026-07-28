@@ -20,6 +20,7 @@ const API_BASE = window.AGENT_API_BASE || "/api";
 const PROVIDERS = [
   { key: "omni", label: "Omni" },
   { key: "grok", label: "Grok" },
+  { key: "hybrid-omni", label: "混剪 Omni" },
 ];
 const DEFAULT_SCRIPT_CONCURRENCY_CHOICES = [1, 2, 3, 5, 8, 12, 16, 20];
 
@@ -228,7 +229,7 @@ function renderCatalog() {
   $$(".product-toggle").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.stopPropagation();
-      toggleProductExpansion(button.dataset.productName || "");
+      toggleProductExpansion(button.dataset.productKey || "");
       render();
     });
   });
@@ -236,8 +237,8 @@ function renderCatalog() {
   $$(".product-select").forEach((checkbox) => {
     checkbox.addEventListener("click", (event) => event.stopPropagation());
     checkbox.addEventListener("change", () => {
-      const productName = checkbox.dataset.productName || "";
-      const paths = visibleScripts.filter((script) => script.product_name === productName).map((script) => script.md_path);
+      const productKey = checkbox.dataset.productKey || "";
+      const paths = visibleScripts.filter((script) => scriptGroupKey(script) === productKey).map((script) => script.md_path);
       setPathSelection(paths, checkbox.checked);
       render();
     });
@@ -290,7 +291,7 @@ function renderProductGroup(product, scripts, runningContexts, scriptStatuses) {
   const paths = product.scripts.map((script) => script.md_path);
   const checked = paths.length > 0 && paths.every((path) => state.selectedScriptPaths.has(path));
   const selected = paths.filter((path) => state.selectedScriptPaths.has(path)).length;
-  const expanded = isProductExpanded(product.name);
+  const expanded = isProductExpanded(product.key);
   const references = productReferenceOptions(product);
   const selectedReference = state.selectedReferenceByProduct.get(product.name) || "";
   const selectedOption = references.find((item) => item.path === selectedReference);
@@ -304,12 +305,12 @@ function renderProductGroup(product, scripts, runningContexts, scriptStatuses) {
   return `
     <div class="product-group ${expanded ? "expanded" : "collapsed"}">
       <div class="product-group-head">
-        <button class="collapse-toggle product-toggle" type="button" data-product-name="${escapeHtml(product.name)}" aria-expanded="${expanded ? "true" : "false"}" aria-label="${expanded ? "收起产品" : "展开产品"}">${expanded ? "▾" : "▸"}</button>
+        <button class="collapse-toggle product-toggle" type="button" data-product-key="${escapeHtml(product.key)}" aria-expanded="${expanded ? "true" : "false"}" aria-label="${expanded ? "收起产品" : "展开产品"}">${expanded ? "▾" : "▸"}</button>
         <label class="miniCheck" title="选择该产品下当前视图的全部脚本">
-          <input class="product-select" type="checkbox" data-product-name="${escapeHtml(product.name)}" ${checked ? "checked" : ""} />
+          <input class="product-select" type="checkbox" data-product-key="${escapeHtml(product.key)}" ${checked ? "checked" : ""} />
         </label>
         <div>
-          <strong>${escapeHtml(product.name)}</strong>
+          <strong>${escapeHtml(product.label)}</strong>
           <span>${product.scripts.length} 脚本 · ${product.segments} 片段 · 已选 ${selected}<br>${escapeHtml(referenceSummary)}</span>
         </div>
       </div>
@@ -401,7 +402,7 @@ function ensureInitialExpansion(visibleScripts) {
   state.expandedProducts.clear();
   const script = selectedVisibleScript(visibleScripts);
   if (script) {
-    state.expandedProducts.add(productExpansionKey(script.product_name));
+    state.expandedProducts.add(productExpansionKey(scriptGroupKey(script)));
   }
   state.expansionMode = mode;
 }
@@ -427,16 +428,27 @@ function groupVisibleScripts(scripts) {
   const products = [];
   const productMap = new Map();
   scripts.forEach((script) => {
-    let product = productMap.get(script.product_name);
+    const key = scriptGroupKey(script);
+    let product = productMap.get(key);
     if (!product) {
-      product = { name: script.product_name, scripts: [], segments: 0 };
-      productMap.set(script.product_name, product);
+      product = {
+        key,
+        name: script.product_name,
+        label: script.script_type ? `${script.script_type} / ${script.product_name}` : script.product_name,
+        scripts: [],
+        segments: 0,
+      };
+      productMap.set(key, product);
       products.push(product);
     }
     product.scripts.push(script);
     product.segments += (script.segments || []).length;
   });
   return products;
+}
+
+function scriptGroupKey(script) {
+  return script?.script_type ? `${script.script_type}::${script.product_name}` : String(script?.product_name || "");
 }
 
 function productReferenceOptions(product) {

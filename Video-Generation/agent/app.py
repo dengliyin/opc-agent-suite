@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .config import ENV_PATH, SETTINGS_PATH, Settings, load_settings, mask_secrets, update_env_values
+from .config import ENV_PATH, SETTINGS_PATH, Settings, load_hybrid_omni_settings, load_settings, mask_secrets, update_env_values
 from .exporter import export_completed_scripts, restore_exported_scripts
 from .files import character_image_path, scan_scripts, script_to_dict, storyboard_image_path, summarize_catalog, video_output_path
 from .product_lock import storyboard_meta_path
@@ -18,10 +18,12 @@ from .tasks import JobManager, VALID_STAGES
 
 omni_settings = load_settings("omni")
 grok_settings = load_settings("grok")
+hybrid_omni_settings = load_hybrid_omni_settings()
 settings = omni_settings
 job_managers = {
     "omni": JobManager(omni_settings),
     "grok": JobManager(grok_settings),
+    "hybrid_omni": JobManager(hybrid_omni_settings),
 }
 job_manager = job_managers["omni"]
 static_dir = Path(__file__).resolve().parent.parent / "static"
@@ -111,9 +113,11 @@ class ArtifactDeleteRequest(BaseModel):
 class PathSettingsRequest(BaseModel):
     script_root: str = Field(..., min_length=1)
     grok_script_root: str = Field(..., min_length=1)
+    hybrid_omni_script_root: str = Field(..., min_length=1)
     reference_root: str = Field(..., min_length=1)
     video_output_root: str = Field(..., min_length=1)
     grok_video_output_root: str = Field(..., min_length=1)
+    hybrid_omni_video_output_root: str = Field(..., min_length=1)
 
 
 class DirectoryCreateRequest(BaseModel):
@@ -173,12 +177,19 @@ def grok_page() -> FileResponse:
     return FileResponse(static_dir / "grok.html")
 
 
+@app.get("/hybrid-omni")
+@app.get("/hybrid-omni/")
+def hybrid_omni_page() -> FileResponse:
+    return FileResponse(static_dir / "hybrid-omni.html")
+
+
 
 
 def _settings_for(provider: str) -> Settings:
     return {
         "omni": omni_settings,
         "grok": grok_settings,
+        "hybrid_omni": hybrid_omni_settings,
     }.get(provider, omni_settings)
 
 
@@ -207,6 +218,7 @@ def _config_payload(current: Settings) -> Dict[str, Any]:
         "script_root": str(current.script_root),
         "reference_root": str(current.reference_root),
         "video_output_root": str(current.video_output_root),
+        "workflow": current.workflow,
     }
 
 
@@ -214,9 +226,23 @@ def _path_settings_payload() -> Dict[str, Any]:
     fields = [
         _path_field("script_root", "SCRIPT_ROOT", "Omni 脚本输入路径", omni_settings.script_root, "input"),
         _path_field("grok_script_root", "GROK_SCRIPT_ROOT", "Grok 脚本输入路径", grok_settings.script_root, "input"),
+        _path_field(
+            "hybrid_omni_script_root",
+            "HYBRID_OMNI_SCRIPT_ROOT",
+            "混剪 Omni 适配脚本输入路径",
+            hybrid_omni_settings.script_root,
+            "input",
+        ),
         _path_field("reference_root", "REFERENCE_ROOT", "产品参考图路径", omni_settings.reference_root, "input"),
         _path_field("video_output_root", "VIDEO_OUTPUT_ROOT", "Omni 视频输出路径", omni_settings.video_output_root, "output"),
         _path_field("grok_video_output_root", "GROK_VIDEO_OUTPUT_ROOT", "Grok 视频输出路径", grok_settings.video_output_root, "output"),
+        _path_field(
+            "hybrid_omni_video_output_root",
+            "HYBRID_OMNI_VIDEO_OUTPUT_ROOT",
+            "混剪钩子与 CTA Omni 视频输出路径",
+            hybrid_omni_settings.video_output_root,
+            "output",
+        ),
     ]
     return {
         "fields": fields,
@@ -224,6 +250,7 @@ def _path_settings_payload() -> Dict[str, Any]:
         "providers": {
             "omni": _config_payload(omni_settings),
             "grok": _config_payload(grok_settings),
+            "hybrid_omni": _config_payload(hybrid_omni_settings),
         },
     }
 
@@ -665,20 +692,22 @@ def _provider_has_active_job(provider: str) -> bool:
 
 
 def _reload_runtime_settings() -> None:
-    global omni_settings, grok_settings, settings, job_managers, job_manager
+    global omni_settings, grok_settings, hybrid_omni_settings, settings, job_managers, job_manager
     omni_settings = load_settings("omni")
     grok_settings = load_settings("grok")
+    hybrid_omni_settings = load_hybrid_omni_settings()
     settings = omni_settings
     job_managers = {
         "omni": JobManager(omni_settings),
         "grok": JobManager(grok_settings),
+        "hybrid_omni": JobManager(hybrid_omni_settings),
     }
     job_manager = job_managers["omni"]
 
 
 def _catalog_payload(current: Settings) -> Dict[str, Any]:
     try:
-        scripts = scan_scripts(current, include_archived=True)
+        scripts = scan_scripts(current, include_archived=current.workflow == "standard")
     except Exception as exc:
         raise HTTPException(status_code=500, detail=_safe(str(exc)))
     return {
@@ -703,8 +732,16 @@ def _run_pipeline(provider: str, request: RunRequest) -> Dict[str, Any]:
 
 
 def _export_completed(provider: str, request: ExportRequest) -> Dict[str, Any]:
-    if _provider_has_active_job(provider):
-        raise HTTPException(status_code=409, detail="当前 Agent 有任务正在运行，请先停止或等待完成后再导出")
+    selected_paths = {Path(path).expanduser().resolve() for path in request.script_paths if path}
+    for job in _manager_for(provider).list_jobs():
+        if job.get("status") not in {"queued", "running"}:
+            continue
+        raw_job_paths = job.get("script_paths")
+        if raw_job_paths is None:
+            raise HTTPException(status_code=409, detail="当前任务会处理全部脚本，暂不能导出")
+        active_paths = {Path(path).expanduser().resolve() for path in raw_job_paths if path}
+        if selected_paths & active_paths:
+            raise HTTPException(status_code=409, detail="所选脚本正在运行或排队，请等待任务完成或先取消任务")
     current = _settings_for(provider)
     try:
         scripts = scan_scripts(current)
@@ -878,9 +915,11 @@ def save_path_settings(request: PathSettingsRequest) -> Dict[str, Any]:
     updates = {
         "SCRIPT_ROOT": request.script_root.strip(),
         "GROK_SCRIPT_ROOT": request.grok_script_root.strip(),
+        "HYBRID_OMNI_SCRIPT_ROOT": request.hybrid_omni_script_root.strip(),
         "REFERENCE_ROOT": request.reference_root.strip(),
         "VIDEO_OUTPUT_ROOT": request.video_output_root.strip(),
         "GROK_VIDEO_OUTPUT_ROOT": request.grok_video_output_root.strip(),
+        "HYBRID_OMNI_VIDEO_OUTPUT_ROOT": request.hybrid_omni_video_output_root.strip(),
     }
     if any(not value for value in updates.values()):
         raise HTTPException(status_code=400, detail="路径不能为空")
@@ -957,6 +996,11 @@ def get_grok_config() -> Dict[str, Any]:
     return _config_payload(grok_settings)
 
 
+@app.get("/hybrid-omni/api/config")
+def get_hybrid_omni_config() -> Dict[str, Any]:
+    return _config_payload(hybrid_omni_settings)
+
+
 
 
 @app.get("/api/catalog")
@@ -970,6 +1014,11 @@ def get_grok_catalog() -> Dict[str, Any]:
     return _catalog_payload(grok_settings)
 
 
+@app.get("/hybrid-omni/api/catalog")
+def get_hybrid_omni_catalog() -> Dict[str, Any]:
+    return _catalog_payload(hybrid_omni_settings)
+
+
 
 
 @app.post("/api/run")
@@ -981,6 +1030,11 @@ def run_omni_pipeline(request: RunRequest) -> Dict[str, Any]:
 @app.post("/grok/api/run")
 def run_grok_pipeline(request: RunRequest) -> Dict[str, Any]:
     return _run_pipeline("grok", request)
+
+
+@app.post("/hybrid-omni/api/run")
+def run_hybrid_omni_pipeline(request: RunRequest) -> Dict[str, Any]:
+    return _run_pipeline("hybrid_omni", request)
 
 
 
@@ -1033,6 +1087,11 @@ def cancel_grok_jobs(request: CancelRequest = CancelRequest()) -> Dict[str, Any]
     return _cancel_jobs("grok", request)
 
 
+@app.post("/hybrid-omni/api/cancel")
+def cancel_hybrid_omni_jobs(request: CancelRequest = CancelRequest()) -> Dict[str, Any]:
+    return _cancel_jobs("hybrid_omni", request)
+
+
 
 
 @app.post("/api/jobs/concurrency")
@@ -1044,6 +1103,11 @@ def update_omni_job_concurrency(request: ConcurrencyRequest) -> Dict[str, Any]:
 @app.post("/grok/api/jobs/concurrency")
 def update_grok_job_concurrency(request: ConcurrencyRequest) -> Dict[str, Any]:
     return _update_job_concurrency("grok", request)
+
+
+@app.post("/hybrid-omni/api/jobs/concurrency")
+def update_hybrid_omni_job_concurrency(request: ConcurrencyRequest) -> Dict[str, Any]:
+    return _update_job_concurrency("hybrid_omni", request)
 
 
 
@@ -1059,6 +1123,11 @@ def list_grok_jobs() -> Dict[str, Any]:
     return _list_jobs("grok")
 
 
+@app.get("/hybrid-omni/api/jobs")
+def list_hybrid_omni_jobs() -> Dict[str, Any]:
+    return _list_jobs("hybrid_omni")
+
+
 
 
 @app.get("/api/jobs/{job_id}")
@@ -1070,6 +1139,11 @@ def get_omni_job(job_id: str) -> Dict[str, Any]:
 @app.get("/grok/api/jobs/{job_id}")
 def get_grok_job(job_id: str) -> Dict[str, Any]:
     return _get_job("grok", job_id)
+
+
+@app.get("/hybrid-omni/api/jobs/{job_id}")
+def get_hybrid_omni_job(job_id: str) -> Dict[str, Any]:
+    return _get_job("hybrid_omni", job_id)
 
 
 
@@ -1085,6 +1159,11 @@ def grok_artifact(path: str = Query(...)) -> FileResponse:
     return _artifact(grok_settings, path)
 
 
+@app.get("/hybrid-omni/api/artifact")
+def hybrid_omni_artifact(path: str = Query(...)) -> FileResponse:
+    return _artifact(hybrid_omni_settings, path)
+
+
 
 
 @app.delete("/api/artifact")
@@ -1096,6 +1175,11 @@ def delete_omni_artifact(request: ArtifactDeleteRequest) -> Dict[str, Any]:
 @app.delete("/grok/api/artifact")
 def delete_grok_artifact(request: ArtifactDeleteRequest) -> Dict[str, Any]:
     return _delete_artifact(grok_settings, request)
+
+
+@app.delete("/hybrid-omni/api/artifact")
+def delete_hybrid_omni_artifact(request: ArtifactDeleteRequest) -> Dict[str, Any]:
+    return _delete_artifact(hybrid_omni_settings, request)
 
 
 

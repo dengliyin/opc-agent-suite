@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterable, List, Mapping
 import re
@@ -27,6 +27,10 @@ DEFAULT_REFERENCE_ROOT = DEFAULT_VAULT_ROOT / "wiki" / "产品" / "产品底图"
 DEFAULT_VIDEO_OUTPUT_ROOT = DEFAULT_VAULT_ROOT / "wiki" / "视频" / "纯AI视频" / "05AI片段" / "omni"
 DEFAULT_GROK_VIDEO_OUTPUT_ROOT = DEFAULT_VAULT_ROOT / "wiki" / "视频" / "纯AI视频" / "05AI片段" / "grok"
 DEFAULT_COMPLETED_SCRIPT_ROOT = DEFAULT_VAULT_ROOT / "wiki" / "视频" / "纯AI视频" / "06合成工作区"
+DEFAULT_HYBRID_ROOT = DEFAULT_VAULT_ROOT / "wiki" / "视频" / "AI实拍混剪"
+DEFAULT_HYBRID_OMNI_SCRIPT_ROOT = DEFAULT_HYBRID_ROOT / "04适配脚本" / "omni"
+DEFAULT_HYBRID_AI_CLIP_ROOT = DEFAULT_HYBRID_ROOT / "05AI片段"
+DEFAULT_HYBRID_MIX_WORK_ROOT = DEFAULT_HYBRID_ROOT / "08混剪工作区"
 ENV_ASSIGNMENT_RE = re.compile(r"^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_]*)(\s*=)(.*?)(\r?\n)?$")
 
 
@@ -106,6 +110,7 @@ class Settings:
     grok_timeout_seconds: float = 1200.0
     grok_retry_attempts: int = 3
     grok_retry_base_seconds: float = 10.0
+    workflow: str = "standard"
 
     @property
     def image_generations_url(self) -> str:
@@ -276,6 +281,29 @@ def load_settings(provider: str = "omni") -> Settings:
         grok_timeout_seconds=float(os.getenv("GROK_TIMEOUT_SECONDS", "1200")),
         grok_retry_attempts=int(os.getenv("GROK_RETRY_ATTEMPTS", "3")),
         grok_retry_base_seconds=float(os.getenv("GROK_RETRY_BASE_SECONDS", "10")),
+    )
+
+
+def load_hybrid_omni_settings() -> Settings:
+    base = load_settings("omni")
+    ai_clip_root = Path(
+        os.getenv("HYBRID_AI_CLIP_ROOT", str(DEFAULT_HYBRID_AI_CLIP_ROOT))
+    ).expanduser()
+    return replace(
+        base,
+        provider_label="混剪 Omni",
+        api_base_path="/hybrid-omni/api",
+        script_root=Path(
+            os.getenv("HYBRID_OMNI_SCRIPT_ROOT", str(DEFAULT_HYBRID_OMNI_SCRIPT_ROOT))
+        ).expanduser(),
+        video_output_root=Path(
+            os.getenv("HYBRID_OMNI_VIDEO_OUTPUT_ROOT", str(ai_clip_root / "omni"))
+        ).expanduser(),
+        completed_root=Path(
+            os.getenv("HYBRID_MIX_WORK_ROOT", str(DEFAULT_HYBRID_MIX_WORK_ROOT))
+        ).expanduser()
+        / "片段产出归档",
+        workflow="hybrid_omni",
     )
 
 

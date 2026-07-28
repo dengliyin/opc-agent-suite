@@ -6,10 +6,12 @@ from fastapi import HTTPException
 from agent import app as app_module
 from agent.app import (
     ArtifactDeleteRequest,
+    ExportRequest,
     ScriptDeleteRequest,
     _api_summary_payload,
     _delete_artifact,
     _delete_scripts,
+    _export_completed,
     _function_api_model_options,
 )
 from agent.config import Settings
@@ -134,6 +136,51 @@ def test_delete_scripts_rejects_script_in_active_job(monkeypatch, tmp_path: Path
     assert exc.value.status_code == 409
     assert script.exists()
     assert all(path.exists() for path in assets)
+
+
+def test_export_allows_selected_script_outside_active_job(monkeypatch, tmp_path: Path) -> None:
+    settings = settings_for(tmp_path)
+    selected = settings.script_root / "P1" / "completed.md"
+    active = settings.script_root / "P1" / "running.md"
+    manager = FakeManager([{"status": "running", "script_paths": [str(active)]}])
+    monkeypatch.setattr(app_module, "_settings_for", lambda _provider: settings)
+    monkeypatch.setattr(app_module, "_manager_for", lambda _provider: manager)
+    monkeypatch.setattr(app_module, "scan_scripts", lambda _settings: ["catalog"])
+    monkeypatch.setattr(
+        app_module,
+        "export_completed_scripts",
+        lambda _settings, scripts, paths: {"scripts": scripts, "paths": paths},
+    )
+
+    result = _export_completed("omni", ExportRequest(script_paths=[str(selected)]))
+
+    assert result == {"scripts": ["catalog"], "paths": [str(selected)]}
+
+
+def test_export_rejects_selected_script_in_active_job(monkeypatch, tmp_path: Path) -> None:
+    settings = settings_for(tmp_path)
+    selected = settings.script_root / "P1" / "running.md"
+    manager = FakeManager([{"status": "queued", "script_paths": [str(selected)]}])
+    monkeypatch.setattr(app_module, "_manager_for", lambda _provider: manager)
+
+    with pytest.raises(HTTPException) as exc:
+        _export_completed("omni", ExportRequest(script_paths=[str(selected)]))
+
+    assert exc.value.status_code == 409
+    assert "所选脚本正在运行或排队" in exc.value.detail
+
+
+def test_export_rejects_when_active_job_processes_all_scripts(monkeypatch, tmp_path: Path) -> None:
+    settings = settings_for(tmp_path)
+    selected = settings.script_root / "P1" / "completed.md"
+    manager = FakeManager([{"status": "running", "script_paths": None}])
+    monkeypatch.setattr(app_module, "_manager_for", lambda _provider: manager)
+
+    with pytest.raises(HTTPException) as exc:
+        _export_completed("omni", ExportRequest(script_paths=[str(selected)]))
+
+    assert exc.value.status_code == 409
+    assert "处理全部脚本" in exc.value.detail
 
 
 def test_otu_image_ui_only_exposes_async_gpt_image_2() -> None:

@@ -183,3 +183,46 @@ class HybridAgentConfigurationTests(unittest.TestCase):
                 10,
             )
         )
+
+    def test_omni_machine_structure_is_added_deterministically(self) -> None:
+        source_text = "### 镜头 1 (00:00.000 - 00:07.500)\n"
+        model_output = """
+# Segment 1：00:00.000 - 00:07.500
+- 技术占位时长：3.000秒
+[TECHNICAL_PADDING: BLACK_SILENT]
+
+## A. 人物造型参考板提示词
+本段为产品特写段落，无人物主体，不需要生成人物造型参考板。
+
+## B. 故事板图片提示词
+下面是本段镜头脚本（已过滤字段）:
+### 镜头 1 (00:00.000 - 00:07.500)
+"""
+
+        normalized = web.workflow.normalize_omni_machine_structure(
+            model_output,
+            source_text,
+            10,
+        )
+
+        self.assertIn("## 每段生成提示词", normalized)
+        self.assertEqual(normalized.count("[TECHNICAL_PADDING: BLACK_SILENT]"), 1)
+        self.assertIn("- 技术占位时长：2.500秒", normalized)
+        self.assertNotIn("- 技术占位时长：3.000秒", normalized)
+        self.assertIn("技术占位为纯黑画面、完全静音", normalized)
+        self.assertEqual(
+            web.fixed_duration_padding_issues(normalized, source_text, "omni", 10),
+            [],
+        )
+
+    def test_validation_failure_message_becomes_retry_feedback(self) -> None:
+        message = (
+            "输出质检未通过：缺少 ## 每段生成提示词；"
+            "失败产物已隔离: /tmp/failed.md.txt"
+        )
+
+        self.assertEqual(
+            web.validation_retry_feedback(message),
+            "缺少 ## 每段生成提示词",
+        )
+        self.assertEqual(web.validation_retry_feedback("HTTP 500"), "")

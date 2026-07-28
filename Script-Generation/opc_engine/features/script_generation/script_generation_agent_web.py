@@ -32,6 +32,7 @@ from opc_engine.features.script_generation.generate_product_script import (
     FEATURE_DIR,
     LOCAL_INPUTS_PATH,
     LOCAL_MODEL_SETTINGS_PATH,
+    RUNTIME_CONFIG_DIR,
     ROOT,
     SHARED_MODEL_SETTINGS_PATH,
     apply_cli_overrides,
@@ -39,6 +40,7 @@ from opc_engine.features.script_generation.generate_product_script import (
     get_reference_path,
     has_direct_file_inputs,
     load_script_generation_config,
+    migrate_legacy_local_configs,
     product_project_ready,
     reference_country_author_and_video_id,
     read_json_config,
@@ -50,7 +52,7 @@ from opc_engine.core.project_assets import infer_source_id, product_project_root
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 9993
-IMPORTED_INPUTS_DIR = CONFIG_DIR / "imported_inputs"
+IMPORTED_INPUTS_DIR = RUNTIME_CONFIG_DIR / "imported_inputs"
 VAULT_ROOT = Path(
     os.environ.get("OPC_VAULT_ROOT", str(Path.home() / "Documents" / "Obsidian Vault"))
 ).expanduser()
@@ -122,6 +124,7 @@ def write_json_file(path: Path, payload: dict[str, Any], note: str) -> None:
     data.update(payload)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    path.chmod(0o600)
 
 
 def safe_import_name(filename: str, fallback: str) -> str:
@@ -282,9 +285,10 @@ def library_payload(config: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 def state_payload() -> dict[str, Any]:
+    config = load_script_generation_config()
     inputs = read_json_config(LOCAL_INPUTS_PATH)
     model = read_json_config(SHARED_MODEL_SETTINGS_PATH)
-    config = load_script_generation_config()
+    model.update(read_json_config(LOCAL_MODEL_SETTINGS_PATH))
     prompt_path = resolve_root_path(config.get("script_generation_prompt_path") or DEFAULT_PROMPT_PATH)
     mutation_prompt_path = resolve_root_path(config.get("script_generation_mutation_prompt_path") or DEFAULT_MUTATION_PROMPT_PATH)
     knowledge_path = resolve_root_path(config.get("script_content_knowledge_base_path") or SCRIPT_MISTAKE_BOOK_SOURCE_ROOT)
@@ -328,9 +332,11 @@ def state_payload() -> dict[str, Any]:
         "model": safe_model,
         "paths": {
             "feature_dir": display_path(FEATURE_DIR),
-            "config_dir": display_path(CONFIG_DIR),
+            "config_dir": display_path(RUNTIME_CONFIG_DIR),
+            "bundled_config_dir": display_path(CONFIG_DIR),
             "inputs": display_path(LOCAL_INPUTS_PATH),
-            "model_settings": display_path(SHARED_MODEL_SETTINGS_PATH),
+            "model_defaults": display_path(SHARED_MODEL_SETTINGS_PATH),
+            "model_settings": display_path(LOCAL_MODEL_SETTINGS_PATH),
         },
         "files": {
             "prompt": file_stat(prompt_path),
@@ -355,6 +361,7 @@ def state_payload() -> dict[str, Any]:
 
 
 def save_state(payload: dict[str, Any]) -> dict[str, Any]:
+    migrate_legacy_local_configs()
     inputs: dict[str, Any] = {}
     for key in INPUT_KEYS:
         if key in payload:
@@ -371,20 +378,18 @@ def save_state(payload: dict[str, Any]) -> dict[str, Any]:
         inputs["script_reference_analysis_path"] = reference_path
         inputs["script_reference_script_path"] = ""
 
-    model_existing = read_json_config(SHARED_MODEL_SETTINGS_PATH)
-    local_secrets = read_json_config(LOCAL_MODEL_SETTINGS_PATH)
-    model: dict[str, Any] = {}
+    local_model = read_json_config(LOCAL_MODEL_SETTINGS_PATH)
     for key in MODEL_KEYS:
         if key in payload:
             value = payload.get(key)
             if key == "modelmesh_api_key":
                 if str(value or "").strip():
-                    local_secrets = {"modelmesh_api_key": str(value).strip()}
+                    local_model[key] = str(value).strip()
                 continue
             if key in {"script_generation_timeout", "script_generation_max_output_tokens"}:
-                model[key] = int(value or (DEFAULT_TIMEOUT if key.endswith("timeout") else DEFAULT_MAX_OUTPUT_TOKENS))
+                local_model[key] = int(value or (DEFAULT_TIMEOUT if key.endswith("timeout") else DEFAULT_MAX_OUTPUT_TOKENS))
             else:
-                model[key] = str(value or "").strip()
+                local_model[key] = str(value or "").strip()
 
     if "prompt_text" in payload:
         DEFAULT_PROMPT_PATH.write_text(str(payload.get("prompt_text") or "").rstrip() + "\n", encoding="utf-8")
@@ -426,12 +431,8 @@ def save_state(payload: dict[str, Any]) -> dict[str, Any]:
         if key in preserved_input_keys
     }
     merged_inputs.update({key: value for key, value in inputs.items() if value != "" or key in inputs})
-    merged_model = model_existing
-    merged_model.update(model)
-    write_json_file(LOCAL_INPUTS_PATH, merged_inputs, "脚本生成智能体本地输入配置。由可视化界面保存，已被 .gitignore 忽略。")
-    write_json_file(SHARED_MODEL_SETTINGS_PATH, merged_model, "脚本生成智能体共享模型配置。除 API Key 外应提交到 Git。")
-    if local_secrets.get("modelmesh_api_key"):
-        write_json_file(LOCAL_MODEL_SETTINGS_PATH, {"modelmesh_api_key": local_secrets["modelmesh_api_key"]}, "脚本生成智能体本地 API Key。请勿提交。")
+    write_json_file(LOCAL_INPUTS_PATH, merged_inputs, "脚本生成智能体本地输入配置。由可视化界面保存。")
+    write_json_file(LOCAL_MODEL_SETTINGS_PATH, local_model, "脚本生成智能体本地模型配置与 API Key。请勿提交。")
     return state_payload()
 
 
@@ -469,7 +470,12 @@ def open_local_path(value: str) -> dict[str, str]:
     path = resolve_root_path(value)
     if not path.exists():
         raise ValueError(f"文件或目录不存在: {display_path(path)}")
-    subprocess.Popen(["open", str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if path.is_file() and path.suffix.lower() == ".md":
+        query = urllib.parse.urlencode({"path": str(path)})
+        target = f"obsidian://open?{query}"
+    else:
+        target = str(path)
+    subprocess.Popen(["open", target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return {"path": display_path(path)}
 
 
@@ -2135,7 +2141,9 @@ HTML_PAGE = r"""<!doctype html>
 
     async function openLocalPath(path) {
       try {
-        await api('/api/open', {method: 'POST', body: JSON.stringify({path})});
+        const data = await api('/api/open', {method: 'POST', body: JSON.stringify({path})});
+        $('logs').textContent = `已打开：${data.path}`;
+        return data;
       } catch (err) {
         $('logs').textContent = err.message || String(err);
       }

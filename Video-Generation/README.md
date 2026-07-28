@@ -12,6 +12,12 @@ docker compose up -d --build
 
 打开 `http://127.0.0.1:9995`。
 
+入口包含三套互相隔离的工作台：
+
+- `Omni 片段产出`：纯 AI 线路。
+- `Grok 片段产出`：纯 AI 线路。
+- `混剪钩子与 CTA Omni 片段产出`：AI＋实拍混剪线路，只读取钩子与 CTA 的 Omni 适配脚本。
+
 同一片段产出 Agent 运行任务时仍可继续提交新功能。新任务按提交顺序进入队列，每个 Agent 同一时间只执行一个任务；强制重跑也遵循相同队列顺序。
 
 停止服务：
@@ -60,6 +66,8 @@ python3 -m venv .venv
 - 人物图：写回每个产品脚本所在文件夹，命名为 `<md名>-片段x-人物图.png`
 - 故事版图：写回每个产品脚本所在文件夹，命名为 `<md名>-片段x-故事版.png`
 - Omni 视频：写入 `VIDEO_OUTPUT_ROOT/<产品名>/<md名>-片段x-omni.mp4`
+- 混剪 Omni 输入：读取 `HYBRID_OMNI_SCRIPT_ROOT/混剪-钩子|混剪-CTA/<产品名>/<来源脚本>/*.md`
+- 混剪 Omni 视频：写入 `HYBRID_OMNI_VIDEO_OUTPUT_ROOT/混剪-钩子|混剪-CTA/<产品名>/<md名>-片段x-omni.mp4`
 
 片段产出 Agent 只负责生成与导出素材。已拼接素材的成品校验和清理由 `http://127.0.0.1:9998/` 的片段合成 Agent 负责；归档列表只读取导出记录并显示“已清理”，不再提供删除媒体的入口。
 

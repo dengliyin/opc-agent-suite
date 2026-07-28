@@ -172,6 +172,18 @@ class GenerateProductScriptTests(unittest.TestCase):
         self.assertEqual(profiles["001"]["audio"], "(意大利语): “Ma che dice questo adesso?”")
         self.assertEqual(profiles["001"]["word_count"], 5)
 
+    def test_audio_parser_treats_environment_sound_notes_as_no_spoken_audio(self):
+        script = """### 镜头 1 (00:00.000 - 00:01.100)
+
+[音频文案] （无口播，仅有金属工具碰撞声和沉重的呼吸声）
+
+### 镜头 2 (00:01.100 - 00:02.000)
+
+[音频文案] （无声，仅有按键的轻微“滴”声）
+"""
+
+        self.assertEqual(generate_product_script.extract_audio_profiles(script), {})
+
     def test_audio_fit_uses_shot_duration_and_rejects_overlong_italian_dialogue(self):
         script = """### 镜头 1 (00:00.000 - 00:01.000)
 
@@ -184,7 +196,31 @@ class GenerateProductScriptTests(unittest.TestCase):
         self.assertEqual(len(issues), 1)
         self.assertEqual(issues[0]["shot_key"], "001")
         self.assertEqual(issues[0]["word_count"], 11)
-        self.assertEqual(issues[0]["max_word_count"], 2)
+        self.assertEqual(issues[0]["max_word_count"], 4)
+
+    def test_fast_tiktok_pacing_warns_but_does_not_block_below_hard_limit(self):
+        script = """### 镜头 1 (00:00.000 - 00:02.100)
+
+* **[音频文案]**：(英语): “One two three four five six seven eight.”（中文翻译对照：测试。）
+"""
+
+        self.assertFalse(generate_product_script.validate_audio_fit(script))
+        warnings = generate_product_script.audio_pacing_warnings(script)
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("8 词", warnings[0])
+        self.assertIn("建议 7 词", warnings[0])
+        self.assertIn("硬上限 8 词", warnings[0])
+
+    def test_fast_tiktok_pacing_blocks_only_above_hard_limit(self):
+        script = """### 镜头 1 (00:00.000 - 00:02.100)
+
+* **[音频文案]**：(英语): “One two three four five six seven eight nine.”（中文翻译对照：测试。）
+"""
+
+        issues = generate_product_script.validate_audio_fit(script)
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0]["target_word_count"], 7)
+        self.assertEqual(issues[0]["max_word_count"], 8)
 
     def test_overlong_spoken_dialogue_is_rejected_before_markdown_is_written(self):
         reference = """### 镜头 1 (00:00.000 - 00:01.000)
@@ -251,6 +287,46 @@ class GenerateProductScriptTests(unittest.TestCase):
         self.assertIn("Solo ora", result)
         self.assertFalse(generate_product_script.validate_audio_fit(result))
         self.assertTrue(metadata["repair_requested"])
+
+    def test_audio_repair_runs_second_round_when_first_result_is_still_overlong(self):
+        reference = """### 镜头 1 (00:00.000 - 00:01.000)
+
+* **[音频文案]**：(英语): “Go.”（中文翻译对照：走。）
+"""
+        overlong = """### 镜头 1 (00:00.000 - 00:01.000)
+
+* **[音频文案]**：(英语): “One two three four five six.”（中文翻译对照：测试。）
+"""
+        still_overlong = """### 镜头 1 (00:00.000 - 00:01.000)
+
+* **[音频文案]**：(英语): “One two three four five.”（中文翻译对照：测试。）
+"""
+        repaired = """### 镜头 1 (00:00.000 - 00:01.000)
+
+* **[音频文案]**：(英语): “Go now.”（中文翻译对照：现在走。）
+"""
+        config = {"script_target_language": "英语"}
+        args = argparse.Namespace(backend="api")
+
+        with patch.object(
+            generate_product_script,
+            "call_text_model",
+            side_effect=[
+                (still_overlong, {"id": "repair-1"}, "openai-chat", "content"),
+                (repaired, {"id": "repair-2"}, "openai-chat", "content"),
+            ],
+        ) as call_model:
+            result, metadata = generate_product_script.repair_script_audio(
+                config,
+                args,
+                overlong,
+                reference,
+                "测试音频缩写",
+            )
+
+        self.assertEqual(call_model.call_count, 2)
+        self.assertIn("Go now", result)
+        self.assertEqual(len(metadata["attempts"]), 2)
 
     def test_silent_reference_shot_removes_generated_voice_fields_only(self):
         reference = """### 镜头 1 (00:00.000 - 00:01.000)
@@ -452,7 +528,7 @@ class GenerateProductScriptTests(unittest.TestCase):
         self.assertEqual(generate_product_script.COUNTRY_FILENAME_CODE["越南"], "VN")
         self.assertEqual(generate_product_script.COUNTRY_FILENAME_CODE["菲律宾"], "PH")
 
-    def test_shared_model_settings_override_stale_local_values_except_api_key(self):
+    def test_local_model_settings_override_shared_defaults(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             shared = root / "model_defaults.json"
@@ -475,9 +551,34 @@ class GenerateProductScriptTests(unittest.TestCase):
             ):
                 config = generate_product_script.load_script_generation_config()
 
-        self.assertEqual(config["modelmesh_base_url"], "https://shared.test")
+        self.assertEqual(config["modelmesh_base_url"], "https://stale.test")
         self.assertEqual(config["script_generation_model"], "shared-model")
         self.assertEqual(config["modelmesh_api_key"], "secret")
+
+    def test_legacy_local_configs_migrate_to_runtime_directory(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            legacy_inputs = root / "legacy" / "inputs.json"
+            legacy_model = root / "legacy" / "model_settings.json"
+            runtime_inputs = root / "runtime" / "inputs.json"
+            runtime_model = root / "runtime" / "model_settings.json"
+            legacy_inputs.parent.mkdir()
+            legacy_inputs.write_text(json.dumps({"script_country": "美国"}), encoding="utf-8")
+            legacy_model.write_text(json.dumps({"modelmesh_api_key": "secret"}), encoding="utf-8")
+
+            with (
+                patch.object(generate_product_script, "LEGACY_LOCAL_INPUTS_PATH", legacy_inputs),
+                patch.object(generate_product_script, "LEGACY_LOCAL_MODEL_SETTINGS_PATH", legacy_model),
+                patch.object(generate_product_script, "LOCAL_INPUTS_PATH", runtime_inputs),
+                patch.object(generate_product_script, "LOCAL_MODEL_SETTINGS_PATH", runtime_model),
+            ):
+                migrated = generate_product_script.migrate_legacy_local_configs()
+
+            self.assertEqual(migrated, [runtime_inputs, runtime_model])
+            self.assertEqual(json.loads(runtime_inputs.read_text(encoding="utf-8"))["script_country"], "美国")
+            self.assertEqual(json.loads(runtime_model.read_text(encoding="utf-8"))["modelmesh_api_key"], "secret")
+            self.assertEqual(runtime_inputs.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(runtime_model.stat().st_mode & 0o777, 0o600)
 
     def test_main_creates_explicit_product_output_dir_without_saved_project(self):
         with tempfile.TemporaryDirectory() as temp_dir:

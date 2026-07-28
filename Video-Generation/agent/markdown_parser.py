@@ -191,6 +191,17 @@ def build_direct_video_prompt(segment: Segment) -> str:
     if shot_match is None:
         raise ValueError(f"片段{segment.index}未找到镜头脚本，无法运行功能4")
     shot_script = segment.raw_text[shot_match.start() :].strip()
+    technical_padding = _technical_padding_control(segment.raw_text)
+    technical_padding_prompt = ""
+    if technical_padding:
+        technical_padding_prompt = (
+            "\n固定时长技术占位要求（最高优先级）：\n"
+            f"{technical_padding}\n"
+            "只允许在“本段有效内容时长”内执行下面的镜头脚本；"
+            "从“技术占位开始”到“模型片段时长”必须切换为纯黑画面并保持完全静音，"
+            "不得出现人物、产品、字幕、贴纸、动作或转场内容。"
+            "禁止通过慢动作、延长停留、重复动作、补充台词、增加空镜或新增剧情延长有效内容。\n"
+        )
     return (
         "请根据第一张人物参考图、第二张产品参考图和当前片段镜头脚本，直接生成一段真实商业带货短视频片段。"
         "第一张参考图用于锁定人物外观、年龄、肤色、发型、脸部特征和整体气质；"
@@ -201,7 +212,33 @@ def build_direct_video_prompt(segment: Segment) -> str:
         f"{VIDEO_AUDIO_LANGUAGE_GUARD}"
         f"{CAMERA_VISIBILITY_GUARD}"
         f"{DIRECT_VIDEO_LAYOUT_GUARD}"
-        "画面自然真实，适合竖屏短视频带货。\n\n"
+        "画面自然真实，适合竖屏短视频带货。"
+        f"{technical_padding_prompt}\n"
         "当前片段镜头脚本如下：\n"
         f"{shot_script}"
     )
+
+
+def _technical_padding_control(raw_text: str) -> str:
+    lines: List[str] = []
+    field_labels = (
+        "原脚本总时长",
+        "本段有效内容时长",
+        "有效内容结束",
+        "技术占位开始",
+        "技术占位时长",
+        "模型片段时长",
+    )
+    marker_found = False
+    for line in str(raw_text or "").splitlines():
+        stripped = line.strip()
+        if A_HEADING_RE.match(stripped):
+            break
+        if any(re.match(rf"^-?\s*{re.escape(label)}[：:]", stripped) for label in field_labels):
+            lines.append(stripped)
+        elif stripped == "[TECHNICAL_PADDING: BLACK_SILENT]":
+            lines.append(stripped)
+            marker_found = True
+        elif stripped.startswith("技术占位为纯黑画面"):
+            lines.append(stripped)
+    return "\n".join(lines) if marker_found else ""

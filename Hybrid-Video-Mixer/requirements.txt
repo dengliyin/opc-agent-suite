@@ -1,0 +1,1 @@
+# Standard-library web service. Rendering uses the suite's bundled FFmpeg and HyperFrames runtime.

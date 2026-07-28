@@ -3,9 +3,11 @@ import argparse
 import contextlib
 import fcntl
 import json
+import math
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -35,10 +37,18 @@ from opc_engine.core.project_assets import (
 ROOT = Path(__file__).resolve().parents[3]
 FEATURE_DIR = Path(__file__).resolve().parent
 CONFIG_DIR = FEATURE_DIR / "config"
-LOCAL_INPUTS_PATH = CONFIG_DIR / "inputs.json"
+RUNTIME_CONFIG_DIR = Path(
+    os.environ.get(
+        "OPC_SCRIPT_GENERATION_CONFIG_DIR",
+        str(Path.home() / "Library" / "Application Support" / "OPC-Agent-Suite" / "Script-Generation"),
+    )
+).expanduser()
+LEGACY_LOCAL_INPUTS_PATH = CONFIG_DIR / "inputs.json"
+LEGACY_LOCAL_MODEL_SETTINGS_PATH = CONFIG_DIR / "model_settings.json"
+LOCAL_INPUTS_PATH = RUNTIME_CONFIG_DIR / "inputs.json"
 SCRIPT_INPUTS_PATH = Path(os.environ.get("SCRIPT_GENERATION_INPUTS_PATH", str(LOCAL_INPUTS_PATH))).expanduser()
 SHARED_MODEL_SETTINGS_PATH = CONFIG_DIR / "model_defaults.json"
-LOCAL_MODEL_SETTINGS_PATH = CONFIG_DIR / "model_settings.json"
+LOCAL_MODEL_SETTINGS_PATH = RUNTIME_CONFIG_DIR / "model_settings.json"
 VAULT_ROOT = Path(
     os.environ.get("OPC_VAULT_ROOT", str(Path.home() / "Documents" / "Obsidian Vault"))
 ).expanduser()
@@ -358,11 +368,28 @@ def read_json_config(path):
     return {key: value for key, value in data.items() if key not in IGNORED_CONFIG_FIELDS and not key.startswith("_")}
 
 
+def migrate_legacy_local_configs():
+    migrated = []
+    for legacy_path, runtime_path in (
+        (LEGACY_LOCAL_INPUTS_PATH, LOCAL_INPUTS_PATH),
+        (LEGACY_LOCAL_MODEL_SETTINGS_PATH, LOCAL_MODEL_SETTINGS_PATH),
+    ):
+        if runtime_path.exists() or not legacy_path.is_file():
+            continue
+        try:
+            runtime_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(legacy_path, runtime_path)
+            runtime_path.chmod(0o600)
+            migrated.append(runtime_path)
+        except OSError:
+            continue
+    return migrated
+
+
 def load_script_generation_config():
+    migrate_legacy_local_configs()
     config = read_json_config(SHARED_MODEL_SETTINGS_PATH)
-    local_model = read_json_config(LOCAL_MODEL_SETTINGS_PATH)
-    if local_model.get("modelmesh_api_key"):
-        config["modelmesh_api_key"] = local_model["modelmesh_api_key"]
+    config.update(read_json_config(LOCAL_MODEL_SETTINGS_PATH))
     config.update(read_json_config(SCRIPT_INPUTS_PATH))
     return config
 
@@ -758,8 +785,8 @@ def build_generation_prompt(config):
 - 如果目标语言是孟加拉语，台词列必须输出 Bengali / Bangla 文案；字幕列可以放中文翻译对照。不得用 Malay/Bahasa 代替 Bengali。
 - 如果目标语言是法语，台词列必须输出 French / Français 文案；字幕列可以放中文翻译对照。不得用 Spanish / Español、德语或原脚本语言代替法语。
 - 每个镜头必须把声音描述与真实台词分开：**[声音/语气]** 只写声音、情绪和语速，**[音频文案]** 只写实际会被朗读的真实目标语言台词；中文翻译对照只能放在该条音频文案最后一个括号里。
-- 真实口播必须匹配镜头时间码：拉丁字母语言每秒最多约 2.8 个单词，中文/日文/韩文每秒最多约 4.5 个字符；镜头时长绝对上限优先于参考稿字数，参考稿本身过长时必须缩短，放不下的信息必须舍弃。
-- 必须逐镜头继承参考稿的有声/静音结构：参考稿对应镜头没有真实 **[音频文案]** 时，该镜头不得新增口播，也不要输出 **[声音/语气]**、**[音频文案]**、**[音频交付模式]**；背景音乐、环境音和字幕仍按参考稿保留。
+- 真实口播按 TikTok 快节奏匹配镜头时间码：拉丁字母语言建议不超过 3.2 词/秒、硬上限 3.8 词/秒；中文/日文/韩文建议不超过 5.5 字/秒、硬上限 6.5 字/秒。建议值到硬上限之间允许保留，只有超过硬上限才必须缩短；所有容量向上取整。
+- 必须逐镜头继承参考稿的有声/静音结构：参考稿对应镜头没有真实 **[音频文案]** 时，该镜头不得新增口播，也不要输出 **[声音/语气]**、**[音频文案]**、**[音频交付模式]**；标注“无口播”“无声”“仅有环境音/动作音效”同样属于静音镜头。背景音乐、环境音和字幕仍按参考稿保留。
 - 主体类型是不可变的核心视觉资产：参考稿中的骷髅人、人体骨骼模型、机器人、动物拟人、玩偶、怪物或无人物动画绝对不能改成真人；本地化只允许调整服装、配饰、发型、场景陈设和表达习惯。
 - 贴纸必须最小改动：保留参考脚本里的贴纸数量、位置、颜色、层级、按钮/箭头/CTA 结构和出现镜头；贴纸文案不要重新创作，只允许把旧产品词、冲突卖点或合规风险词替换成我方产品对应表达。目标语言贴纸不得出现中外文混写，中文只能放在括号里的翻译对照。
 - 拍摄设备、固定方式、支撑物、垫靠物和摆放位置只用于推导镜头视角；输出脚本时只能写成自拍视角、固定机位、低角度、平视、俯拍、仰拍、轻微手持晃动等抽象镜头语言，不得写入可见场景、动作、道具、细节或倒影。
@@ -847,8 +874,8 @@ def build_mutation_prompt(config, generated_script, variant_count, batch_start=1
 - 如果“目标语言变量”包含 American English，必须使用美国市场自然表达和美式拼写；如果包含 British English，必须使用英国市场自然表达和英式拼写；如果包含 Irish English，必须使用爱尔兰市场自然表达并倾向英式拼写。
 - 如果“国家/地区变量”不是“不改变原脚本”，人物外观、服装审美、场景陈设、道具、消费语境和本地化表达必须服务于该国家/地区；不得回到母版原国家语境。
 - 每个镜头必须把声音描述与真实台词分开：**[声音/语气]** 只写声音、情绪和语速，**[音频文案]** 只写实际会被朗读的真实目标语言台词；中文翻译对照只能放在该条音频文案最后一个括号里。
-- 真实口播必须匹配镜头时间码：拉丁字母语言每秒最多约 2.8 个单词，中文/日文/韩文每秒最多约 4.5 个字符；镜头时长绝对上限优先于母版字数，母版本身过长时必须缩短，不得为了加入 persona/time_marker/卖点而扩写。
-- 必须逐镜头继承母版的有声/静音结构：母版对应镜头没有真实 **[音频文案]** 时，该变体镜头不得新增口播，也不要输出 **[声音/语气]**、**[音频文案]**、**[音频交付模式]**；背景音乐、环境音和字幕仍按母版保留。
+- 真实口播按 TikTok 快节奏匹配镜头时间码：拉丁字母语言建议不超过 3.2 词/秒、硬上限 3.8 词/秒；中文/日文/韩文建议不超过 5.5 字/秒、硬上限 6.5 字/秒。建议值到硬上限之间允许保留，只有超过硬上限才必须缩短；所有容量向上取整。
+- 必须逐镜头继承母版的有声/静音结构：母版对应镜头没有真实 **[音频文案]** 时，该变体镜头不得新增口播，也不要输出 **[声音/语气]**、**[音频文案]**、**[音频交付模式]**；标注“无口播”“无声”“仅有环境音/动作音效”同样属于静音镜头。背景音乐、环境音和字幕仍按母版保留。
 - 必须锁定母版主体的物种、材质和生命形态：骷髅人、人体骨骼模型、机器人、动物拟人、玩偶、怪物或无人物动画不得裂变成真人；只能变化服装、配饰、发型、场景和局部造型。
 - 贴纸必须最小改动：保留母版脚本里的贴纸数量、位置、颜色、层级、按钮/箭头/CTA 结构和出现镜头；贴纸文案只做必要产品词、合规词或目标语言修正，不得重新创作整句，不得出现中外文混写。
 - 拍摄设备、固定方式、支撑物、垫靠物和摆放位置只用于推导镜头视角；输出脚本时只能写成自拍视角、固定机位、低角度、平视、俯拍、仰拍、轻微手持晃动等抽象镜头语言，不得写入可见场景、动作、道具、细节或倒影。
@@ -1232,6 +1259,16 @@ def spoken_audio_metrics(text):
     }
 
 
+def is_silent_audio_description(text):
+    content = spoken_audio_text(text).strip().lower()
+    compact = re.sub(r"[\s（）()【】\[\]。.!！\"“”'：:，,；;]+", "", content)
+    if compact in {"", "无", "无口播", "无音频", "无声", "none", "noaudio", "n/a", "-"}:
+        return True
+    return bool(
+        re.search(r"无口播|没有口播|无对白|没有对白|无声(?:，|,|。|\s|仅有|只有)|no\s+(?:spoken\s+)?(?:audio|voiceover|dialogue)", content, re.I)
+    )
+
+
 def extract_shot_key(line, fallback_index):
     text = str(line or "")
     match = re.search(r"(?:镜头|Shot|SHOT)\s*#?\s*(\d{1,3})", text)
@@ -1278,8 +1315,7 @@ def extract_audio_profiles(text):
         audio = explicit_lines[0] if explicit_lines else body
         if not audio and continuations:
             audio = continuations[0]
-        silent_markers = {"无", "无口播", "无音频", "none", "no audio", "n/a", "-"}
-        if audio and spoken_audio_text(audio).strip().lower() not in silent_markers:
+        if audio and not is_silent_audio_description(audio):
             metrics = spoken_audio_metrics(audio)
             normalized = compact_audio_text(audio)
             profile = profiles.setdefault(
@@ -1476,34 +1512,72 @@ def timecode_duration_seconds(timecode):
     return max(0, end - start)
 
 
+def audio_pacing_limits(profile):
+    duration = timecode_duration_seconds(profile.get("timecode"))
+    word_count = int(profile.get("word_count") or 0)
+    cjk_count = int(profile.get("cjk_count") or 0)
+    uses_cjk_budget = cjk_count >= 2 and word_count <= 2
+    return {
+        "duration_seconds": duration,
+        "word_count": word_count,
+        "cjk_count": cjk_count,
+        "uses_cjk_budget": uses_cjk_budget,
+        "target_word_count": max(1, math.ceil(duration * 3.2)),
+        "max_word_count": max(1, math.ceil(duration * 3.8)),
+        "target_cjk_count": max(1, math.ceil(duration * 5.5)),
+        "max_cjk_count": max(1, math.ceil(duration * 6.5)),
+    }
+
+
 def validate_audio_fit(text):
     issues = []
     for shot_key, profile in extract_audio_profiles(text).items():
-        duration = timecode_duration_seconds(profile.get("timecode"))
+        limits = audio_pacing_limits(profile)
+        duration = limits["duration_seconds"]
         if duration <= 0:
             continue
-        word_count = int(profile.get("word_count") or 0)
-        cjk_count = int(profile.get("cjk_count") or 0)
-        max_word_count = max(1, int(duration * 2.8))
-        max_cjk_count = max(1, int(duration * 4.5))
-        uses_cjk_budget = cjk_count >= 2 and word_count <= 2
-        is_overlong = cjk_count > max_cjk_count if uses_cjk_budget else word_count > max_word_count
+        if limits["uses_cjk_budget"]:
+            is_overlong = limits["cjk_count"] > limits["max_cjk_count"]
+        else:
+            is_overlong = limits["word_count"] > limits["max_word_count"]
         if not is_overlong:
             continue
         issues.append(
             {
                 "shot_key": shot_key,
                 "timecode": profile.get("timecode") or "未知时间码",
-                "duration_seconds": duration,
                 "audio": profile.get("audio") or "",
-                "word_count": word_count,
-                "max_word_count": max_word_count,
-                "cjk_count": cjk_count,
-                "max_cjk_count": max_cjk_count,
-                "metric": "cjk_chars" if uses_cjk_budget else "words",
+                **limits,
+                "metric": "cjk_chars" if limits["uses_cjk_budget"] else "words",
             }
         )
     return issues
+
+
+def audio_pacing_warnings(text):
+    warnings = []
+    for shot_key, profile in extract_audio_profiles(text).items():
+        limits = audio_pacing_limits(profile)
+        if limits["duration_seconds"] <= 0:
+            continue
+        if limits["uses_cjk_budget"]:
+            count = limits["cjk_count"]
+            target = limits["target_cjk_count"]
+            hard_limit = limits["max_cjk_count"]
+            unit = "字"
+        else:
+            count = limits["word_count"]
+            target = limits["target_word_count"]
+            hard_limit = limits["max_word_count"]
+            unit = "词"
+        if count <= target or count > hard_limit:
+            continue
+        warnings.append(
+            f'口播节奏警告: 镜头 {shot_key}（{profile.get("timecode") or "未知时间码"}）'
+            f"实际 {count} {unit}，建议 {target} {unit}，硬上限 {hard_limit} {unit}；"
+            "符合 TikTok 快节奏硬上限，允许保存。"
+        )
+    return warnings
 
 
 def format_audio_fit_failure(issues):
@@ -1605,7 +1679,8 @@ def build_audio_repair_prompt(config, script_text, issues):
 2. 不得修改镜头数量、镜头编号、时间码或任何画面字段。
 3. 不得新增卖点、产品事实、人物、动作或 CTA；信息放不下就舍弃次要信息。
 4. **[声音/语气]** 只写声音、情绪和语速描述；**[音频文案]** 只写实际会被朗读的目标语言台词。
-5. 直接返回完整 Markdown 脚本，不解释。
+5. 必须逐镜头按下面给出的单词数或字符数硬上限计数；宁可删除整句或只保留关键词，也不能超过上限。
+6. 直接返回完整 Markdown 脚本，不解释。
 
 逐镜头绝对上限（以镜头时长为准，优先级高于母版字数）：
 {chr(10).join(limits)}
@@ -1621,44 +1696,70 @@ def repair_script_audio(config, args, script_text, reference_text, task_name):
     corrected_text, audio_structure_warnings = enforce_reference_audio_structure(reference_text, corrected_text)
     issues = validate_audio_fit(corrected_text)
     if not issues:
+        pacing_warnings = audio_pacing_warnings(corrected_text)
+        for warning in pacing_warnings:
+            log(f"{task_name}: {warning}")
         return corrected_text, {
             "repair_requested": False,
             "timeline_warnings": timeline_warnings + audio_structure_warnings,
+            "pacing_warnings": pacing_warnings,
             "remaining_issues": [],
         }
 
+    initial_issues = issues
     log(f"{task_name}: 检测到 {len(issues)} 个镜头真实口播超时，自动请求缩写")
-    prompt = build_audio_repair_prompt(config, corrected_text, issues)
     backend = script_generation_backend(config, args)
-    if backend in {"obsidian", "obsidian_cli"}:
-        repaired_text, repair_raw, endpoint_style, field_style = call_obsidian_cli(
-            config, args, prompt, task_name, f"待缩写镜头: {len(issues)}"
+    max_attempts = max(1, int(config.get("script_audio_repair_attempts") or 2))
+    repair_attempts = []
+    all_warnings = timeline_warnings + audio_structure_warnings
+    current_text = corrected_text
+    endpoint_style = backend
+    field_style = "text"
+
+    for attempt in range(1, max_attempts + 1):
+        prompt = build_audio_repair_prompt(config, current_text, issues)
+        attempt_name = f"{task_name}第 {attempt} 轮"
+        if backend in {"obsidian", "obsidian_cli"}:
+            repaired_text, repair_raw, endpoint_style, field_style = call_obsidian_cli(
+                config, args, prompt, attempt_name, f"待缩写镜头: {len(issues)}"
+            )
+        else:
+            repaired_text, repair_raw, endpoint_style, field_style = call_text_model(
+                config, args, prompt, attempt_name, f"待缩写镜头: {len(issues)}"
+            )
+        repaired_text = normalize_audio_translation_positions(repaired_text)
+        repaired_text, repair_timeline_warnings = enforce_output_timeline(config, reference_text, repaired_text)
+        repaired_text, repair_audio_structure_warnings = enforce_reference_audio_structure(reference_text, repaired_text)
+        all_warnings.extend(repair_timeline_warnings + repair_audio_structure_warnings)
+        issues = validate_audio_fit(repaired_text)
+        repair_attempts.append(
+            {
+                "attempt": attempt,
+                "remaining_issues": issues,
+                "raw": repair_raw,
+            }
         )
-    else:
-        repaired_text, repair_raw, endpoint_style, field_style = call_text_model(
-            config, args, prompt, task_name, f"待缩写镜头: {len(issues)}"
-        )
-    repaired_text = normalize_audio_translation_positions(repaired_text)
-    repaired_text, repair_timeline_warnings = enforce_output_timeline(config, reference_text, repaired_text)
-    repaired_text, repair_audio_structure_warnings = enforce_reference_audio_structure(reference_text, repaired_text)
-    remaining_issues = validate_audio_fit(repaired_text)
-    if remaining_issues:
-        raise RuntimeError(format_audio_fit_failure(remaining_issues))
-    log(f"{task_name}: 缩写完成并通过逐镜头真实口播时长校验")
-    return repaired_text, {
-        "repair_requested": True,
-        "initial_issues": issues,
-        "remaining_issues": [],
-        "timeline_warnings": (
-            timeline_warnings
-            + audio_structure_warnings
-            + repair_timeline_warnings
-            + repair_audio_structure_warnings
-        ),
-        "endpoint_style": endpoint_style,
-        "field_style": field_style,
-        "raw": repair_raw,
-    }
+        current_text = repaired_text
+        if not issues:
+            pacing_warnings = audio_pacing_warnings(current_text)
+            for warning in pacing_warnings:
+                log(f"{task_name}: {warning}")
+            log(f"{task_name}: 第 {attempt} 轮缩写完成并通过逐镜头真实口播时长校验")
+            return current_text, {
+                "repair_requested": True,
+                "initial_issues": initial_issues,
+                "remaining_issues": [],
+                "timeline_warnings": all_warnings,
+                "pacing_warnings": pacing_warnings,
+                "endpoint_style": endpoint_style,
+                "field_style": field_style,
+                "attempts": repair_attempts,
+                "raw": repair_raw,
+            }
+        if attempt < max_attempts:
+            log(f"{task_name}: 第 {attempt} 轮后仍有 {len(issues)} 个镜头超时，继续压缩")
+
+    raise RuntimeError(format_audio_fit_failure(issues))
 
 
 def generate_validated_clone(config, args):
@@ -2250,6 +2351,7 @@ def write_script_outputs(config, output_dir, text, raw_response):
         duration_warnings.extend(audio_structure_warnings)
         require_subject_type_lock(reference_text, text)
         require_audio_fit(text)
+        duration_warnings.extend(audio_pacing_warnings(text))
     output_root = resolve_output_root(config, output_dir)
     country, author, source_id = reference_country_author_and_video_id(reference_path)
     product_name = safe_output_name(product_output_name(config))
@@ -2298,6 +2400,7 @@ def write_script_outputs(config, output_dir, text, raw_response):
         variant_duration_warnings.extend(audio_structure_warnings)
         require_subject_type_lock(reference_text, variant_text)
         require_audio_fit(variant_text)
+        variant_duration_warnings.extend(audio_pacing_warnings(variant_text))
         validated_variants.append((sequence_index, variant_number, variant_text, variant_duration_warnings))
 
     output_root.mkdir(parents=True, exist_ok=True)
