@@ -299,11 +299,10 @@ class GenerateProductScriptTests(unittest.TestCase):
 * **[声音/语气]**：男子急促地说。
 * **[音频文案]**：(意大利语): “Uno due tre quattro cinque sei.”（中文翻译对照：测试。）
 """
-        repaired = """### 镜头 1 (00:00.000 - 00:03.000)
-
-* **[声音/语气]**：男子急促地说。
-* **[音频文案]**：(意大利语): “Solo ora.”（中文翻译对照：就是现在。）
-"""
+        repaired = json.dumps(
+            {"001": {"audio": "Solo ora.", "translation": "就是现在。"}},
+            ensure_ascii=False,
+        )
         config = {"script_target_language": "意大利语"}
         args = argparse.Namespace(backend="api")
 
@@ -335,14 +334,14 @@ class GenerateProductScriptTests(unittest.TestCase):
 
 * **[音频文案]**：(英语): “One two three four five six.”（中文翻译对照：测试。）
 """
-        still_overlong = """### 镜头 1 (00:00.000 - 00:01.000)
-
-* **[音频文案]**：(英语): “One two three four five.”（中文翻译对照：测试。）
-"""
-        repaired = """### 镜头 1 (00:00.000 - 00:01.000)
-
-* **[音频文案]**：(英语): “Go now.”（中文翻译对照：现在走。）
-"""
+        still_overlong = json.dumps(
+            {"001": {"audio": "One two three four five.", "translation": "测试。"}},
+            ensure_ascii=False,
+        )
+        repaired = json.dumps(
+            {"001": {"audio": "Go now.", "translation": "现在走。"}},
+            ensure_ascii=False,
+        )
         config = {"script_target_language": "英语"}
         args = argparse.Namespace(backend="api")
 
@@ -365,6 +364,39 @@ class GenerateProductScriptTests(unittest.TestCase):
         self.assertEqual(call_model.call_count, 2)
         self.assertIn("Go now", result)
         self.assertEqual(len(metadata["attempts"]), 2)
+
+    def test_sfx_audio_description_is_not_counted_as_spoken_dialogue(self):
+        script = """### 镜头 1 (00:00.000 - 00:01.000)
+
+[音频文案] 揉搓胡须的声效（SFX）。
+
+[音频交付模式] voiceover
+"""
+
+        self.assertEqual(
+            generate_product_script.classify_audio_content("揉搓胡须的声效（SFX）。"),
+            "sfx",
+        )
+        self.assertFalse(generate_product_script.validate_audio_fit(script))
+        self.assertNotIn("001", generate_product_script.extract_audio_profiles(script))
+
+        normalized = generate_product_script.normalize_nonspoken_audio_fields(script)
+        self.assertIn("[环境音/音效] 揉搓胡须的声效（SFX）。", normalized)
+        self.assertNotIn("[音频文案]", normalized)
+
+    def test_mixed_spoken_dialogue_and_sfx_counts_only_quoted_dialogue(self):
+        metrics = generate_product_script.spoken_audio_metrics(
+            '"Wait now!" followed by a loud splash sound effect.'
+        )
+
+        self.assertEqual(
+            generate_product_script.classify_audio_content(
+                '"Wait now!" followed by a loud splash sound effect.'
+            ),
+            "spoken",
+        )
+        self.assertEqual(metrics["spoken_text"], "Wait now!")
+        self.assertEqual(metrics["word_count"], 2)
 
     def test_silent_reference_shot_removes_generated_voice_fields_only(self):
         reference = """### 镜头 1 (00:00.000 - 00:01.000)
