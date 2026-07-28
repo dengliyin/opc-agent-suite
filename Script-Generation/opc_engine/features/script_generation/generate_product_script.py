@@ -592,6 +592,84 @@ def extract_timecode_ranges(text):
     return ranges
 
 
+def merge_extra_output_shots(reference_matches, generated_text, generated_matches):
+    if len(generated_matches) <= len(reference_matches):
+        return None, []
+
+    reference_intervals = [
+        (parse_timestamp_seconds(match.group("start")), parse_timestamp_seconds(match.group("end")))
+        for match in reference_matches
+    ]
+    generated_intervals = [
+        (parse_timestamp_seconds(match.group("start")), parse_timestamp_seconds(match.group("end")))
+        for match in generated_matches
+    ]
+    if any(start is None or end is None or end <= start for start, end in reference_intervals + generated_intervals):
+        return None, []
+    if any(
+        generated_intervals[index][0] < generated_intervals[index - 1][0]
+        for index in range(1, len(generated_intervals))
+    ):
+        return None, []
+
+    assignments = [[] for _match in reference_matches]
+    for generated_index, (generated_start, generated_end) in enumerate(generated_intervals):
+        generated_midpoint = (generated_start + generated_end) / 2
+        scores = []
+        for reference_index, (reference_start, reference_end) in enumerate(reference_intervals):
+            overlap = max(0, min(generated_end, reference_end) - max(generated_start, reference_start))
+            distance = abs(generated_midpoint - ((reference_start + reference_end) / 2))
+            scores.append((overlap, -distance, -reference_index))
+        best_reference_index = max(range(len(scores)), key=scores.__getitem__)
+        assignments[best_reference_index].append(generated_index)
+
+    if any(not group for group in assignments):
+        assignments = [[] for _match in reference_matches]
+        for generated_index in range(len(generated_matches)):
+            reference_index = min(
+                len(reference_matches) - 1,
+                generated_index * len(reference_matches) // len(generated_matches),
+            )
+            assignments[reference_index].append(generated_index)
+    if any(not group for group in assignments):
+        return None, []
+
+    source = str(generated_text or "")
+    generated_blocks = []
+    for index, match in enumerate(generated_matches):
+        block_end = generated_matches[index + 1].start() if index + 1 < len(generated_matches) else len(source)
+        generated_blocks.append(source[match.end():block_end].strip("\n"))
+
+    sections = [source[:generated_matches[0].start()].rstrip()]
+    merged_groups = []
+    for reference_index, generated_indexes in enumerate(assignments):
+        reference_heading = reference_matches[reference_index].group(0).rstrip()
+        bodies = [generated_blocks[index] for index in generated_indexes if generated_blocks[index]]
+        section = reference_heading
+        if bodies:
+            section += "\n\n" + "\n\n".join(bodies)
+        sections.append(section)
+        if len(generated_indexes) > 1:
+            merged_groups.append(
+                {
+                    "source": [int(generated_matches[index].group("number")) for index in generated_indexes],
+                    "target": int(reference_matches[reference_index].group("number")),
+                }
+            )
+
+    corrected = "\n\n".join(section for section in sections if section).strip()
+    if not merged_groups:
+        return None, []
+    mapping = "；".join(
+        f'输出镜头 {group["source"]} → 参考镜头 {group["target"]}'
+        for group in merged_groups
+    )
+    return corrected, [
+        "检测到模型输出多余镜头，已自动合并并恢复参考时间轴: "
+        f"输出 {len(generated_matches)} 个镜头，参考稿 {len(reference_matches)} 个镜头；{mapping}。"
+    ]
+
+
 def enforce_output_timeline(config, reference_text, generated_text):
     reference_matches = list(SHOT_HEADING_TIMECODE_PATTERN.finditer(str(reference_text or "")))
     generated_matches = list(SHOT_HEADING_TIMECODE_PATTERN.finditer(str(generated_text or "")))
@@ -599,6 +677,17 @@ def enforce_output_timeline(config, reference_text, generated_text):
     generated_numbers = [int(match.group("number")) for match in generated_matches]
     if not reference_numbers:
         raise ValueError("时间码校验失败: 参考稿中未识别到镜头标题时间码。")
+    merge_warnings = []
+    if len(generated_matches) > len(reference_matches):
+        merged_text, merge_warnings = merge_extra_output_shots(
+            reference_matches,
+            generated_text,
+            generated_matches,
+        )
+        if merged_text:
+            generated_text = merged_text
+            generated_matches = list(SHOT_HEADING_TIMECODE_PATTERN.finditer(generated_text))
+            generated_numbers = [int(match.group("number")) for match in generated_matches]
     if generated_numbers != reference_numbers:
         raise ValueError(
             "时间码校验失败: 输出镜头编号或数量与参考稿不一致；"
@@ -620,8 +709,8 @@ def enforce_output_timeline(config, reference_text, generated_text):
 
     corrected = SHOT_HEADING_TIMECODE_PATTERN.sub(restore_timecode, str(generated_text or ""))
     if not corrected_shots:
-        return corrected, []
-    return corrected, [
+        return corrected, merge_warnings
+    return corrected, merge_warnings + [
         "时间码已按参考稿恢复: "
         f"模型时间码与参考时间轴不一致的镜头为 {corrected_shots}；"
         f"已修正 {len(corrected_shots)} 个镜头的原始时间码。"
@@ -1781,9 +1870,16 @@ def generate_validated_clone(config, args):
         reference_text,
         "复刻脚本音频缩写",
     )
+    validation_warnings = []
+    for metadata in (subject_repair_metadata, repair_metadata):
+        for warning in metadata.get("timeline_warnings", []):
+            if warning not in validation_warnings:
+                validation_warnings.append(warning)
+                log(f"复刻脚本: {warning}")
     raw_payload = dict(generated_raw) if isinstance(generated_raw, dict) else {"generation_raw": generated_raw}
     raw_payload["subject_type_repair"] = subject_repair_metadata
     raw_payload["audio_fit_repair"] = repair_metadata
+    raw_payload["validation_warnings"] = validation_warnings
     return generated_text, raw_payload, endpoint_style, field_style
 
 
@@ -1875,6 +1971,10 @@ def mutate_script_source(config, args, generated_script, reference_context=""):
                 generated_script,
                 f"裂变第 {variant_number} 条音频缩写",
             )
+            for metadata in (subject_repair_metadata, audio_repair_metadata):
+                for warning in metadata.get("timeline_warnings", []):
+                    if warning not in batch_validation_warnings:
+                        batch_validation_warnings.append(warning)
         return {
             "variant_number": variant_number,
             "attempt": attempt_number,

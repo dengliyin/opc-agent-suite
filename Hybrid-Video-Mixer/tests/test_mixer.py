@@ -18,7 +18,7 @@ class MixerTests(unittest.TestCase):
         return MixerPaths(
             vault_root=root,
             ai_clip_root=root / "05AI片段",
-            audio_root=root / "06产品介绍音频",
+            audio_root=root / "06音频文件",
             real_root=root / "07实拍素材",
             work_root=root / "08混剪工作区",
             output_root=root / "成品视频",

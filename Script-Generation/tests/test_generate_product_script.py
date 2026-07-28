@@ -56,6 +56,44 @@ class GenerateProductScriptTests(unittest.TestCase):
                 generated,
             )
 
+    def test_extra_shot_is_merged_into_reference_timeline_before_validation(self):
+        reference = """### 镜头 1 (00:00.000 - 00:01.500)
+### 镜头 2 (00:01.500 - 00:02.800)
+### 镜头 3 (00:02.800 - 00:04.600)
+### 镜头 4 (00:04.600 - 00:05.500)
+### 镜头 5 (00:05.500 - 00:06.800)
+### 镜头 6 (00:06.800 - 00:07.900)
+"""
+        generated = """### 镜头 1 (00:00.000 - 00:01.500)
+内容一
+### 镜头 2 (00:01.500 - 00:02.800)
+内容二
+### 镜头 3 (00:02.800 - 00:04.600)
+内容三
+### 镜头 4 (00:04.600 - 00:05.500)
+内容四
+### 镜头 5 (00:05.500 - 00:06.800)
+内容五
+### 镜头 6 (00:06.800 - 00:07.300)
+内容六前半
+### 镜头 7 (00:07.300 - 00:07.900)
+内容六后半
+"""
+
+        corrected, warnings = generate_product_script.enforce_output_timeline(
+            {"script_total_duration": "不改变原脚本"},
+            reference,
+            generated,
+        )
+
+        matches = list(generate_product_script.SHOT_HEADING_TIMECODE_PATTERN.finditer(corrected))
+        self.assertEqual([int(match.group("number")) for match in matches], [1, 2, 3, 4, 5, 6])
+        self.assertIn("### 镜头 6 (00:06.800 - 00:07.900)", corrected)
+        self.assertIn("内容六前半", corrected)
+        self.assertIn("内容六后半", corrected)
+        self.assertNotIn("镜头 7", corrected)
+        self.assertTrue(any("已自动合并并恢复参考时间轴" in warning for warning in warnings))
+
     def test_stale_explicit_duration_cannot_override_reference_timeline(self):
         reference = """镜头 1 (00:00.000 - 00:01.000):
 镜头 2 (00:01.000 - 00:04.000):

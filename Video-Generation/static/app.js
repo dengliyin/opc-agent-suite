@@ -287,6 +287,11 @@ function renderCatalog() {
   });
 }
 
+function renderCatalogDuringPolling() {
+  if (document.activeElement?.matches?.(".product-reference-select")) return;
+  renderCatalog();
+}
+
 function renderProductGroup(product, scripts, runningContexts, scriptStatuses) {
   const paths = product.scripts.map((script) => script.md_path);
   const checked = paths.length > 0 && paths.every((path) => state.selectedScriptPaths.has(path));
@@ -1221,7 +1226,7 @@ async function pollJobs() {
     state.globalJobs = globalJobs;
     state.lastGlobalStatusAt = Date.now();
     renderGlobalStatus();
-    renderCatalog();
+    renderCatalogDuringPolling();
     renderSegments();
     renderJobs();
     const latest = state.jobs[0];
@@ -1229,7 +1234,7 @@ async function pollJobs() {
     if (active && Date.now() - state.lastCatalogRefreshAt > 30000) {
       state.catalog = await api("/catalog");
       state.lastCatalogRefreshAt = Date.now();
-      renderCatalog();
+      renderCatalogDuringPolling();
       renderSegments();
       renderJobs();
       return;
@@ -1239,7 +1244,7 @@ async function pollJobs() {
       state.lastTerminalCatalogJobKey = terminalKey;
       state.catalog = await api("/catalog");
       state.lastCatalogRefreshAt = Date.now();
-      renderCatalog();
+      renderCatalogDuringPolling();
       renderSegments();
       renderJobs();
     }

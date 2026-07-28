@@ -53,7 +53,7 @@ def mixer_paths() -> MixerPaths:
     return MixerPaths(
         vault_root=vault,
         ai_clip_root=Path(os.environ.get("HYBRID_AI_CLIP_ROOT", hybrid / "05AI片段")).expanduser().resolve(),
-        audio_root=Path(os.environ.get("HYBRID_PRODUCT_AUDIO_ROOT", hybrid / "06产品介绍音频")).expanduser().resolve(),
+        audio_root=Path(os.environ.get("HYBRID_PRODUCT_AUDIO_ROOT", hybrid / "06音频文件")).expanduser().resolve(),
         real_root=Path(os.environ.get("HYBRID_REAL_FOOTAGE_ROOT", hybrid / "07实拍素材")).expanduser().resolve(),
         work_root=Path(os.environ.get("HYBRID_MIX_WORK_ROOT", hybrid / "08混剪工作区")).expanduser().resolve(),
         output_root=Path(

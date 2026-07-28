@@ -8,6 +8,7 @@ import io
 import json
 import os
 import re
+import shutil
 import sys
 import threading
 import time
@@ -27,11 +28,15 @@ from .reporting import RunReport
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 9991
+CATEGORY_TREE_RUNTIME_PATH = CONFIG_PATH.parent / "fastmoss_category_tree.json"
+LEGACY_CATEGORY_TREE_PATH = ROOT / "data" / "fastmoss_category_tree.json"
 CATEGORY_TREE_PATHS = [
-    ROOT / "data" / "fastmoss_category_tree.json",
+    CATEGORY_TREE_RUNTIME_PATH,
+    LEGACY_CATEGORY_TREE_PATH,
 ]
 PRODUCT_INFO_DIR = VAULT_ROOT / "wiki" / "产品" / "产品信息"
-PRODUCT_INFO_INDEX_PATH = ROOT / "data" / "product_info_options.json"
+PRODUCT_INFO_INDEX_PATH = CONFIG_PATH.parent / "product_info_options.json"
+LEGACY_PRODUCT_INFO_INDEX_PATH = ROOT / "data" / "product_info_options.json"
 FORM_OPTIONS = {
     "country": ["全部", "美国", "印度尼西亚", "英国", "越南", "泰国", "马来西亚", "菲律宾", "西班牙", "墨西哥", "德国", "法国", "意大利", "巴西", "日本", "新加坡"],
     "shop_type": ["全部", "跨境店", "本土店"],
@@ -96,6 +101,23 @@ def display_path(path: str | Path) -> str:
         return path.resolve().relative_to(ROOT.resolve()).as_posix()
     except ValueError:
         return path.as_posix()
+
+
+def migrate_runtime_support_files() -> None:
+    for source, target in (
+        (LEGACY_CATEGORY_TREE_PATH, CATEGORY_TREE_RUNTIME_PATH),
+        (LEGACY_PRODUCT_INFO_INDEX_PATH, PRODUCT_INFO_INDEX_PATH),
+    ):
+        if target.exists():
+            continue
+        try:
+            if not source.is_file():
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
+            target.chmod(0o600)
+        except OSError:
+            continue
 
 
 def safe_read_path(value: str) -> Path:
@@ -236,7 +258,7 @@ def load_category_tree() -> dict[str, Any]:
             continue
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
+        except (OSError, json.JSONDecodeError):
             continue
         if isinstance(data, dict) and isinstance(data.get("category_tree"), dict):
             top_categories = data.get("top_categories")
@@ -278,7 +300,7 @@ def config_for_client() -> dict[str, Any]:
             "project_root": display_path(paths.project_root),
             "result_dir": display_path(paths.result_dir()),
             "hot_video_root": display_path(HOT_VIDEO_LIBRARY_ROOT),
-            "hot_video_dir": display_path(paths.hot_video_dir()),
+            "hot_video_dir": display_path(paths.hot_video_dir(create=False)),
             "latest_csv": display_path(latest_csv) if latest_csv else "",
             "latest_report": display_path(latest_report) if latest_report else "",
         },
@@ -1402,6 +1424,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     init_config(CONFIG_PATH)
+    migrate_runtime_support_files()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"爆款视频收集智能体 Web 界面: http://{args.host}:{args.port}", flush=True)
     server.serve_forever()
