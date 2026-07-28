@@ -15,6 +15,10 @@ set -a
 source "$ENV_FILE"
 set +a
 
+if [ "${OPC_INITIALIZE_STORAGE_LAYOUT:-0}" = "1" ]; then
+  "$ROOT_DIR/scripts/create_storage_layout.sh" "${OPC_VAULT_ROOT:-$HOME/Documents/Obsidian Vault}"
+fi
+
 find_python() {
   local candidate
   if [ -n "${OPC_PYTHON_BIN:-}" ]; then

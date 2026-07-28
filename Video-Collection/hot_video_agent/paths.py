@@ -94,9 +94,10 @@ class ProjectPaths:
         product = self.config.get("product") or {}
         return str(product.get("name") or self.slug or "product").strip() or "product"
 
-    def hot_video_dir(self) -> Path:
+    def hot_video_dir(self, create: bool = True) -> Path:
         path = HOT_VIDEO_LIBRARY_ROOT / safe_name(self.product_name(), "product", 120)
-        path.mkdir(parents=True, exist_ok=True)
+        if create:
+            path.mkdir(parents=True, exist_ok=True)
         return path
 
     def latest_collection_csv(self) -> Optional[Path]:

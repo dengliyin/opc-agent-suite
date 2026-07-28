@@ -35,7 +35,7 @@
 安装步骤：
 
 ```bash
-git clone <PRIVATE_REPOSITORY_URL> opc-agent-suite
+git clone https://github.com/dengliyin/opc-agent-suite.git opc-agent-suite
 cd opc-agent-suite
 cp .env.example .env
 ```
@@ -45,6 +45,16 @@ cp .env.example .env
 ```bash
 OPC_VAULT_ROOT="$HOME/Documents/Obsidian Vault"
 ```
+
+仓库内的 `storage-template/` 只保存空目录结构，不包含任何业务数据。新版 `.env.example` 默认设置 `OPC_INITIALIZE_STORAGE_LAYOUT="1"`，仅供首次安装自动建立这些目录。已有用户的 `.env` 没有这个开关，更新代码或再次运行安装脚本时不会改动其现有路径。
+
+需要主动补建输入/输出目录时，也可以单独执行：
+
+```bash
+./scripts/create_storage_layout.sh
+```
+
+首次安装时 `bootstrap_macos.sh` 会自动执行这一步，只创建缺失目录，不覆盖已有文件。删除或设为 `OPC_INITIALIZE_STORAGE_LAYOUT="0"` 即可关闭自动初始化。
 
 然后执行：
 
