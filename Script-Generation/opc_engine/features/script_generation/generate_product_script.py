@@ -874,6 +874,7 @@ def build_generation_prompt(config):
 - 如果目标语言是孟加拉语，台词列必须输出 Bengali / Bangla 文案；字幕列可以放中文翻译对照。不得用 Malay/Bahasa 代替 Bengali。
 - 如果目标语言是法语，台词列必须输出 French / Français 文案；字幕列可以放中文翻译对照。不得用 Spanish / Español、德语或原脚本语言代替法语。
 - 每个镜头必须把声音描述与真实台词分开：**[声音/语气]** 只写声音、情绪和语速，**[音频文案]** 只写实际会被朗读的真实目标语言台词；中文翻译对照只能放在该条音频文案最后一个括号里。
+- SFX、笑声、喘息声、摩擦声、揉搓声、泼水声、环境声和动作声音不是口播，必须写入 **[环境音/音效]**，绝对不能写进 **[音频文案]**；只有人物或旁白真正说出的目标语言台词才能进入音频文案。
 - 真实口播按 TikTok 快节奏匹配镜头时间码：拉丁字母语言建议不超过 3.2 词/秒、硬上限 3.8 词/秒；中文/日文/韩文建议不超过 5.5 字/秒、硬上限 6.5 字/秒。建议值到硬上限之间允许保留，只有超过硬上限才必须缩短；所有容量向上取整。
 - 必须逐镜头继承参考稿的有声/静音结构：参考稿对应镜头没有真实 **[音频文案]** 时，该镜头不得新增口播，也不要输出 **[声音/语气]**、**[音频文案]**、**[音频交付模式]**；标注“无口播”“无声”“仅有环境音/动作音效”同样属于静音镜头。背景音乐、环境音和字幕仍按参考稿保留。
 - 主体类型是不可变的核心视觉资产：参考稿中的骷髅人、人体骨骼模型、机器人、动物拟人、玩偶、怪物或无人物动画绝对不能改成真人；本地化只允许调整服装、配饰、发型、场景陈设和表达习惯。
@@ -963,6 +964,7 @@ def build_mutation_prompt(config, generated_script, variant_count, batch_start=1
 - 如果“目标语言变量”包含 American English，必须使用美国市场自然表达和美式拼写；如果包含 British English，必须使用英国市场自然表达和英式拼写；如果包含 Irish English，必须使用爱尔兰市场自然表达并倾向英式拼写。
 - 如果“国家/地区变量”不是“不改变原脚本”，人物外观、服装审美、场景陈设、道具、消费语境和本地化表达必须服务于该国家/地区；不得回到母版原国家语境。
 - 每个镜头必须把声音描述与真实台词分开：**[声音/语气]** 只写声音、情绪和语速，**[音频文案]** 只写实际会被朗读的真实目标语言台词；中文翻译对照只能放在该条音频文案最后一个括号里。
+- SFX、笑声、喘息声、摩擦声、揉搓声、泼水声、环境声和动作声音不是口播，必须写入 **[环境音/音效]**，绝对不能写进 **[音频文案]**；母版只有非语言音效的镜头不得新增人物口播或旁白。
 - 真实口播按 TikTok 快节奏匹配镜头时间码：拉丁字母语言建议不超过 3.2 词/秒、硬上限 3.8 词/秒；中文/日文/韩文建议不超过 5.5 字/秒、硬上限 6.5 字/秒。建议值到硬上限之间允许保留，只有超过硬上限才必须缩短；所有容量向上取整。
 - 必须逐镜头继承母版的有声/静音结构：母版对应镜头没有真实 **[音频文案]** 时，该变体镜头不得新增口播，也不要输出 **[声音/语气]**、**[音频文案]**、**[音频交付模式]**；标注“无口播”“无声”“仅有环境音/动作音效”同样属于静音镜头。背景音乐、环境音和字幕仍按母版保留。
 - 必须锁定母版主体的物种、材质和生命形态：骷髅人、人体骨骼模型、机器人、动物拟人、玩偶、怪物或无人物动画不得裂变成真人；只能变化服装、配饰、发型、场景和局部造型。
@@ -1333,6 +1335,13 @@ def compact_audio_text(text):
 def spoken_audio_text(text):
     content = strip_translation_parentheses(text)
     content = re.sub(r"^[（(][^）)]{1,30}[）)]\s*[:：]\s*", "", content)
+    quoted_segments = [
+        segment.strip()
+        for segment in re.findall(r'["“](.+?)["”]', content)
+        if re.search(r"[^\W\d_]|[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]", segment, re.UNICODE)
+    ]
+    if quoted_segments:
+        content = " ".join(quoted_segments)
     content = content.strip(" \t“”\"'：:")
     return content
 
@@ -1348,14 +1357,54 @@ def spoken_audio_metrics(text):
     }
 
 
-def is_silent_audio_description(text):
+def classify_audio_content(text):
+    raw_content = strip_translation_parentheses(text).strip().lower()
+    if re.search(
+        r"无口播|没有口播|无对白|没有对白|无声(?:，|,|。|\s|仅有|只有)|"
+        r"no\s+(?:spoken\s+)?(?:audio|voiceover|dialogue)",
+        raw_content,
+        re.I,
+    ):
+        return "silent"
     content = spoken_audio_text(text).strip().lower()
     compact = re.sub(r"[\s（）()【】\[\]。.!！\"“”'：:，,；;]+", "", content)
     if compact in {"", "无", "无口播", "无音频", "无声", "none", "noaudio", "n/a", "-"}:
-        return True
-    return bool(
-        re.search(r"无口播|没有口播|无对白|没有对白|无声(?:，|,|。|\s|仅有|只有)|no\s+(?:spoken\s+)?(?:audio|voiceover|dialogue)", content, re.I)
-    )
+        return "silent"
+    if re.search(r'["“].+?["”]', strip_translation_parentheses(text)):
+        return "spoken"
+    if re.search(
+        r"\bsfx\b|sound\s*effects?|音效|声效|环境声|环境音|动作声|摩擦声|揉搓声|泼水声|水声|"
+        r"碰撞声|挤压[^，。；]*声|脚步声|开门声|关门声|风声|雨声|笑声|喘息声|"
+        r"\blaughter\b|\bpanting\b|\bgasping\b|\bfootsteps?\b|\bsplash(?:ing)?\b",
+        content,
+        re.I,
+    ):
+        return "sfx"
+    return "spoken"
+
+
+def is_silent_audio_description(text):
+    return classify_audio_content(text) != "spoken"
+
+
+def normalize_nonspoken_audio_fields(text):
+    output_lines = []
+    for line in str(text or "").splitlines():
+        if markdown_field_name(line) != "音频文案":
+            output_lines.append(line)
+            continue
+        match = re.match(
+            r"^(?P<prefix>\s*(?:[-*]\s*)?(?:\*\*)?[【\[])音频文案"
+            r"(?P<suffix>[】\]](?:\*\*)?\s*[:：]?\s*)(?P<body>.*)$",
+            line,
+        )
+        if not match or classify_audio_content(match.group("body")) != "sfx":
+            output_lines.append(line)
+            continue
+        output_lines.append(
+            f'{match.group("prefix")}环境音/音效{match.group("suffix")}{match.group("body")}'
+        )
+    return "\n".join(output_lines)
 
 
 def extract_shot_key(line, fallback_index):
@@ -1750,38 +1799,131 @@ def repair_script_subject_type(config, args, script_text, reference_text, task_n
     }
 
 
-def build_audio_repair_prompt(config, script_text, issues):
+def build_audio_repair_prompt(config, script_text, issues, attempt=1):
     limits = []
     for issue in issues:
         if issue["metric"] == "cjk_chars":
             limit = f'最多 {issue["max_cjk_count"]} 个目标语言字符'
         else:
             limit = f'最多 {issue["max_word_count"]} 个目标语言单词'
-        limits.append(f'- 镜头 {issue["shot_key"]}（{issue["timecode"]}）：{limit}')
+        limits.append(
+            f'- 镜头 {issue["shot_key"]}（{issue["timecode"]}）：{limit}；'
+            f'当前台词：{issue["audio"]}'
+        )
     target_language = normalized_target_language(config)
-    return f"""你是短视频口播压缩校对器。请修正下面脚本中超出镜头时长的真实口播。
+    stronger_rule = (
+        "这是第二轮压缩。只保留主语、核心利益点或必要 CTA；允许删除完整句子，必须明显短于硬上限。"
+        if attempt > 1
+        else "信息放不下时删除次要信息，不要使用同义扩写。"
+    )
+    return f"""你是短视频口播压缩校对器。只返回需要替换的短台词 JSON。
 
 目标语言：{target_language}
 
 必须遵守：
-1. 只缩短列出的镜头中 **[音频文案]** 的真实目标语言台词，并同步更新其中文翻译对照。
-2. 不得修改镜头数量、镜头编号、时间码或任何画面字段。
-3. 不得新增卖点、产品事实、人物、动作或 CTA；信息放不下就舍弃次要信息。
-4. **[声音/语气]** 只写声音、情绪和语速描述；**[音频文案]** 只写实际会被朗读的目标语言台词。
-5. 必须逐镜头按下面给出的单词数或字符数硬上限计数；宁可删除整句或只保留关键词，也不能超过上限。
-6. 直接返回完整 Markdown 脚本，不解释。
+1. 只处理列出的镜头，不得返回完整 Markdown。
+2. 每个镜头返回 `audio`（缩短后的真实目标语言台词）和 `translation`（对应中文翻译）。
+3. 不得新增卖点、产品事实、人物、动作或 CTA。
+4. SFX、笑声、喘息声、摩擦声、泼水声和环境声不是口播，不得放进 `audio`。
+5. 必须自行逐词或逐字计数，不能超过下面的硬上限。
+6. {stronger_rule}
+7. 只返回合法 JSON，不要代码围栏、解释或其他文字。
+
+返回格式示例：
+{{"002": {{"audio": "Pendek sahaja.", "translation": "只保留简短表达。"}}}}
 
 逐镜头绝对上限（以镜头时长为准，优先级高于母版字数）：
 {chr(10).join(limits)}
-
-待修正脚本：
-
-{script_text}
 """
+
+
+def parse_audio_repair_updates(text):
+    content = str(text or "").strip()
+    content = re.sub(r"^```(?:json)?\s*", "", content, flags=re.I)
+    content = re.sub(r"\s*```$", "", content)
+    start = content.find("{")
+    end = content.rfind("}")
+    if start < 0 or end <= start:
+        return {}
+    try:
+        payload = json.loads(content[start:end + 1])
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    if isinstance(payload.get("updates"), dict):
+        payload = payload["updates"]
+
+    updates = {}
+    for key, value in payload.items():
+        match = re.search(r"\d{1,3}", str(key))
+        if not match:
+            continue
+        shot_key = match.group(0).zfill(3)
+        if isinstance(value, str):
+            audio = value.strip()
+            translation = ""
+        elif isinstance(value, dict):
+            audio = str(value.get("audio") or value.get("text") or "").strip()
+            translation = str(value.get("translation") or value.get("chinese") or "").strip()
+        else:
+            continue
+        if audio and classify_audio_content(audio) == "spoken":
+            updates[shot_key] = {"audio": audio, "translation": translation}
+    return updates
+
+
+def apply_audio_repair_updates(script_text, updates):
+    output_lines = []
+    current_key = None
+    shot_index = 0
+    skip_old_continuation = False
+    applied = set()
+
+    for line in str(script_text or "").splitlines():
+        stripped = line.strip()
+        is_shot_heading = bool(
+            re.search(r"(?:镜头|Shot|SHOT)\s*#?\s*\d{1,3}", stripped)
+            or re.match(r"^\s*(?:#{1,6}\s*)?\d{1,3}[\.、\s-]", stripped)
+        )
+        if is_shot_heading:
+            shot_index += 1
+            current_key = extract_shot_key(stripped, shot_index)
+            skip_old_continuation = False
+            output_lines.append(line)
+            continue
+
+        field_name = markdown_field_name(line)
+        if skip_old_continuation:
+            if field_name or stripped == "---":
+                skip_old_continuation = False
+            else:
+                continue
+
+        if current_key in updates and field_name == "音频文案":
+            prefix_match = re.match(
+                r"^(?P<prefix>\s*(?:[-*]\s*)?(?:\*\*)?[【\[]音频文案[】\]]"
+                r"(?:\*\*)?\s*[:：]?\s*)",
+                line,
+            )
+            prefix = prefix_match.group("prefix") if prefix_match else "[音频文案] "
+            update = updates[current_key]
+            replacement = update["audio"]
+            if update.get("translation"):
+                replacement += f'（中文翻译对照：{update["translation"]}）'
+            output_lines.append(prefix + replacement)
+            applied.add(current_key)
+            skip_old_continuation = True
+            continue
+
+        output_lines.append(line)
+
+    return "\n".join(output_lines), sorted(applied, key=int)
 
 
 def repair_script_audio(config, args, script_text, reference_text, task_name):
     corrected_text, timeline_warnings = enforce_output_timeline(config, reference_text, script_text)
+    corrected_text = normalize_nonspoken_audio_fields(corrected_text)
     corrected_text, audio_structure_warnings = enforce_reference_audio_structure(reference_text, corrected_text)
     issues = validate_audio_fit(corrected_text)
     if not issues:
@@ -1806,17 +1948,20 @@ def repair_script_audio(config, args, script_text, reference_text, task_name):
     field_style = "text"
 
     for attempt in range(1, max_attempts + 1):
-        prompt = build_audio_repair_prompt(config, current_text, issues)
+        prompt = build_audio_repair_prompt(config, current_text, issues, attempt)
         attempt_name = f"{task_name}第 {attempt} 轮"
         if backend in {"obsidian", "obsidian_cli"}:
-            repaired_text, repair_raw, endpoint_style, field_style = call_obsidian_cli(
+            repair_response, repair_raw, endpoint_style, field_style = call_obsidian_cli(
                 config, args, prompt, attempt_name, f"待缩写镜头: {len(issues)}"
             )
         else:
-            repaired_text, repair_raw, endpoint_style, field_style = call_text_model(
+            repair_response, repair_raw, endpoint_style, field_style = call_text_model(
                 config, args, prompt, attempt_name, f"待缩写镜头: {len(issues)}"
             )
+        updates = parse_audio_repair_updates(repair_response)
+        repaired_text, applied_shots = apply_audio_repair_updates(current_text, updates)
         repaired_text = normalize_audio_translation_positions(repaired_text)
+        repaired_text = normalize_nonspoken_audio_fields(repaired_text)
         repaired_text, repair_timeline_warnings = enforce_output_timeline(config, reference_text, repaired_text)
         repaired_text, repair_audio_structure_warnings = enforce_reference_audio_structure(reference_text, repaired_text)
         all_warnings.extend(repair_timeline_warnings + repair_audio_structure_warnings)
@@ -1824,6 +1969,7 @@ def repair_script_audio(config, args, script_text, reference_text, task_name):
         repair_attempts.append(
             {
                 "attempt": attempt,
+                "applied_shots": applied_shots,
                 "remaining_issues": issues,
                 "raw": repair_raw,
             }
@@ -2440,7 +2586,9 @@ def resolve_output_root(config, output_dir=""):
 
 
 def write_script_outputs(config, output_dir, text, raw_response):
-    text = normalize_camera_visibility(normalize_audio_translation_positions(text))
+    text = normalize_nonspoken_audio_fields(
+        normalize_camera_visibility(normalize_audio_translation_positions(text))
+    )
     reference_path = get_reference_path(config)
     reference_text = read_text_file(reference_path)
     stage_name = script_output_stage_name(raw_response)
@@ -2494,7 +2642,9 @@ def write_script_outputs(config, output_dir, text, raw_response):
     validated_variants = []
     for sequence_index, variant_text in enumerate(variants, start=1):
         variant_number = variant_numbers[sequence_index - 1]
-        variant_text = normalize_camera_visibility(normalize_audio_translation_positions(variant_text))
+        variant_text = normalize_nonspoken_audio_fields(
+            normalize_camera_visibility(normalize_audio_translation_positions(variant_text))
+        )
         variant_text, variant_duration_warnings = enforce_output_timeline(config, reference_text, variant_text)
         variant_text, audio_structure_warnings = enforce_reference_audio_structure(reference_text, variant_text)
         variant_duration_warnings.extend(audio_structure_warnings)
