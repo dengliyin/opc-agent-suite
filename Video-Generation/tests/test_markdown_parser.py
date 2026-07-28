@@ -227,3 +227,36 @@ def test_build_direct_video_prompt_requires_shot_script() -> None:
 
     with pytest.raises(ValueError, match="未找到镜头脚本"):
         build_direct_video_prompt(segment)
+
+
+def test_build_direct_video_prompt_includes_technical_padding_control() -> None:
+    segment = parse_segments(
+        """# Segment 1：00:00.000 - 00:07.500
+- 原脚本总时长：7.500秒
+- 本段有效内容时长：7.500秒
+- 有效内容结束：7.500秒
+- 技术占位开始：7.500秒
+- 技术占位时长：2.500秒
+- 模型片段时长：10.000秒
+[TECHNICAL_PADDING: BLACK_SILENT]
+技术占位为纯黑画面、完全静音、无人物、无产品、无字幕、无贴纸、无动作、无转场内容。
+
+## A. 人物造型参考板提示词
+人物提示词
+
+## B. 故事板图片提示词
+故事提示词
+### 镜头 1 (00:00.000 - 00:07.500)
+镜头内容
+"""
+    )[0]
+
+    prompt = build_direct_video_prompt(segment)
+
+    assert "固定时长技术占位要求（最高优先级）" in prompt
+    assert "- 本段有效内容时长：7.500秒" in prompt
+    assert "- 技术占位时长：2.500秒" in prompt
+    assert "[TECHNICAL_PADDING: BLACK_SILENT]" in prompt
+    assert "从“技术占位开始”到“模型片段时长”必须切换为纯黑画面并保持完全静音" in prompt
+    assert "禁止通过慢动作、延长停留、重复动作" in prompt
+    assert prompt.index("[TECHNICAL_PADDING: BLACK_SILENT]") < prompt.index("### 镜头 1")

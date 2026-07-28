@@ -74,6 +74,7 @@ class ProductLinkOptionTest(unittest.TestCase):
             patch.object(web, "add_tiktok_product_link") as add_product,
             patch.object(web, "set_tiktok_ai_label", return_value=True),
             patch.object(web, "ensure_tiktok_public_visibility", return_value=True),
+            patch.object(web, "disable_tiktok_content_quick_check", return_value=True) as disable_check,
             patch.object(web, "wait_for_tiktok_upload_complete", return_value=True),
             patch.object(web, "click_tiktok_publish_button", return_value={"url": "/content"}),
             patch.object(web, "append_publish_record", return_value={"status": "published"}) as append_record,
@@ -91,6 +92,7 @@ class ProductLinkOptionTest(unittest.TestCase):
             )
 
         add_product.assert_not_called()
+        disable_check.assert_called_once_with(page)
         self.assertFalse(result["product_linked"])
         self.assertFalse(append_record.call_args.args[-1])
 

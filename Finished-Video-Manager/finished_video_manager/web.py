@@ -1018,6 +1018,54 @@ def set_tiktok_ai_label(page: Any, enabled: bool) -> bool:
         return False
 
 
+def disable_tiktok_content_quick_check(page: Any) -> bool:
+    labels = ("内容快速检查", "Quick content check", "Content check lite")
+    found_label = False
+    try:
+        for text in labels:
+            matches = page.get_by_text(text, exact=True)
+            for index in range(matches.count()):
+                label = matches.nth(index)
+                if not label.is_visible():
+                    continue
+                found_label = True
+                containers = label.locator(
+                    "xpath=ancestor::*[.//span[@data-part='thumb']][1]"
+                )
+                if containers.count() == 0:
+                    continue
+                container = containers.first
+                thumbs = container.locator("span[data-part='thumb']")
+                if thumbs.count() == 0:
+                    continue
+                thumb = thumbs.first
+                state = str(thumb.get_attribute("data-state") or "").lower()
+                checked_class = "Switch__thumb--checked-true" in str(
+                    thumb.get_attribute("class") or ""
+                )
+                if state != "checked" and not checked_class:
+                    return True
+
+                controls = container.locator(".Switch__content")
+                control = controls.first if controls.count() > 0 else thumb.locator("xpath=..")
+                control.scroll_into_view_if_needed()
+                control.click()
+
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    state = str(thumb.get_attribute("data-state") or "").lower()
+                    checked_class = "Switch__thumb--checked-true" in str(
+                        thumb.get_attribute("class") or ""
+                    )
+                    if state != "checked" and not checked_class:
+                        return True
+                    page.wait_for_timeout(200)
+                return False
+        return not found_label
+    except Exception:
+        return False
+
+
 def tiktok_body_text(page: Any) -> str:
     return page.locator("body").inner_text(timeout=5000)
 
@@ -1427,6 +1475,8 @@ def publish_tiktok_video(
             raise RuntimeError("AI 标识未确认开启，停止发布")
         if not ensure_tiktok_public_visibility(page):
             raise RuntimeError("可见性不是所有人，停止发布")
+        if not disable_tiktok_content_quick_check(page):
+            raise RuntimeError("内容快速检查未能关闭，停止发布")
         if not wait_for_tiktok_upload_complete(page):
             raise RuntimeError("视频在 180 秒内没有确认上传完成，停止发布")
         publish_result = click_tiktok_publish_button(page)

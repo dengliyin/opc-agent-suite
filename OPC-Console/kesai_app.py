@@ -50,6 +50,7 @@ PRODUCT_SCRIPT_REWRITE_DIR = WORKSPACE_ROOT / "Product-Script-Rewrite"
 VIDEO_ASSEMBLY_DIR = WORKSPACE_ROOT / "Video-Assembly-hd"
 HYBRID_SCRIPT_ADAPTATION_DIR = WORKSPACE_ROOT / "Hybrid-Script-Adaptation"
 HYBRID_SCRIPT_ADAPTATION_APP_DIR = HYBRID_SCRIPT_ADAPTATION_DIR / "software" / "Hybrid-Script-Adaptation-app"
+HYBRID_VIDEO_MIXER_DIR = WORKSPACE_ROOT / "Hybrid-Video-Mixer"
 
 
 def build_services() -> dict[str, dict]:
@@ -63,6 +64,7 @@ def build_services() -> dict[str, dict]:
         "rewrite": service_url("OPC_PRODUCT_SCRIPT_REWRITE_URL", "http://127.0.0.1:9997/"),
         "compose": service_url("OPC_VIDEO_ASSEMBLY_AGENT_URL", "http://127.0.0.1:9998/"),
         "hybrid_adapt": service_url("OPC_HYBRID_SCRIPT_ADAPTATION_AGENT_URL", "http://127.0.0.1:9999/"),
+        "hybrid_mix": service_url("OPC_HYBRID_VIDEO_MIXER_AGENT_URL", "http://127.0.0.1:10000/"),
         "hybrid_collect": service_url("OPC_HYBRID_VIDEO_COLLECTION_AGENT_URL", "http://127.0.0.1:10001/"),
         "hybrid_analyze": service_url("OPC_HYBRID_SCRIPT_ANALYSIS_AGENT_URL", "http://127.0.0.1:10002/"),
         "hybrid_script": service_url("OPC_HYBRID_SCRIPT_GENERATION_AGENT_URL", "http://127.0.0.1:10003/"),
@@ -133,6 +135,13 @@ def build_services() -> dict[str, dict]:
             "launch_cwd": HYBRID_SCRIPT_ADAPTATION_APP_DIR,
             "command": [agent_python(HYBRID_SCRIPT_ADAPTATION_DIR), "-m", "opc_engine.features.script_adaptation.script_adaptation_agent_web", "--port", str(service_port(urls["hybrid_adapt"], 9999))],
         },
+        "hybrid_mix": {
+            "label": "AI＋实拍混剪",
+            "description": "按产品音频编排 AI 首尾片段与展示、使用实拍素材",
+            "url": urls["hybrid_mix"],
+            "cwd": HYBRID_VIDEO_MIXER_DIR,
+            "command": [agent_python(HYBRID_VIDEO_MIXER_DIR), str(HYBRID_VIDEO_MIXER_DIR / "app" / "server.py"), "--host", "127.0.0.1", "--port", str(service_port(urls["hybrid_mix"], 10000))],
+        },
         "hybrid_collect": {
             "label": "混剪参考视频采集",
             "description": "按类型和产品下载钩子或 CTA 参考视频",
@@ -171,6 +180,12 @@ GLOBAL_PATH_FIELDS = (
     ("HYBRID_VIDEO_TEARDOWN_OUTPUT_ROOT", "混剪解析脚本", "10002 保存分类解析 Markdown 的目录", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/02解析脚本"),
     ("HYBRID_SCRIPT_GENERATION_INPUT_ROOT", "混剪解析脚本", "10003 扫描10002解析结果的目录", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/02解析脚本"),
     ("HYBRID_SCRIPT_GENERATION_OUTPUT_ROOT", "复刻裂变脚本", "10003 保存复刻稿与裂变稿的目录", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/03复刻裂变脚本"),
+    ("HYBRID_OMNI_SCRIPT_ROOT", "混剪 Omni 脚本输入", "9995 读取的混剪钩子与 CTA Omni 适配脚本目录", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/04适配脚本/omni"),
+    ("HYBRID_AI_CLIP_ROOT", "混剪 AI 片段", "10000 读取的模型/类型/产品 AI 钩子与 CTA 片段目录", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/05AI片段"),
+    ("HYBRID_OMNI_VIDEO_OUTPUT_ROOT", "混剪 Omni 视频输出", "9995 保存混剪钩子与 CTA Omni 片段的目录", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/05AI片段/omni"),
+    ("HYBRID_PRODUCT_AUDIO_ROOT", "产品介绍音频", "10000 读取的产品介绍音频目录，按产品名分组", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/06产品介绍音频"),
+    ("HYBRID_REAL_FOOTAGE_ROOT", "产品实拍素材", "10000 读取的产品/展示|使用实拍素材目录", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/07实拍素材"),
+    ("HYBRID_MIX_WORK_ROOT", "混剪工作区", "10000 保存编排方案、渲染中间文件和素材使用历史", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/08混剪工作区"),
     ("SCRIPT_ROOT", "Omni 脚本输入", "9995 读取的 Omni 适配脚本目录", "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/04适配脚本/omni"),
     ("GROK_SCRIPT_ROOT", "Grok 脚本输入", "9995 读取的 Grok 适配脚本目录", "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/04适配脚本/grok"),
     ("REFERENCE_ROOT", "产品参考图", "9995 读取的产品底图目录", "${OPC_VAULT_ROOT}/wiki/产品/产品底图"),
@@ -222,8 +237,22 @@ GLOBAL_PATH_GROUPS = (
     {
         "id": "9995",
         "label": "9995 · 片段产出",
-        "description": "Omni 与 Grok 的脚本输入、产品参考图和视频片段输出",
-        "keys": ("SCRIPT_ROOT", "GROK_SCRIPT_ROOT", "REFERENCE_ROOT", "VIDEO_OUTPUT_ROOT", "GROK_VIDEO_OUTPUT_ROOT"),
+        "description": "纯 AI Omni/Grok 与混剪钩子、CTA Omni 的独立输入输出路径",
+        "keys": (
+            "SCRIPT_ROOT",
+            "GROK_SCRIPT_ROOT",
+            "HYBRID_OMNI_SCRIPT_ROOT",
+            "REFERENCE_ROOT",
+            "VIDEO_OUTPUT_ROOT",
+            "GROK_VIDEO_OUTPUT_ROOT",
+            "HYBRID_OMNI_VIDEO_OUTPUT_ROOT",
+        ),
+    },
+    {
+        "id": "10000",
+        "label": "10000 · AI＋实拍混剪",
+        "description": "读取 AI 片段、产品音频和展示/使用实拍池；成片复用 9998 的统一输出目录",
+        "keys": ("HYBRID_AI_CLIP_ROOT", "HYBRID_PRODUCT_AUDIO_ROOT", "HYBRID_REAL_FOOTAGE_ROOT", "HYBRID_MIX_WORK_ROOT"),
     },
     {
         "id": "9998",
@@ -467,13 +496,13 @@ main{max-width:1180px;margin:auto;padding:64px 24px 80px}header{display:flex;jus
 @media(max-width:700px){main{padding-top:38px}header{align-items:start;flex-direction:column}.summary{white-space:normal}.workflowHead{align-items:start;flex-direction:column}.workflowDescription{text-align:left}.flow{grid-template-columns:1fr}.destination .card{width:100%}}
 </style>
 </head>
-<body><main><header><div><h1>OPC 内容量化增长引擎</h1><p>按三条视频生产线路组织现有 Agent。相同 Agent 在不同线路中共用同一个运行服务，业务参数和产物仍由对应 Agent 管理。</p></div><div class="headerTools"><a class="button" href="/settings/paths">全局路径设置</a><div class="summary" id="summary">正在检测服务…</div></div></header><section class="workflows" id="workflows"></section><section class="destination"><div class="destinationHead"><div class="destinationTitle">统一归口 · 成品管理与发布</div><div class="destinationDescription">三条线路的最终成片统一进入成品目录，由同一个 Agent 扫描、管理和发布。</div></div><div class="flow" id="destination"></div></section><p class="note">控制台端口 8888 · 已接入 12 个 Agent · 10000 待开发</p></main>
+<body><main><header><div><h1>OPC 内容量化增长引擎</h1><p>按三条视频生产线路组织现有 Agent。相同 Agent 在不同线路中共用同一个运行服务，业务参数和产物仍由对应 Agent 管理。</p></div><div class="headerTools"><a class="button" href="/settings/paths">全局路径设置</a><div class="summary" id="summary">正在检测服务…</div></div></header><section class="workflows" id="workflows"></section><section class="destination"><div class="destinationHead"><div class="destinationTitle">统一归口 · 成品管理与发布</div><div class="destinationDescription">三条线路的最终成片统一进入成品目录，由同一个 Agent 扫描、管理和发布。</div></div><div class="flow" id="destination"></div></section><p class="note">控制台端口 8888 · 已接入 13 个 Agent</p></main>
 <script>
 const workflowsHost=document.querySelector('#workflows'),destination=document.querySelector('#destination'),summary=document.querySelector('#summary');
 const workflowLines=[
   {title:'线路 1 · 爆款复刻',description:'从爆款视频采集开始，完成纯 AI 脚本、片段与成片生产。',steps:['collect','analyze','script','adapt','assemble','compose']},
   {title:'线路 2 · 产品脚本改写',description:'从产品脚本改写开始，继续进入纯 AI 片段生产与合成。',steps:['rewrite','script','adapt','assemble','compose']},
-  {title:'线路 3 · AI＋实拍混剪',description:'独立采集、解析、复刻裂变钩子/CTA参考视频，混合 AI 首尾片段与产品实拍素材。',steps:['hybrid_collect','hybrid_analyze','hybrid_script','hybrid_adapt',{id:'assemble',label:'钩子与 CTA 片段产出'},{port:'10000',label:'AI＋实拍混剪',description:'编排 AI 与实拍片段并完成原创差异处理。'}]}
+  {title:'线路 3 · AI＋实拍混剪',description:'独立采集、解析、复刻裂变钩子/CTA参考视频，混合 AI 首尾片段与产品实拍素材。',steps:['hybrid_collect','hybrid_analyze','hybrid_script','hybrid_adapt',{id:'assemble',label:'钩子与 CTA 片段产出'},'hybrid_mix']}
 ];
 let services=[];
 const startingServices=new Set();
@@ -528,6 +557,7 @@ ROUTE_TO_SERVICE = {
     "/rewrite": "rewrite",
     "/compose": "compose",
     "/hybrid-adapt": "hybrid_adapt",
+    "/hybrid-mix": "hybrid_mix",
     "/hybrid-collect": "hybrid_collect",
     "/hybrid-analyze": "hybrid_analyze",
     "/hybrid-script": "hybrid_script",

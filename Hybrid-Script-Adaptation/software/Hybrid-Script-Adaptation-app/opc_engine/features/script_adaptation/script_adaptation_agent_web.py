@@ -675,6 +675,15 @@ def is_non_retryable_model_error(message: str) -> bool:
     return any(token in text for token in fatal_tokens)
 
 
+def validation_retry_feedback(message: str) -> str:
+    marker = "输出质检未通过："
+    if marker not in message:
+        return ""
+    feedback = message.split(marker, 1)[1]
+    feedback = feedback.split("；失败产物已隔离:", 1)[0]
+    return feedback.strip()
+
+
 def read_adaptation_status_log(output_dir: Path) -> dict[str, Any]:
     log_path = output_dir / ADAPTATION_STATUS_LOG_NAME
     if not log_path.exists():
@@ -1861,6 +1870,7 @@ class AgentWebJob:
         index: int,
         total: int,
         attempt: int,
+        retry_feedback: str = "",
     ) -> tuple[Path, list[dict[str, Any]]]:
         script_filename = script["filename"]
         config = agent.load_stage_config("adapt")
@@ -1871,6 +1881,11 @@ class AgentWebJob:
         if isinstance(segment_seconds_by_model, dict) and script_target_model in segment_seconds_by_model:
             effective_payload["script_adaptation_segment_seconds"] = segment_seconds_by_model.get(script_target_model)
         overrides = build_overrides(effective_payload)
+        if retry_feedback:
+            overrides["script_adaptation_notes"] = (
+                "上一次输出未通过本地质检。请只修正以下问题，其他脚本内容保持不变："
+                f"{retry_feedback}"
+            )
         config.update(overrides)
 
         ensure_project_dirs(config)
@@ -2042,6 +2057,7 @@ class AgentWebJob:
             STDERR_ROUTER.register(self)
             agent = ScriptAdaptationAgent()
             success = False
+            retry_feedback = ""
             try:
                 for attempt in range(1, max_attempts + 1):
                     if self.is_cancelled():
@@ -2057,6 +2073,7 @@ class AgentWebJob:
                             index,
                             len(self.tasks),
                             attempt,
+                            retry_feedback,
                         )
                         if self.is_cancelled():
                             self.update_task(index, "cancelled", output_paths=[], error="用户终止任务", attempt=attempt)
@@ -2094,6 +2111,7 @@ class AgentWebJob:
                             return {"success": False, "fatal": True, "error": message, "outputs": [], "script_path": ""}
                         if attempt < max_attempts:
                             print(f"[任务 {index}] 自动重新触发该脚本适配")
+                            retry_feedback = validation_retry_feedback(message)
                             self.update_task(index, "retrying", attempt=attempt, error=message)
                             continue
                         print(f"[任务 {index}] 适配失败，已达到最大重试次数: {message}")

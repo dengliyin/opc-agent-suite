@@ -98,6 +98,36 @@ def test_update_concurrency_is_per_agent(monkeypatch):
     assert body["script_concurrency"] == 12
 
 
+def test_hybrid_omni_run_uses_independent_manager(monkeypatch):
+    hybrid = FakeManager()
+    monkeypatch.setattr(
+        app_module,
+        "job_managers",
+        {"omni": FakeManager(), "grok": FakeManager(), "hybrid_omni": hybrid},
+    )
+    client = TestClient(app_module.app)
+
+    response = client.post(
+        "/hybrid-omni/api/run",
+        json={"stage": "videos", "overwrite": False, "script_paths": ["/tmp/hook.md"]},
+    )
+
+    assert response.status_code == 200
+    assert hybrid.started == [("videos", False, ["/tmp/hook.md"], None, None)]
+
+
+def test_hybrid_omni_routes_and_page_exist():
+    paths = {route.path for route in app_module.app.routes}
+    client = TestClient(app_module.app)
+
+    assert "/hybrid-omni/api/catalog" in paths
+    assert "/hybrid-omni/api/jobs" in paths
+    assert "/hybrid-omni/api/artifact" in paths
+    response = client.get("/hybrid-omni")
+    assert response.status_code == 200
+    assert "混剪钩子与 CTA Omni 片段产出" in response.text
+
+
 def test_media_cleanup_route_is_owned_by_assembly_agent():
     paths = {route.path for route in app_module.app.routes}
 

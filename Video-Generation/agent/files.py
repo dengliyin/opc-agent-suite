@@ -39,12 +39,57 @@ class ScriptFile:
     created_at: str = ""
     upstream_script_path: str = ""
     exported: bool = False
+    script_type: str = ""
 
 
 def scan_scripts(settings: Settings, include_archived: bool = False) -> List[ScriptFile]:
+    if settings.workflow == "hybrid_omni":
+        return _scan_hybrid_script_root(settings)
     scripts = _scan_script_root(settings, settings.script_root, exported=False)
     if include_archived:
         scripts.extend(_scan_script_root(settings, settings.completed_script_root, exported=True))
+    return scripts
+
+
+def _scan_hybrid_script_root(settings: Settings) -> List[ScriptFile]:
+    root = settings.script_root
+    if not root.exists():
+        return []
+
+    scripts: List[ScriptFile] = []
+    references_by_product: Dict[str, List[Path]] = {}
+    for md_path in sorted(root.rglob("*.md")):
+        relative = md_path.relative_to(root)
+        if len(relative.parts) < 3:
+            continue
+        script_type, product_name = relative.parts[:2]
+        if script_type not in {"混剪-钩子", "混剪-CTA"}:
+            continue
+        if any(part.startswith("_") or part.startswith(".") for part in relative.parts[:-1]):
+            continue
+        if product_name not in references_by_product:
+            references_by_product[product_name] = find_product_references(
+                settings.reference_root, product_name
+            )
+        reference_images = references_by_product[product_name]
+        reference_image = reference_images[0] if len(reference_images) == 1 else None
+        markdown = md_path.read_text(encoding="utf-8")
+        source_script = relative.parts[2] if len(relative.parts) > 3 else md_path.stem
+        scripts.append(
+            ScriptFile(
+                product_name=product_name,
+                product_dir=root / script_type / product_name,
+                md_path=md_path,
+                reference_image=reference_image,
+                segments=parse_segments(markdown),
+                reference_images=tuple(reference_images),
+                batch_id=f"{script_type}-{product_name}-{source_script}",
+                batch_label=source_script,
+                batch_source="hybrid_adaptation",
+                source_script=source_script,
+                script_type=script_type,
+            )
+        )
     return scripts
 
 
@@ -282,6 +327,17 @@ def storyboard_image_path(md_path: Path, segment_index: int, prefix: str = "") -
 
 def video_output_path(settings: Settings, product_name: str, md_path: Path, segment_index: int) -> Path:
     suffix = "omni" if settings.provider == "omni" else settings.provider
+    if settings.workflow == "hybrid_omni":
+        relative = md_path.resolve().relative_to(settings.script_root.resolve())
+        if len(relative.parts) < 3 or relative.parts[0] not in {"混剪-钩子", "混剪-CTA"}:
+            raise ValueError(f"混剪适配脚本目录层级无效：{md_path}")
+        script_type = relative.parts[0]
+        return (
+            settings.video_output_root
+            / script_type
+            / product_name
+            / f"{md_stem(md_path)}-片段{segment_index}-{suffix}.mp4"
+        )
     return settings.video_output_root / product_name / f"{md_stem(md_path)}-片段{segment_index}-{suffix}.mp4"
 
 
@@ -435,6 +491,7 @@ def script_to_dict(settings: Settings, script: ScriptFile) -> Dict[str, object]:
         "source_script": getattr(script, "source_script", ""),
         "created_at": getattr(script, "created_at", ""),
         "upstream_script_path": getattr(script, "upstream_script_path", ""),
+        "script_type": getattr(script, "script_type", ""),
         "complete": complete,
         "exported": exported,
         "export_marker": str(export_marker_path(script.md_path)) if exported else None,

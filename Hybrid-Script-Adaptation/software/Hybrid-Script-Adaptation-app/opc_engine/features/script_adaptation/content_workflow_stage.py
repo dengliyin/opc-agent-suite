@@ -833,6 +833,65 @@ def fixed_duration_padding_note(source_text, target_model, segment_seconds):
     )
 
 
+def normalize_omni_machine_structure(markdown, source_text, segment_seconds):
+    content = str(markdown or "").strip()
+    full_required = (
+        "AI视频生成分段提示词包",
+        "## 1. 分段总览",
+        "## 2. 人物设定总览",
+        "## 3. 每段生成提示词",
+    )
+    if "## 每段生成提示词" not in content and not all(item in content for item in full_required):
+        content = f"#\n## 每段生成提示词\n\n---\n\n{content}"
+
+    plan = fixed_duration_padding_plan(source_text, segment_seconds)
+    if not plan or plan["padding_duration"] < 0.001:
+        return content.strip()
+
+    field_labels = (
+        "原脚本总时长",
+        "本段有效内容时长",
+        "有效内容结束",
+        "技术占位开始",
+        "技术占位时长",
+        "模型片段时长",
+    )
+    field_pattern = "|".join(re.escape(label) for label in field_labels)
+    content = re.sub(
+        rf"(?m)^[ \t]*-?[ \t]*(?:{field_pattern})[：:].*(?:\n|$)",
+        "",
+        content,
+    )
+    content = re.sub(
+        r"(?m)^[ \t]*\[TECHNICAL_PADDING: BLACK_SILENT\][ \t]*(?:\n|$)",
+        "",
+        content,
+    )
+    canonical_description = "技术占位为纯黑画面、完全静音、无人物、无产品、无字幕、无贴纸、无动作、无转场内容。"
+    content = re.sub(
+        rf"(?m)^[ \t]*{re.escape(canonical_description)}[ \t]*(?:\n|$)",
+        "",
+        content,
+    )
+
+    segment_headings = list(re.finditer(r"(?m)^#\s*Segment\s+.+$", content))
+    if not segment_headings:
+        return content.strip()
+
+    machine_block = (
+        f"\n- 原脚本总时长：{plan['source_duration']:.3f}秒\n"
+        f"- 本段有效内容时长：{plan['last_content_duration']:.3f}秒\n"
+        f"- 有效内容结束：{plan['last_content_duration']:.3f}秒\n"
+        f"- 技术占位开始：{plan['last_content_duration']:.3f}秒\n"
+        f"- 技术占位时长：{plan['padding_duration']:.3f}秒\n"
+        f"- 模型片段时长：{plan['segment_seconds']:.3f}秒\n"
+        "[TECHNICAL_PADDING: BLACK_SILENT]\n"
+        f"{canonical_description}\n"
+    )
+    insert_at = segment_headings[-1].end()
+    return f"{content[:insert_at]}{machine_block}{content[insert_at:]}".strip()
+
+
 def omni_segment_count_issues(output_text, source_text="", segment_seconds=10):
     expected_count, duration = expected_omni_segment_count(source_text, segment_seconds)
     if expected_count is None:
@@ -1375,6 +1434,12 @@ def run_adapt(config):
         segments = split_script_into_segments(source_text, max_segments=80)
         if target_model.lower() in {"omni", "grok"}:
             markdown = sanitize_omni_output_markdown(strip_outer_markdown_fence(adapted_text)) + "\n"
+            if target_model.lower() == "omni":
+                markdown = normalize_omni_machine_structure(
+                    markdown,
+                    source_text,
+                    segment_seconds,
+                ) + "\n"
         else:
             markdown = build_clean_adaptation_markdown(
                 input_path,
