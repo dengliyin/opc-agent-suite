@@ -227,7 +227,7 @@ class GenerateProductScriptTests(unittest.TestCase):
                 self.assertIn(expected, prompt)
                 self.assertIn(forbidden, prompt)
 
-    def test_shared_model_settings_override_stale_local_values_except_api_key(self):
+    def test_local_model_settings_override_shared_defaults(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             shared = root / "model_defaults.json"
@@ -250,9 +250,34 @@ class GenerateProductScriptTests(unittest.TestCase):
             ):
                 config = generate_product_script.load_script_generation_config()
 
-        self.assertEqual(config["modelmesh_base_url"], "https://shared.test")
+        self.assertEqual(config["modelmesh_base_url"], "https://stale.test")
         self.assertEqual(config["script_generation_model"], "shared-model")
         self.assertEqual(config["modelmesh_api_key"], "secret")
+
+    def test_legacy_local_configs_migrate_to_runtime_directory(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            legacy_inputs = root / "legacy" / "inputs.json"
+            legacy_model = root / "legacy" / "model_settings.json"
+            runtime_inputs = root / "runtime" / "inputs.json"
+            runtime_model = root / "runtime" / "model_settings.json"
+            legacy_inputs.parent.mkdir()
+            legacy_inputs.write_text(json.dumps({"script_country": "美国"}), encoding="utf-8")
+            legacy_model.write_text(json.dumps({"modelmesh_api_key": "secret"}), encoding="utf-8")
+
+            with (
+                patch.object(generate_product_script, "LEGACY_LOCAL_INPUTS_PATH", legacy_inputs),
+                patch.object(generate_product_script, "LEGACY_LOCAL_MODEL_SETTINGS_PATH", legacy_model),
+                patch.object(generate_product_script, "LOCAL_INPUTS_PATH", runtime_inputs),
+                patch.object(generate_product_script, "LOCAL_MODEL_SETTINGS_PATH", runtime_model),
+            ):
+                migrated = generate_product_script.migrate_legacy_local_configs()
+
+            self.assertEqual(migrated, [runtime_inputs, runtime_model])
+            self.assertEqual(json.loads(runtime_inputs.read_text(encoding="utf-8"))["script_country"], "美国")
+            self.assertEqual(json.loads(runtime_model.read_text(encoding="utf-8"))["modelmesh_api_key"], "secret")
+            self.assertEqual(runtime_inputs.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(runtime_model.stat().st_mode & 0o777, 0o600)
 
     def test_main_creates_explicit_product_output_dir_without_saved_project(self):
         with tempfile.TemporaryDirectory() as temp_dir:
