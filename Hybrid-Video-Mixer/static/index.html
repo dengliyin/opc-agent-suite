@@ -12,7 +12,7 @@
       <div>
         <p class="eyebrow">PORT 10000 · HYBRID VIDEO MIXER</p>
         <h1>AI＋实拍混剪智能体</h1>
-        <p class="lead">AI 钩子 → 产品介绍音频＋展示/使用实拍 → AI CTA。先生成可检查的编排方案，再渲染成片。</p>
+        <p class="lead">AI 钩子 → 混剪音频＋展示/使用实拍 → 可选 AI CTA。选择素材后自动生成编排方案，再渲染成片。</p>
       </div>
       <button id="refreshButton" class="secondary">重新扫描素材</button>
     </header>
@@ -23,25 +23,43 @@
       <section class="panel controls">
         <div class="section-title"><span>01</span><h2>选择素材</h2></div>
         <label>产品<select id="product"></select></label>
-        <label>已生成片段来源<select id="model"></select></label>
-        <label>开头 AI 钩子视频<select id="hook"></select></label>
-        <label>产品介绍音频<select id="audio"></select></label>
-        <label>结尾 AI CTA 视频<select id="cta"></select></label>
+        <div class="footage-summary" id="footageSummary">选择产品后显示实拍素材数量</div>
+        <label>国家<select id="market"></select></label>
+        <div class="footage-summary" id="hookSummary">选择国家后显示钩子素材数量</div>
+        <div class="footage-summary" id="audioSummary">选择国家后显示混剪音频数量</div>
+        <div class="footage-summary" id="ctaSummary">选择国家后显示 CTA 素材数量</div>
+        <label class="toggle"><input id="includeCta" type="checkbox">成片加入 CTA（可选）</label>
 
         <div class="section-title spaced"><span>02</span><h2>编排设置</h2></div>
-        <div class="grid">
-          <label>成片数量<input id="count" type="number" min="1" max="20" value="1"></label>
-          <label>随机种子<input id="seed" type="number" placeholder="自动"></label>
-          <label>单镜头最短/秒<input id="minClip" type="number" min="0.6" max="8" step="0.1" value="1.6"></label>
-          <label>单镜头最长/秒<input id="maxClip" type="number" min="0.6" max="12" step="0.1" value="4.2"></label>
-        </div>
-        <label>原创差异处理
-          <select id="originality">
-            <option value="standard">标准：素材轮换＋轻微画面差异</option>
-            <option value="enhanced">增强：增加入点、节奏和构图差异</option>
-          </select>
-        </label>
-        <p class="hint">不会改写钩子、CTA 或产品音频。若 AI 片段末尾是技术性黑屏静音，会在合成时自动裁掉。</p>
+        <fieldset class="deduplication">
+          <legend>去重处理</legend>
+          <label class="toggle random-deduplication">
+            <input id="randomDeduplication" type="checkbox" checked>
+            <span><strong>随机去重</strong><small>每条成片随机组合若干项，并自动控制强度</small></span>
+          </label>
+          <div class="deduplication-options" id="deduplicationOptions">
+            <label class="toggle"><input type="checkbox" value="transform">缩放、裁切与位置偏移</label>
+            <label class="toggle"><input type="checkbox" value="color">亮度、对比度与饱和度</label>
+            <label class="toggle"><input type="checkbox" value="tone">Gamma 与色温</label>
+            <label class="toggle"><input type="checkbox" value="detail">锐化与降噪</label>
+            <label class="toggle"><input type="checkbox" value="frame_drop">抽帧</label>
+            <label class="toggle"><input type="checkbox" value="mirror">镜像</label>
+            <label class="toggle"><input type="checkbox" value="speed">轻微变速</label>
+            <label class="toggle"><input type="checkbox" value="border">边框</label>
+            <label class="toggle"><input type="checkbox" value="effect">明显特效</label>
+            <label class="toggle"><input type="checkbox" value="encoding">编码参数变化</label>
+          </div>
+        </fieldset>
+        <p class="hint">去重只处理视频画面，不修改钩子、混剪音频或 CTA 音频。取消“随机去重”后，可手动同时勾选多项。</p>
+        <fieldset class="subtitle-setting">
+          <legend>字幕包装</legend>
+          <label class="toggle subtitle-toggle">
+            <input id="useSubtitles" type="checkbox">
+            <span><strong>使用字幕</strong><small>只包装混剪音频对应的实拍中段；钩子和 CTA 不加字幕</small></span>
+          </label>
+          <div class="subtitle-summary" id="subtitleSummary">选择国家后检测本地字幕文件</div>
+        </fieldset>
+        <p class="hint">钩子每条只使用一次；混剪音频可无限复用；每个实拍片段最多进入 5 条成功成片，且不会重复“同一音频＋同一实拍顺序”。实拍镜头使用素材自身时长，仅最后一个镜头可能裁短。</p>
         <div class="actions">
           <button id="planButton">生成编排方案</button>
           <button id="renderButton" class="accent" disabled>确认并渲染</button>
@@ -49,23 +67,36 @@
         <div class="message" id="message"></div>
       </section>
 
-      <section class="panel">
-        <div class="section-title"><span>03</span><h2>方案预览</h2></div>
-        <div id="planEmpty" class="empty">选择素材后生成方案，这里会显示每一条成片的完整时间线。</div>
-        <div id="plan"></div>
+      <section class="panel hook-preview-panel">
+        <div class="section-title hook-panel-title">
+          <span>03</span>
+          <h2>钩子素材预览</h2>
+          <div class="hook-panel-actions">
+            <button id="selectAllHooksButton" type="button" disabled>全选</button>
+            <button id="deleteSelectedHooksButton" class="danger" type="button" disabled>批量删除</button>
+            <span id="hookResultCount">0 个结果</span>
+          </div>
+        </div>
+        <div id="hookPreviewSummary" class="hook-preview-summary">选择产品和国家后显示钩子视频</div>
+        <div id="hookPreview" class="hook-video-grid">
+          <div class="empty">选择产品和国家后，可在这里预览对应的 AI 钩子素材。</div>
+        </div>
+        <div id="hookPager" class="hook-pager"></div>
       </section>
+
+      <aside class="status-column">
+        <section class="panel task-panel">
+          <div class="section-title"><span>04</span><h2>渲染状态</h2></div>
+          <div class="task-head"><strong id="taskStatus">空闲</strong><span id="taskMessage"></span></div>
+          <pre id="logs">暂无运行日志</pre>
+        </section>
+
+        <section class="panel outputs-panel">
+          <div class="section-title"><span>05</span><h2>最近成片</h2></div>
+          <div id="outputs" class="empty">暂无 AI＋实拍混剪成片</div>
+        </section>
+      </aside>
     </div>
-
-    <section class="panel task-panel">
-      <div class="section-title"><span>04</span><h2>渲染状态</h2></div>
-      <div class="task-head"><strong id="taskStatus">空闲</strong><span id="taskMessage"></span></div>
-      <pre id="logs">暂无运行日志</pre>
-    </section>
-
-    <section class="panel">
-      <div class="section-title"><span>05</span><h2>最近成片</h2></div>
-      <div id="outputs" class="empty">暂无 AI＋实拍混剪成片</div>
-    </section>
 
     <section class="paths" id="paths"></section>
   </main>

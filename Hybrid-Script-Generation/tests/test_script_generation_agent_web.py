@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import unittest
 import tempfile
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -84,6 +85,40 @@ class ScriptGenerationAgentWebTests(unittest.TestCase):
         self.assertIn("if (!referencePath)", HTML_PAGE)
         self.assertIn("请先从解析脚本列表选择一个参考脚本", HTML_PAGE)
         self.assertIn("钩子与 CTA 脚本复刻裂变智能体", HTML_PAGE)
+
+    def test_save_state_writes_runtime_model_settings_not_shared_defaults(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            shared = root / "bundled" / "model_defaults.json"
+            local_model = root / "runtime" / "model_settings.json"
+            local_inputs = root / "runtime" / "inputs.json"
+            shared.parent.mkdir()
+            local_model.parent.mkdir()
+            shared.write_text(json.dumps({"script_generation_model": "default-model"}), encoding="utf-8")
+            local_model.write_text(json.dumps({"modelmesh_api_key": "secret"}), encoding="utf-8")
+            local_inputs.write_text("{}", encoding="utf-8")
+
+            with (
+                patch.object(script_generation_agent_web, "SHARED_MODEL_SETTINGS_PATH", shared),
+                patch.object(script_generation_agent_web, "LOCAL_MODEL_SETTINGS_PATH", local_model),
+                patch.object(script_generation_agent_web, "LOCAL_INPUTS_PATH", local_inputs),
+                patch.object(script_generation_agent_web, "migrate_legacy_local_configs"),
+                patch.object(script_generation_agent_web, "state_payload", return_value={"ok": True}),
+            ):
+                result = script_generation_agent_web.save_state(
+                    {
+                        "script_generation_model": "custom-model",
+                        "modelmesh_base_url": "https://example.test",
+                        "script_generation_timeout": 240,
+                        "script_generation_max_output_tokens": 32768,
+                    }
+                )
+
+            self.assertEqual(result, {"ok": True})
+            self.assertEqual(json.loads(shared.read_text(encoding="utf-8"))["script_generation_model"], "default-model")
+            saved_local = json.loads(local_model.read_text(encoding="utf-8"))
+            self.assertEqual(saved_local["script_generation_model"], "custom-model")
+            self.assertEqual(saved_local["modelmesh_api_key"], "secret")
 
     def test_job_logs_are_rendered_newest_first(self):
         self.assertIn("function renderJobLogs(logText)", HTML_PAGE)

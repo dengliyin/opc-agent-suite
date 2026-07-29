@@ -9,6 +9,8 @@ import random
 import re
 import shutil
 import subprocess
+import sys
+import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
@@ -16,10 +18,55 @@ from typing import Callable
 
 VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".mkv", ".webm"}
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
+MAX_REAL_FOOTAGE_USES = 5
+DEDUPLICATION_OPTIONS = (
+    "transform",
+    "color",
+    "tone",
+    "detail",
+    "frame_drop",
+    "mirror",
+    "speed",
+    "border",
+    "effect",
+    "encoding",
+)
+MARKET_NAMES = {
+    "BR": "巴西",
+    "ES": "西班牙",
+    "IE": "爱尔兰",
+    "IT": "意大利",
+    "MY": "马来西亚",
+    "PH": "菲律宾",
+    "TH": "泰国",
+    "VN": "越南",
+}
+UNSPECIFIED_MARKET = "未标注"
 ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = ROOT.parent
 ASSEMBLY_RUNTIME = WORKSPACE_ROOT / "Video-Assembly-hd" / "runtime"
-ASSEMBLY_VENDOR = WORKSPACE_ROOT / "Video-Assembly-hd" / "vendor"
+CAPTION_TOOL_ROOT = ROOT / "vendor" / "tiktok-karaoke-captions"
+CAPTION_TOOL_PATH = CAPTION_TOOL_ROOT / "caption.py"
+GSAP_SOURCE = WORKSPACE_ROOT / "Video-Assembly-hd" / "vendor" / "gsap.min.js"
+COUNTRY_LANGUAGE_CODES = {
+    "AT": "de",
+    "BE": "nl",
+    "BR": "pt",
+    "CA": "en",
+    "CH": "de",
+    "DE": "de",
+    "ES": "es",
+    "FR": "fr",
+    "IE": "en",
+    "IT": "it",
+    "MY": "ms",
+    "NL": "nl",
+    "PH": "en",
+    "TH": "th",
+    "UK": "en",
+    "US": "en",
+    "VN": "vi",
+}
 
 
 @dataclass(frozen=True)
@@ -102,6 +149,18 @@ def hyperframes_cmd() -> list[str]:
     raise RuntimeError("未找到离线 HyperFrames CLI")
 
 
+def caption_language(market: str) -> str:
+    return COUNTRY_LANGUAGE_CODES.get(str(market).upper(), "en")
+
+
+def caption_runtime_ready() -> bool:
+    return (
+        CAPTION_TOOL_PATH.is_file()
+        and (CAPTION_TOOL_ROOT / "fonts" / "Roboto-Black.ttf").is_file()
+        and (ASSEMBLY_RUNTIME / "bin" / "uvx").is_file()
+    )
+
+
 def run(
     command: list[str],
     *,
@@ -123,6 +182,195 @@ def run(
     return result
 
 
+def caption_runtime_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env["PATH"] = f"{ASSEMBLY_RUNTIME / 'bin'}:{env.get('PATH', '')}"
+    env.pop("DEEPGRAM_API_KEY", None)
+    env["UV_CACHE_DIR"] = str(ASSEMBLY_RUNTIME / "cache" / "uv")
+    env["HF_HOME"] = str(ASSEMBLY_RUNTIME / "cache" / "huggingface")
+    env["UV_OFFLINE"] = "1"
+    env["HF_HUB_OFFLINE"] = "1"
+    return env
+
+
+def audio_subtitle_paths(audio_path: Path) -> dict[str, Path]:
+    return {
+        "ass": audio_path.with_suffix(".ass"),
+        "srt": audio_path.with_suffix(".srt"),
+        "caption_json": audio_path.with_name(f"{audio_path.stem}.caption.json"),
+    }
+
+
+def valid_ass_subtitles(path: Path) -> bool:
+    if not path.is_file() or path.stat().st_size <= 0:
+        return False
+    try:
+        return bool(re.search(r"(?m)^Dialogue:", path.read_text(encoding="utf-8")))
+    except OSError:
+        return False
+
+
+def audio_library_record(path: Path, root: Path) -> dict:
+    record = relative_record(path, root)
+    subtitles = audio_subtitle_paths(path)
+    record["subtitle_ready"] = valid_ass_subtitles(subtitles["ass"])
+    record["subtitle_paths"] = {key: str(value) for key, value in subtitles.items()}
+    return record
+
+
+def ensure_audio_subtitles(
+    audio_path: Path,
+    duration: float,
+    market: str,
+    project_dir: Path,
+) -> dict[str, Path]:
+    sidecars = audio_subtitle_paths(audio_path)
+    if valid_ass_subtitles(sidecars["ass"]):
+        return sidecars
+    if not caption_runtime_ready():
+        raise RuntimeError("TikTok 卡拉 OK 字幕运行依赖不完整")
+    caption_dir = project_dir / "caption-generation" / safe_name(audio_path.stem)
+    caption_dir.mkdir(parents=True, exist_ok=True)
+    reference_video = caption_dir / f"{audio_path.stem}.mp4"
+    run(
+        [
+            ffmpeg_path(),
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:size=1080x1920:rate=30",
+            "-i",
+            str(audio_path),
+            "-t",
+            f"{duration:.3f}",
+            "-shortest",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "30",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            str(reference_video),
+        ],
+        timeout=900,
+    )
+    command = [
+        sys.executable,
+        str(CAPTION_TOOL_PATH),
+        str(reference_video),
+        "--caption-mode",
+        "tiktok",
+        "--model",
+        os.environ.get("VIDEO_ASSEMBLY_WHISPER_MODEL", "medium"),
+        "--language",
+        caption_language(market),
+        "--prefer-local",
+        "--out-dir",
+        str(caption_dir),
+        "--srt-only",
+    ]
+    run(command, cwd=CAPTION_TOOL_ROOT, env=caption_runtime_env(), timeout=3600)
+    generated = {
+        "ass": caption_dir / f"{reference_video.stem}.ass",
+        "srt": caption_dir / f"{reference_video.stem}.srt",
+        "caption_json": caption_dir / f"{reference_video.stem}-whisper.json",
+    }
+    if not valid_ass_subtitles(generated["ass"]):
+        raise RuntimeError("本地 Whisper 未识别到可生成字幕的语音内容")
+    for key, path in generated.items():
+        if not path.is_file() or path.stat().st_size <= 0:
+            raise RuntimeError(f"字幕工具未生成有效文件：{path}")
+        sidecars[key].parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, sidecars[key])
+    return sidecars
+
+
+def parse_ass_time(value: str) -> float:
+    hours, minutes, seconds = value.strip().split(":")
+    return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+
+
+def format_ass_time(value: float) -> str:
+    centiseconds = max(0, int(round(value * 100)))
+    hours, remainder = divmod(centiseconds, 360000)
+    minutes, remainder = divmod(remainder, 6000)
+    seconds, centiseconds = divmod(remainder, 100)
+    return f"{hours}:{minutes:02d}:{seconds:02d}.{centiseconds:02d}"
+
+
+def shift_ass_subtitles(
+    source_path: Path,
+    output_path: Path,
+    *,
+    offset: float,
+    duration: float,
+) -> None:
+    lines = source_path.read_text(encoding="utf-8").splitlines()
+    shifted = []
+    dialogue_count = 0
+    for line in lines:
+        if not line.startswith("Dialogue:"):
+            shifted.append(line)
+            continue
+        fields = line.split(",", 9)
+        if len(fields) != 10:
+            continue
+        start = parse_ass_time(fields[1])
+        end = min(parse_ass_time(fields[2]), duration)
+        if start >= duration or end <= 0 or end <= start:
+            continue
+        fields[1] = format_ass_time(offset + max(0, start))
+        fields[2] = format_ass_time(offset + end)
+        shifted.append(",".join(fields))
+        dialogue_count += 1
+    if not dialogue_count:
+        raise RuntimeError("本地字幕文件没有落在混剪音频时长内的有效字幕")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("\n".join(shifted) + "\n", encoding="utf-8")
+
+
+def burn_ass_subtitles(input_path: Path, subtitle_path: Path, output_path: Path) -> None:
+    with tempfile.TemporaryDirectory(prefix="hybrid-caption-") as temporary:
+        temp = Path(temporary)
+        local_video = temp / "input.mp4"
+        local_ass = temp / "sub.ass"
+        local_fonts = temp / "fonts"
+        shutil.copy2(input_path, local_video)
+        shutil.copy2(subtitle_path, local_ass)
+        shutil.copytree(CAPTION_TOOL_ROOT / "fonts", local_fonts)
+        local_output = temp / "output.mp4"
+        run(
+            [
+                ffmpeg_path(),
+                "-y",
+                "-i",
+                local_video.name,
+                "-vf",
+                "subtitles=sub.ass:fontsdir=fonts",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "medium",
+                "-crf",
+                "20",
+                "-c:a",
+                "copy",
+                local_output.name,
+            ],
+            cwd=temp,
+            timeout=3600,
+        )
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(local_output, output_path)
+
+
 def safe_name(value: str, limit: int = 150) -> str:
     cleaned = re.sub(r"[^\w.\-\u4e00-\u9fff]+", "_", str(value)).strip("._")
     return (cleaned or "未命名")[:limit]
@@ -136,6 +384,18 @@ def media_files(root: Path, extensions: set[str]) -> list[Path]:
         for path in root.rglob("*")
         if path.is_file() and path.suffix.lower() in extensions and not path.name.startswith(".")
     )
+
+
+def media_market(path: Path) -> str:
+    for token in path.stem.split("-"):
+        if re.fullmatch(r"[A-Z]{2}", token):
+            return token
+    return UNSPECIFIED_MARKET
+
+
+def market_label(market: str) -> str:
+    name = MARKET_NAMES.get(market)
+    return f"{market} · {name}" if name else market
 
 
 def probe_media(path: Path) -> dict:
@@ -153,13 +413,21 @@ def probe_media(path: Path) -> dict:
         timeout=60,
     )
     data = json.loads(result.stdout or "{}")
-    duration = 0.0
+    format_duration = 0.0
     try:
-        duration = float((data.get("format") or {}).get("duration") or 0)
+        format_duration = float((data.get("format") or {}).get("duration") or 0)
     except (TypeError, ValueError):
-        duration = 0.0
+        format_duration = 0.0
     streams = data.get("streams") or []
     video = next((item for item in streams if item.get("codec_type") == "video"), {})
+    duration = format_duration
+    if video:
+        try:
+            video_duration = float(video.get("duration") or 0)
+        except (TypeError, ValueError):
+            video_duration = 0.0
+        if video_duration > 0:
+            duration = video_duration
     has_audio = any(item.get("codec_type") == "audio" for item in streams)
     return {
         "path": str(path),
@@ -180,10 +448,17 @@ def relative_record(path: Path, root: Path) -> dict:
     return {"name": path.name, "path": str(path), "relative_path": relative}
 
 
+def usage_record(path: Path, root: Path, history: dict) -> dict:
+    record = relative_record(path, root)
+    record["used_count"] = int(history.get("sources", {}).get(str(path), 0))
+    return record
+
+
 def scan_library(paths: MixerPaths | None = None) -> dict:
     paths = paths or mixer_paths()
     for folder in (paths.ai_clip_root, paths.audio_root, paths.real_root, paths.work_root, paths.output_root):
         folder.mkdir(parents=True, exist_ok=True)
+    history = load_usage_history(paths)
 
     products: set[str] = set()
     if paths.real_root.is_dir():
@@ -202,26 +477,73 @@ def scan_library(paths: MixerPaths | None = None) -> dict:
     records: list[dict] = []
     for product in sorted(products):
         models: dict[str, dict] = {}
+        market_models: dict[str, dict[str, dict]] = {}
         if paths.ai_clip_root.is_dir():
             for model_dir in sorted(path for path in paths.ai_clip_root.iterdir() if path.is_dir()):
                 hooks = media_files(model_dir / "混剪-钩子" / product, VIDEO_EXTS)
                 ctas = media_files(model_dir / "混剪-CTA" / product, VIDEO_EXTS)
                 if hooks or ctas:
                     models[model_dir.name] = {
-                        "hooks": [relative_record(path, paths.ai_clip_root) for path in hooks],
-                        "ctas": [relative_record(path, paths.ai_clip_root) for path in ctas],
+                        "hooks": [usage_record(path, paths.ai_clip_root, history) for path in hooks],
+                        "ctas": [usage_record(path, paths.ai_clip_root, history) for path in ctas],
                     }
+                for key, items in (("hooks", hooks), ("ctas", ctas)):
+                    for path in items:
+                        market = media_market(path)
+                        model_record = market_models.setdefault(market, {}).setdefault(
+                            model_dir.name,
+                            {"hooks": [], "ctas": []},
+                        )
+                        model_record[key].append(usage_record(path, paths.ai_clip_root, history))
         audio = media_files(paths.audio_root / product, AUDIO_EXTS)
-        display = media_files(paths.real_root / product / "展示", VIDEO_EXTS)
-        usage = media_files(paths.real_root / product / "使用", VIDEO_EXTS)
+        market_audio: dict[str, list[dict]] = {}
+        for path in audio:
+            market_audio.setdefault(media_market(path), []).append(audio_library_record(path, paths.audio_root))
+        markets = {}
+        for market in sorted(set(market_models) | set(market_audio)):
+            market_record = {
+                "code": market,
+                "label": market_label(market),
+                "models": market_models.get(market, {}),
+                "audio": market_audio.get(market, []),
+            }
+            market_record["subtitle_count"] = sum(
+                1 for item in market_record["audio"] if item["subtitle_ready"]
+            )
+            market_record["missing_subtitle_count"] = (
+                len(market_record["audio"]) - market_record["subtitle_count"]
+            )
+            market_record["ready"] = bool(
+                market_record["audio"]
+                and any(
+                    any(not hook["used_count"] for hook in model["hooks"])
+                    for model in market_record["models"].values()
+                )
+            )
+            markets[market] = market_record
+        display = [
+            usage_record(path, paths.real_root, history)
+            for path in media_files(paths.real_root / product / "展示", VIDEO_EXTS)
+        ]
+        usage = [
+            usage_record(path, paths.real_root, history)
+            for path in media_files(paths.real_root / product / "使用", VIDEO_EXTS)
+        ]
+        available_display = [item for item in display if item["used_count"] < MAX_REAL_FOOTAGE_USES]
+        available_usage = [item for item in usage if item["used_count"] < MAX_REAL_FOOTAGE_USES]
         records.append(
             {
                 "name": product,
                 "models": models,
-                "audio": [relative_record(path, paths.audio_root) for path in audio],
-                "display": [relative_record(path, paths.real_root) for path in display],
-                "usage": [relative_record(path, paths.real_root) for path in usage],
-                "ready": bool(audio and display and usage and any(v["hooks"] and v["ctas"] for v in models.values())),
+                "audio": [audio_library_record(path, paths.audio_root) for path in audio],
+                "display": display,
+                "usage": usage,
+                "markets": markets,
+                "ready": bool(
+                    available_display
+                    and available_usage
+                    and any(item["ready"] for item in markets.values())
+                ),
             }
         )
     return {
@@ -230,10 +552,48 @@ def scan_library(paths: MixerPaths | None = None) -> dict:
         "summary": {
             "products": len(records),
             "ready_products": sum(1 for item in records if item["ready"]),
+            "markets": sum(len(item["markets"]) for item in records),
+            "ready_markets": sum(
+                1
+                for item in records
+                for market in item["markets"].values()
+                if market["ready"]
+                and any(asset["used_count"] < MAX_REAL_FOOTAGE_USES for asset in item["display"])
+                and any(asset["used_count"] < MAX_REAL_FOOTAGE_USES for asset in item["usage"])
+            ),
             "audio": sum(len(item["audio"]) for item in records),
+            "subtitles": sum(
+                market["subtitle_count"]
+                for item in records
+                for market in item["markets"].values()
+            ),
+            "missing_subtitles": sum(
+                market["missing_subtitle_count"]
+                for item in records
+                for market in item["markets"].values()
+            ),
             "display": sum(len(item["display"]) for item in records),
             "usage": sum(len(item["usage"]) for item in records),
+            "available_display": sum(
+                1
+                for item in records
+                for asset in item["display"]
+                if asset["used_count"] < MAX_REAL_FOOTAGE_USES
+            ),
+            "available_usage": sum(
+                1
+                for item in records
+                for asset in item["usage"]
+                if asset["used_count"] < MAX_REAL_FOOTAGE_USES
+            ),
             "hooks": sum(len(model["hooks"]) for item in records for model in item["models"].values()),
+            "available_hooks": sum(
+                1
+                for item in records
+                for model in item["models"].values()
+                for hook in model["hooks"]
+                if not hook["used_count"]
+            ),
             "ctas": sum(len(model["ctas"]) for item in records for model in item["models"].values()),
         },
     }
@@ -347,6 +707,7 @@ def load_usage_history(paths: MixerPaths) -> dict:
     return {
         "sources": payload.get("sources") if isinstance(payload.get("sources"), dict) else {},
         "routes": payload.get("routes") if isinstance(payload.get("routes"), list) else [],
+        "middle_routes": payload.get("middle_routes") if isinstance(payload.get("middle_routes"), list) else [],
         "outputs": payload.get("outputs") if isinstance(payload.get("outputs"), list) else [],
     }
 
@@ -367,17 +728,12 @@ def choose_middle_timeline(
     duration: float,
     *,
     seed: int,
-    min_clip: float,
-    max_clip: float,
-    originality: str,
     history: dict | None = None,
 ) -> list[dict]:
     if duration <= 0:
         raise ValueError("产品介绍音频时长无效")
     if not display_pool or not usage_pool:
         raise ValueError("展示和使用两个实拍素材池都必须至少有一个可用视频")
-    if min_clip <= 0 or max_clip < min_clip:
-        raise ValueError("实拍切片时长设置无效")
     rng = random.Random(seed)
     history = history or {"sources": {}}
     pools = {"展示": list(display_pool), "使用": list(usage_pool)}
@@ -387,22 +743,19 @@ def choose_middle_timeline(
 
     timeline: list[dict] = []
     remaining = duration
-    category = "展示" if seed % 2 == 0 else "使用"
+    display_target = duration / 2
+    display_phase = True
     used_in_route: set[str] = set()
     while remaining > 0.03:
-        desired = min(max_clip, remaining)
-        if remaining > max_clip and remaining - desired < min_clip:
-            desired = remaining / 2
-        if remaining <= max_clip:
-            desired = remaining
-        elif originality == "enhanced":
-            desired = min(desired, rng.uniform(min_clip, max_clip))
-        desired = max(min_clip if remaining >= min_clip else remaining, desired)
-
-        candidates = [item for item in pools[category] if item["path"] not in used_in_route]
+        category = "展示" if display_phase else "使用"
+        candidates = [
+            item
+            for item in pools[category]
+            if item["path"] not in used_in_route
+            and history.get("sources", {}).get(item["path"], 0) < MAX_REAL_FOOTAGE_USES
+        ]
         if not candidates:
-            used_in_route.clear()
-            candidates = list(pools[category])
+            raise ValueError(f"{category}实拍素材不足：没有未在本片使用且使用次数少于5次的片段")
         if timeline:
             non_adjacent = [item for item in candidates if item["path"] != timeline[-1]["path"]]
             if non_adjacent:
@@ -415,23 +768,32 @@ def choose_middle_timeline(
         )
         asset = candidates[0]
         source_duration = float(asset["duration"])
-        clip_duration = min(desired, source_duration)
+        clip_duration = min(source_duration, remaining)
         if clip_duration <= 0.03:
             raise ValueError(f"实拍素材时长无效：{asset['name']}")
-        max_start = max(0.0, source_duration - clip_duration)
-        start = rng.uniform(0, max_start) if originality == "enhanced" and max_start > 0.05 else 0.0
+        clip_duration = min(clip_duration, remaining)
+        elapsed = duration - remaining
+        if (
+            display_phase
+            and timeline
+            and abs(display_target - elapsed)
+            <= abs(display_target - (elapsed + clip_duration))
+        ):
+            display_phase = False
+            continue
         timeline.append(
             {
                 "role": category,
                 "path": asset["path"],
                 "name": asset["name"],
-                "start": round(start, 3),
-                "duration": round(min(clip_duration, remaining), 3),
+                "start": 0.0,
+                "duration": round(clip_duration, 3),
             }
         )
         used_in_route.add(asset["path"])
         remaining -= timeline[-1]["duration"]
-        category = "使用" if category == "展示" else "展示"
+        if display_phase and duration - remaining >= display_target:
+            display_phase = False
         if len(timeline) > 200:
             raise RuntimeError("实拍编排片段数量异常")
     drift = duration - sum(item["duration"] for item in timeline)
@@ -445,59 +807,158 @@ def route_signature(segments: list[dict]) -> str:
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
 
+def middle_route_signature(audio: Path | str, segments: list[dict]) -> str:
+    real_paths = [
+        f"{item['role']}:{item['path']}"
+        for item in segments
+        if item["role"] in {"展示", "使用"}
+    ]
+    raw = f"audio:{audio}|" + ">".join(real_paths)
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
 def build_plan(payload: dict, paths: MixerPaths | None = None) -> dict:
     paths = paths or mixer_paths()
     product = str(payload.get("product") or "").strip()
+    market = str(payload.get("market") or "").strip()
     model = str(payload.get("model") or "").strip()
     if not product:
         raise ValueError("请选择产品")
+    if not market:
+        raise ValueError("请选择国家")
     if not model:
         raise ValueError("请选择AI片段模型")
 
-    hook = assert_inside(Path(str(payload.get("hook_path") or "")), paths.ai_clip_root)
-    cta = assert_inside(Path(str(payload.get("cta_path") or "")), paths.ai_clip_root)
-    audio = assert_inside(Path(str(payload.get("audio_path") or "")), paths.audio_root)
-    expected_hook_root = paths.ai_clip_root / model / "混剪-钩子" / product
-    expected_cta_root = paths.ai_clip_root / model / "混剪-CTA" / product
-    assert_inside(hook, expected_hook_root)
-    assert_inside(cta, expected_cta_root)
-    assert_inside(audio, paths.audio_root / product)
-
-    hook_record = effective_video_record(hook)
-    cta_record = effective_video_record(cta)
-    audio_record = probe_media(audio)
-    if audio_record["duration"] <= 0:
-        raise ValueError("产品介绍音频时长无效")
+    include_cta = bool(payload.get("include_cta"))
     library = scan_library(paths)
     product_record = next((item for item in library["products"] if item["name"] == product), None)
     if not product_record:
         raise ValueError("未找到产品素材目录")
+    market_record = product_record["markets"].get(market)
+    model_record = market_record["models"].get(model) if market_record else None
+    available_hook_items = [
+        item
+        for item in (model_record["hooks"] if model_record else [])
+        if not item.get("used_count")
+    ]
+    if not available_hook_items:
+        raise ValueError("所选国家没有尚未使用的钩子素材")
+
+    expected_hook_root = paths.ai_clip_root / model / "混剪-钩子" / product
+    hook_paths = []
+    for item in available_hook_items:
+        hook = assert_inside(Path(item["path"]), expected_hook_root)
+        if media_market(hook) != market:
+            raise ValueError("钩子视频国家与所选国家不一致")
+        hook_paths.append(hook)
+    if not market_record["audio"]:
+        raise ValueError("所选国家没有可用的混剪音频")
+    audio_paths = []
+    for item in market_record["audio"]:
+        audio = assert_inside(Path(item["path"]), paths.audio_root / product)
+        if media_market(audio) != market:
+            raise ValueError("混剪音频国家与所选国家不一致")
+        audio_paths.append(audio)
+    cta_paths = []
+    if include_cta:
+        if not model_record["ctas"]:
+            raise ValueError("所选国家没有可用的 CTA 素材")
+        expected_cta_root = paths.ai_clip_root / model / "混剪-CTA" / product
+        for item in model_record["ctas"]:
+            cta = assert_inside(Path(item["path"]), expected_cta_root)
+            if media_market(cta) != market:
+                raise ValueError("CTA视频国家与所选国家不一致")
+            cta_paths.append(cta)
+
     display_pool = media_pool(product_record["display"])
     usage_pool = media_pool(product_record["usage"])
 
-    count = max(1, min(int(payload.get("count") or 1), 20))
-    min_clip = max(0.6, min(float(payload.get("min_clip") or 1.6), 8.0))
-    max_clip = max(min_clip, min(float(payload.get("max_clip") or 4.2), 12.0))
-    originality = str(payload.get("originality") or "standard")
-    if originality not in {"standard", "enhanced"}:
-        originality = "standard"
+    count = len(hook_paths)
+    use_subtitles = bool(payload.get("use_subtitles"))
+    if (
+        use_subtitles
+        and any(not item.get("subtitle_ready") for item in market_record["audio"])
+        and not caption_runtime_ready()
+    ):
+        raise ValueError("TikTok 卡拉 OK 字幕运行依赖不完整")
+    random_deduplication = bool(payload.get("random_deduplication"))
+    requested_deduplication = payload.get("deduplication_options") or []
+    if isinstance(requested_deduplication, str):
+        requested_deduplication = [requested_deduplication]
+    deduplication_options = list(
+        dict.fromkeys(
+            str(item)
+            for item in requested_deduplication
+            if str(item) in DEDUPLICATION_OPTIONS
+        )
+    )
+    if not random_deduplication and not deduplication_options:
+        raise ValueError("请至少选择一项去重处理，或选择随机去重")
     seed = int(payload.get("seed") or random.SystemRandom().randint(100000, 999999999))
     history = load_usage_history(paths)
     known_routes = set(history["routes"])
+    known_middle_routes = set(history["middle_routes"])
+    hook_record_cache: dict[str, dict] = {}
+    audio_record_cache: dict[str, dict] = {}
+    cta_record_cache: dict[str, dict] = {}
+    planned_audio_counts: dict[str, int] = {}
+    planned_cta_counts: dict[str, int] = {}
+    planned_real_counts: dict[str, int] = {}
     variants = []
-    for index in range(count):
+    hook_order = list(hook_paths)
+    random.Random(seed).shuffle(hook_order)
+    for index, hook in enumerate(hook_order):
         variant_seed = seed + index * 1009
-        for attempt in range(12):
+        variant_deduplication = (
+            random_deduplication_options(variant_seed)
+            if random_deduplication
+            else list(deduplication_options)
+        )
+        if str(hook) not in hook_record_cache:
+            hook_record_cache[str(hook)] = effective_video_record(hook)
+        hook_record = hook_record_cache[str(hook)]
+        audio_rng = random.Random(variant_seed + 31337)
+        audio = min(
+            audio_paths,
+            key=lambda path: (
+                history["sources"].get(str(path), 0) + planned_audio_counts.get(str(path), 0),
+                audio_rng.random(),
+            ),
+        )
+        planned_audio_counts[str(audio)] = planned_audio_counts.get(str(audio), 0) + 1
+        if str(audio) not in audio_record_cache:
+            audio_record_cache[str(audio)] = probe_media(audio)
+        audio_record = audio_record_cache[str(audio)]
+        if audio_record["duration"] <= 0:
+            raise ValueError(f"混剪音频时长无效：{audio.name}")
+        cta = None
+        cta_record = None
+        if include_cta:
+            cta_rng = random.Random(variant_seed + 62749)
+            cta = min(
+                cta_paths,
+                key=lambda path: (
+                    history["sources"].get(str(path), 0) + planned_cta_counts.get(str(path), 0),
+                    cta_rng.random(),
+                ),
+            )
+            planned_cta_counts[str(cta)] = planned_cta_counts.get(str(cta), 0) + 1
+            if str(cta) not in cta_record_cache:
+                cta_record_cache[str(cta)] = effective_video_record(cta)
+            cta_record = cta_record_cache[str(cta)]
+        attempt_sources = dict(history["sources"])
+        for path, planned_count in planned_real_counts.items():
+            attempt_sources[path] = attempt_sources.get(path, 0) + planned_count
+        attempt_history = {**history, "sources": attempt_sources}
+        accepted = False
+        for attempt in range(50):
             candidate_seed = variant_seed + attempt * 7919
             middle = choose_middle_timeline(
                 display_pool,
                 usage_pool,
                 audio_record["duration"],
                 seed=candidate_seed,
-                min_clip=min_clip,
-                max_clip=max_clip,
-                originality=originality,
-                history=history,
+                history=attempt_history,
             )
             full_segments = [
                 {
@@ -510,21 +971,32 @@ def build_plan(payload: dict, paths: MixerPaths | None = None) -> dict:
                     "technical_tail_trimmed": hook_record["technical_tail_trimmed"],
                 },
                 *[{**item, "preserve_audio": False} for item in middle],
-                {
-                    "role": "AI CTA",
-                    "path": str(cta),
-                    "name": cta.name,
-                    "start": 0.0,
-                    "duration": cta_record["effective_duration"],
-                    "preserve_audio": True,
-                    "technical_tail_trimmed": cta_record["technical_tail_trimmed"],
-                },
             ]
+            if cta and cta_record:
+                full_segments.append(
+                    {
+                        "role": "AI CTA",
+                        "path": str(cta),
+                        "name": cta.name,
+                        "start": 0.0,
+                        "duration": cta_record["effective_duration"],
+                        "preserve_audio": True,
+                        "technical_tail_trimmed": cta_record["technical_tail_trimmed"],
+                    }
+                )
             signature = route_signature(full_segments)
-            if signature not in known_routes or attempt == 11:
+            middle_signature = middle_route_signature(audio, middle)
+            if signature not in known_routes and middle_signature not in known_middle_routes:
                 variant_seed = candidate_seed
-                known_routes.add(signature)
+                accepted = True
                 break
+        if not accepted:
+            raise ValueError("无法生成新的“混剪音频＋实拍素材顺序”组合，请补充实拍素材或混剪音频")
+        known_routes.add(signature)
+        known_middle_routes.add(middle_signature)
+        for segment in middle:
+            path = segment["path"]
+            planned_real_counts[path] = planned_real_counts.get(path, 0) + 1
         variants.append(
             {
                 "index": index + 1,
@@ -532,77 +1004,158 @@ def build_plan(payload: dict, paths: MixerPaths | None = None) -> dict:
                 "segments": full_segments,
                 "middle_audio": str(audio),
                 "middle_duration": audio_record["duration"],
+                "deduplication_options": variant_deduplication,
                 "total_duration": round(
                     hook_record["effective_duration"]
                     + audio_record["duration"]
-                    + cta_record["effective_duration"],
+                    + (cta_record["effective_duration"] if cta_record else 0),
                     3,
                 ),
                 "route_signature": signature,
+                "middle_route_signature": middle_signature,
             }
         )
 
     created_at = dt.datetime.now().isoformat(timespec="seconds")
-    plan_id = f"{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}_{safe_name(product, 60)}_{seed}"
+    plan_id = (
+        f"{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}_"
+        f"{safe_name(product, 60)}_{safe_name(market, 10)}_{seed}"
+    )
     plan = {
         "version": 1,
         "plan_id": plan_id,
         "created_at": created_at,
         "product": product,
+        "market": market,
         "model": model,
         "settings": {
             "count": count,
-            "min_clip": min_clip,
-            "max_clip": max_clip,
-            "originality": originality,
+            "random_deduplication": random_deduplication,
+            "deduplication_options": deduplication_options,
+            "audio_deduplication": False,
             "seed": seed,
             "canvas": "1080x1920",
             "fps": 30,
             "middle_audio_preserved": True,
+            "include_cta": include_cta,
+            "use_subtitles": use_subtitles,
         },
         "inputs": {
-            "hook": hook_record,
-            "audio": audio_record,
-            "cta": cta_record,
+            "hook_count": len(hook_paths),
+            "hook_pool": [relative_record(path, paths.ai_clip_root) for path in hook_paths],
+            "audio_count": len(audio_paths),
+            "audio_pool": [audio_library_record(path, paths.audio_root) for path in audio_paths],
+            "subtitle_count": market_record["subtitle_count"],
+            "missing_subtitle_count": market_record["missing_subtitle_count"],
+            "cta_count": len(model_record["ctas"]),
+            "cta_pool": model_record["ctas"],
+            "include_cta": include_cta,
             "display_count": len(display_pool),
             "usage_count": len(usage_pool),
         },
         "variants": variants,
     }
-    plan_path = paths.work_root / product / "plans" / f"{plan_id}.json"
+    plan_path = paths.work_root / product / market / "plans" / f"{plan_id}.json"
     write_json(plan_path, plan)
     plan["plan_path"] = str(plan_path)
     return plan
 
 
-def originality_filter(seed: int, level: str) -> str:
+def random_deduplication_options(seed: int) -> list[str]:
     rng = random.Random(seed)
-    if level == "enhanced":
-        zoom = rng.uniform(1.018, 1.045)
-        saturation = rng.uniform(0.97, 1.06)
-        contrast = rng.uniform(0.985, 1.035)
-        brightness = rng.uniform(-0.012, 0.012)
-    else:
-        zoom = rng.uniform(1.0, 1.015)
-        saturation = rng.uniform(0.99, 1.025)
-        contrast = rng.uniform(0.995, 1.018)
-        brightness = rng.uniform(-0.006, 0.006)
+    subtle = ["transform", "color", "tone", "detail", "encoding"]
+    visible = ["frame_drop", "mirror", "speed", "border", "effect"]
+    selected = rng.sample(subtle, rng.randint(2, 4))
+    selected.extend(rng.sample(visible, rng.randint(1, 2)))
+    return [item for item in DEDUPLICATION_OPTIONS if item in selected]
+
+
+def normalize_deduplication_options(value) -> list[str]:
+    if isinstance(value, str) and value in {"standard", "enhanced"}:
+        return ["transform", "color"]
+    if not isinstance(value, list):
+        return []
+    return [item for item in DEDUPLICATION_OPTIONS if item in value]
+
+
+def deduplication_filter(
+    seed: int,
+    options: list[str] | str,
+    *,
+    duration: float = 10.0,
+) -> str:
+    selected = set(normalize_deduplication_options(options))
+    rng = random.Random(seed)
+    frame_count = max(2, int(round(max(0.05, duration) * 30)))
+    zoom = rng.uniform(1.006, 1.025) if "transform" in selected else 1.0
     width = int(math.ceil(1080 * zoom / 2) * 2)
     height = int(math.ceil(1920 * zoom / 2) * 2)
     max_x = max(0, width - 1080)
     max_y = max(0, height - 1920)
     x = rng.randint(0, max_x) if max_x else 0
     y = rng.randint(0, max_y) if max_y else 0
-    return (
-        "scale=1080:1920:force_original_aspect_ratio=increase,"
-        f"crop=1080:1920,scale={width}:{height},crop=1080:1920:{x}:{y},"
-        f"eq=saturation={saturation:.4f}:contrast={contrast:.4f}:brightness={brightness:.4f},"
-        "setsar=1,fps=30,format=yuv420p"
+    filters = [
+        "scale=1080:1920:force_original_aspect_ratio=increase",
+        f"crop=1080:1920,scale={width}:{height},crop=1080:1920:{x}:{y}"
+    ]
+    if "color" in selected:
+        filters.append(
+            "eq="
+            f"saturation={rng.uniform(0.95, 1.05):.4f}:"
+            f"contrast={rng.uniform(0.95, 1.05):.4f}:"
+            f"brightness={rng.uniform(-0.03, 0.03):.4f}"
+        )
+    if "tone" in selected:
+        filters.append(
+            "colorbalance="
+            f"rs={rng.uniform(-0.025, 0.025):.4f}:"
+            f"bs={rng.uniform(-0.025, 0.025):.4f}"
+        )
+        filters.append(f"eq=gamma={rng.uniform(0.97, 1.03):.4f}")
+    if "detail" in selected:
+        filters.extend(
+            [
+                f"hqdn3d={rng.uniform(0.5, 1.2):.3f}:"
+                f"{rng.uniform(0.4, 1.0):.3f}:"
+                f"{rng.uniform(1.5, 3.0):.3f}:"
+                f"{rng.uniform(1.0, 2.4):.3f}",
+                f"unsharp=5:5:{rng.uniform(0.12, 0.35):.3f}:3:3:0",
+            ]
+        )
+    filters.append("tpad=stop_mode=clone:stop_duration=0.5")
+    if "frame_drop" in selected:
+        every = rng.randint(10, 18)
+        filters.append(f"select='not(eq(mod(n\\,{every})\\,0))'")
+    if "mirror" in selected:
+        filters.append("hflip")
+    if "speed" in selected:
+        speed = rng.uniform(0.985, 1.015)
+        filters.append(f"setpts=PTS/{speed:.5f}")
+    if "border" in selected:
+        filters.append("drawbox=x=4:y=4:w=iw-8:h=ih-8:color=white@0.16:t=3")
+    if "effect" in selected:
+        if rng.random() < 0.5:
+            filters.append(f"vignette=PI/{rng.uniform(5.5, 7.0):.3f}")
+        else:
+            filters.append(f"noise=alls={rng.uniform(1.5, 3.0):.3f}:allf=t")
+    filters.extend(
+        [
+            "fps=30",
+            f"trim=end_frame={frame_count}",
+            "setpts=PTS-STARTPTS",
+            "setsar=1",
+            "format=yuv420p",
+        ]
     )
+    return ",".join(filters)
 
 
-def render_video_segment(segment: dict, output: Path, seed: int, level: str) -> None:
+def render_video_segment(segment: dict, output: Path, seed: int, options: list[str] | str) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
+    selected = normalize_deduplication_options(options)
+    encoding_rng = random.Random(seed + 9983)
+    crf = str(encoding_rng.randint(19, 23) if "encoding" in selected else 21)
+    gop = str(encoding_rng.choice([48, 60, 72, 90]) if "encoding" in selected else 60)
     run(
         [
             ffmpeg_path(),
@@ -617,14 +1170,26 @@ def render_video_segment(segment: dict, output: Path, seed: int, level: str) -> 
             "-i",
             segment["path"],
             "-vf",
-            originality_filter(seed, level),
+            deduplication_filter(
+                seed,
+                selected,
+                duration=float(segment["duration"]),
+            ),
             "-an",
             "-c:v",
             "libx264",
             "-preset",
             "veryfast",
             "-crf",
-            "21",
+            crf,
+            "-g",
+            gop,
+            "-keyint_min",
+            gop,
+            "-r",
+            "30",
+            "-fps_mode",
+            "cfr",
             "-pix_fmt",
             "yuv420p",
             str(output),
@@ -739,21 +1304,7 @@ def concat_audio(pieces: list[Path], output: Path) -> None:
     )
 
 
-def build_hyperframes_html(total_duration: float, cut_points: list[float]) -> str:
-    transitions = []
-    timelines = []
-    for index, cut in enumerate(cut_points, start=1):
-        start = max(0.0, cut - 0.12)
-        transitions.append(
-            f'<div id="wash-{index}" class="clip wash" data-start="{start:.3f}" '
-            'data-duration="0.28" data-track-index="8"></div>'
-        )
-        timelines.append(
-            f'tl.fromTo("#wash-{index}", {{opacity:0}}, {{opacity:0.18,duration:0.10,ease:"sine.inOut"}}, {start:.3f});'
-        )
-        timelines.append(
-            f'tl.to("#wash-{index}", {{opacity:0,duration:0.17,ease:"sine.inOut",overwrite:"auto"}}, {start + 0.11:.3f});'
-        )
+def build_hyperframes_html(total_duration: float) -> str:
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -762,21 +1313,17 @@ def build_hyperframes_html(total_duration: float, cut_points: list[float]) -> st
     html,body{{margin:0;width:100%;height:100%;overflow:hidden;background:#000}}
     #main{{position:relative;width:1080px;height:1920px;overflow:hidden;background:#000}}
     video{{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}}
-    .wash{{position:absolute;inset:0;background:#f5d38b;opacity:0;pointer-events:none}}
   </style>
 </head>
 <body>
   <div id="main" data-composition-id="main" data-start="0" data-width="1080" data-height="1920" data-duration="{total_duration:.3f}">
     <video id="visual-track" class="clip" src="media/visual.mp4" data-start="0" data-duration="{total_duration:.3f}" data-track-index="0" muted playsinline></video>
     <audio id="audio-track" class="clip" src="media/audio.m4a" data-start="0" data-duration="{total_duration:.3f}" data-track-index="1" data-volume="1"></audio>
-    {''.join(transitions)}
   </div>
   <script src="vendor/gsap.min.js"></script>
   <script>
-    window.__timelines=window.__timelines||{{}};
-    var tl=gsap.timeline({{paused:true}});
-    {''.join(timelines)}
-    window.__timelines.main=tl;
+    window.__timelines = window.__timelines || {{}};
+    window.__timelines["main"] = gsap.timeline({{ paused: true }});
   </script>
 </body>
 </html>
@@ -788,20 +1335,16 @@ def prepare_hyperframes_project(
     visual: Path,
     audio: Path,
     total_duration: float,
-    cut_points: list[float],
 ) -> None:
     media_dir = project_dir / "media"
-    vendor_dir = project_dir / "vendor"
     media_dir.mkdir(parents=True, exist_ok=True)
+    vendor_dir = project_dir / "vendor"
     vendor_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(visual, media_dir / "visual.mp4")
     shutil.copy2(audio, media_dir / "audio.m4a")
-    gsap = ASSEMBLY_VENDOR / "gsap.min.js"
-    if not gsap.is_file():
-        raise RuntimeError(f"缺少离线 GSAP：{gsap}")
-    shutil.copy2(gsap, vendor_dir / "gsap.min.js")
+    shutil.copy2(GSAP_SOURCE, vendor_dir / "gsap.min.js")
     (project_dir / "index.html").write_text(
-        build_hyperframes_html(total_duration, cut_points),
+        build_hyperframes_html(total_duration),
         encoding="utf-8",
     )
     write_json(
@@ -848,16 +1391,24 @@ def validate_finished_video(path: Path) -> dict:
 
 def update_usage_history(paths: MixerPaths, variant: dict, output: Path) -> None:
     history = load_usage_history(paths)
+    audio_path = variant.get("middle_audio")
+    if audio_path:
+        history["sources"][audio_path] = history["sources"].get(audio_path, 0) + 1
     for segment in variant["segments"]:
-        if segment["role"] in {"展示", "使用"}:
+        if segment["role"] in {"AI钩子", "展示", "使用", "AI CTA"}:
             key = segment["path"]
             history["sources"][key] = history["sources"].get(key, 0) + 1
     history["routes"].append(variant["route_signature"])
     history["routes"] = history["routes"][-1000:]
+    middle_signature = variant.get("middle_route_signature")
+    if middle_signature:
+        history["middle_routes"].append(middle_signature)
+        history["middle_routes"] = history["middle_routes"][-5000:]
     history["outputs"].append(
         {
             "output": str(output),
             "route_signature": variant["route_signature"],
+            "middle_route_signature": middle_signature,
             "created_at": dt.datetime.now().isoformat(timespec="seconds"),
         }
     )
@@ -882,31 +1433,36 @@ def render_plan(
             shutil.rmtree(work_dir)
         normalized_dir = work_dir / "normalized"
         normalized_dir.mkdir(parents=True, exist_ok=True)
-        level = plan["settings"]["originality"]
+        legacy_deduplication = plan["settings"].get(
+            "deduplication",
+            plan["settings"].get("originality", "standard"),
+        )
+        options = variant.get(
+            "deduplication_options",
+            plan["settings"].get("deduplication_options", legacy_deduplication),
+        )
         video_parts = []
-        cut_points = []
-        elapsed = 0.0
         for position, segment in enumerate(variant["segments"], start=1):
             log(f"变体 {index}：处理片段 {position}/{len(variant['segments'])} · {segment['role']}")
             output = normalized_dir / f"{position:03d}.mp4"
-            render_video_segment(segment, output, variant["seed"] + position * 37, level)
+            render_video_segment(segment, output, variant["seed"] + position * 37, options)
             video_parts.append(output)
-            elapsed += float(segment["duration"])
-            if position < len(variant["segments"]):
-                cut_points.append(elapsed)
         visual = work_dir / "visual.mp4"
         concat_video(video_parts, visual)
 
         hook = variant["segments"][0]
-        cta = variant["segments"][-1]
+        cta = next((segment for segment in variant["segments"] if segment["role"] == "AI CTA"), None)
         hook_audio = work_dir / "hook.m4a"
         middle_audio = work_dir / "middle.m4a"
-        cta_audio = work_dir / "cta.m4a"
         render_audio_piece(Path(hook["path"]), float(hook["duration"]), hook_audio)
         render_audio_piece(Path(variant["middle_audio"]), float(variant["middle_duration"]), middle_audio)
-        render_audio_piece(Path(cta["path"]), float(cta["duration"]), cta_audio)
+        audio_pieces = [hook_audio, middle_audio]
+        if cta:
+            cta_audio = work_dir / "cta.m4a"
+            render_audio_piece(Path(cta["path"]), float(cta["duration"]), cta_audio)
+            audio_pieces.append(cta_audio)
         audio = work_dir / "audio.m4a"
-        concat_audio([hook_audio, middle_audio, cta_audio], audio)
+        concat_audio(audio_pieces, audio)
 
         project_dir = work_dir / "hyperframes"
         prepare_hyperframes_project(
@@ -914,20 +1470,44 @@ def render_plan(
             visual,
             audio,
             float(variant["total_duration"]),
-            cut_points,
         )
         output_name = (
-            f"AI实拍混剪-{safe_name(plan['product'], 70)}-"
+            f"AI实拍混剪-{safe_name(plan['product'], 70)}-{safe_name(plan['market'], 10)}-"
             f"{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}-V{index:02d}.mp4"
         )
         output_path = paths.output_root / plan["product"] / output_name
+        use_subtitles = bool(plan["settings"].get("use_subtitles"))
+        render_path = work_dir / "uncaptioned.mp4" if use_subtitles else output_path
         log(f"变体 {index}：HyperFrames渲染成片")
-        run_hyperframes(project_dir, output_path)
+        run_hyperframes(project_dir, render_path)
+        if use_subtitles:
+            middle_audio_path = Path(variant["middle_audio"])
+            sidecars = audio_subtitle_paths(middle_audio_path)
+            if valid_ass_subtitles(sidecars["ass"]):
+                log(f"变体 {index}：复用混剪音频同名本地字幕")
+            else:
+                log(f"变体 {index}：混剪音频缺少字幕，本地 Whisper 生成并保存")
+            sidecars = ensure_audio_subtitles(
+                middle_audio_path,
+                float(variant["middle_duration"]),
+                plan["market"],
+                work_dir,
+            )
+            shifted_ass = work_dir / "captions" / "middle-offset.ass"
+            shift_ass_subtitles(
+                sidecars["ass"],
+                shifted_ass,
+                offset=float(hook["duration"]),
+                duration=float(variant["middle_duration"]),
+            )
+            log(f"变体 {index}：字幕偏移到钩子之后并烧录，仅覆盖混剪中段")
+            burn_ass_subtitles(render_path, shifted_ass, output_path)
         verified = validate_finished_video(output_path)
         metadata = {
             "agent": "Hybrid-Video-Mixer",
             "plan_id": plan["plan_id"],
             "product": plan["product"],
+            "market": plan["market"],
             "model": plan["model"],
             "settings": plan["settings"],
             "variant": variant,

@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -35,10 +36,18 @@ from opc_engine.core.project_assets import (
 ROOT = Path(__file__).resolve().parents[3]
 FEATURE_DIR = Path(__file__).resolve().parent
 CONFIG_DIR = FEATURE_DIR / "config"
-LOCAL_INPUTS_PATH = CONFIG_DIR / "inputs.json"
+RUNTIME_CONFIG_DIR = Path(
+    os.environ.get(
+        "OPC_HYBRID_SCRIPT_GENERATION_CONFIG_DIR",
+        str(Path.home() / "Library" / "Application Support" / "OPC-Agent-Suite" / "Hybrid-Script-Generation"),
+    )
+).expanduser()
+LEGACY_LOCAL_INPUTS_PATH = CONFIG_DIR / "inputs.json"
+LEGACY_LOCAL_MODEL_SETTINGS_PATH = CONFIG_DIR / "model_settings.json"
+LOCAL_INPUTS_PATH = RUNTIME_CONFIG_DIR / "inputs.json"
 SCRIPT_INPUTS_PATH = Path(os.environ.get("SCRIPT_GENERATION_INPUTS_PATH", str(LOCAL_INPUTS_PATH))).expanduser()
 SHARED_MODEL_SETTINGS_PATH = CONFIG_DIR / "model_defaults.json"
-LOCAL_MODEL_SETTINGS_PATH = CONFIG_DIR / "model_settings.json"
+LOCAL_MODEL_SETTINGS_PATH = RUNTIME_CONFIG_DIR / "model_settings.json"
 VAULT_ROOT = Path(
     os.environ.get("OPC_VAULT_ROOT", str(Path.home() / "Documents" / "Obsidian Vault"))
 ).expanduser()
@@ -358,11 +367,28 @@ def read_json_config(path):
     return {key: value for key, value in data.items() if key not in IGNORED_CONFIG_FIELDS and not key.startswith("_")}
 
 
+def migrate_legacy_local_configs():
+    migrated = []
+    for legacy_path, runtime_path in (
+        (LEGACY_LOCAL_INPUTS_PATH, LOCAL_INPUTS_PATH),
+        (LEGACY_LOCAL_MODEL_SETTINGS_PATH, LOCAL_MODEL_SETTINGS_PATH),
+    ):
+        if runtime_path.exists() or not legacy_path.is_file():
+            continue
+        try:
+            runtime_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(legacy_path, runtime_path)
+            runtime_path.chmod(0o600)
+            migrated.append(runtime_path)
+        except OSError:
+            continue
+    return migrated
+
+
 def load_script_generation_config():
+    migrate_legacy_local_configs()
     config = read_json_config(SHARED_MODEL_SETTINGS_PATH)
-    local_model = read_json_config(LOCAL_MODEL_SETTINGS_PATH)
-    if local_model.get("modelmesh_api_key"):
-        config["modelmesh_api_key"] = local_model["modelmesh_api_key"]
+    config.update(read_json_config(LOCAL_MODEL_SETTINGS_PATH))
     config.update(read_json_config(SCRIPT_INPUTS_PATH))
     return config
 

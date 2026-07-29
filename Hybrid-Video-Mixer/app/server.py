@@ -10,9 +10,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 try:
-    from app.mixer import build_plan, list_outputs, mixer_paths, read_json, render_plan, scan_library
+    from app.mixer import VIDEO_EXTS, build_plan, list_outputs, mixer_paths, read_json, render_plan, scan_library
 except ModuleNotFoundError:
-    from mixer import build_plan, list_outputs, mixer_paths, read_json, render_plan, scan_library
+    from mixer import VIDEO_EXTS, build_plan, list_outputs, mixer_paths, read_json, render_plan, scan_library
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +24,7 @@ TASK = {
     "logs": [],
     "outputs": [],
     "error": "",
+    "reserved_hook_paths": [],
 }
 
 
@@ -43,18 +44,117 @@ def task_log(message: str) -> None:
         TASK["message"] = message
 
 
+def plan_hook_paths(plan: dict) -> list[str]:
+    paths = {
+        str(segment.get("path"))
+        for variant in plan.get("variants") or []
+        for segment in variant.get("segments") or []
+        if segment.get("role") == "AI钩子" and segment.get("path")
+    }
+    return sorted(paths)
+
+
 def render_worker(plan_path: str) -> None:
     try:
-        task_update(status="running", message="开始渲染", logs=[], outputs=[], error="")
+        task_update(
+            status="running",
+            message="开始渲染",
+            logs=[],
+            outputs=[],
+            error="",
+            reserved_hook_paths=[],
+        )
         path = Path(plan_path)
         plan = read_json(path, {})
         if not plan:
             raise ValueError("编排计划不存在或无法读取")
+        task_update(reserved_hook_paths=plan_hook_paths(plan))
         outputs = render_plan(plan, log=task_log)
-        task_update(status="completed", message=f"已完成 {len(outputs)} 条成片", outputs=outputs)
+        task_update(
+            status="completed",
+            message=f"已完成 {len(outputs)} 条成片",
+            outputs=outputs,
+            reserved_hook_paths=[],
+        )
     except Exception as exc:
         task_log(f"失败：{exc}")
-        task_update(status="failed", error=f"{exc}\n{traceback.format_exc()}")
+        task_update(
+            status="failed",
+            error=f"{exc}\n{traceback.format_exc()}",
+            reserved_hook_paths=[],
+        )
+
+
+def safe_hook_video_path(value: str, paths=None) -> Path:
+    paths = paths or mixer_paths()
+    path = Path(value).expanduser().resolve()
+    try:
+        relative = path.relative_to(paths.ai_clip_root.resolve())
+    except ValueError as exc:
+        raise ValueError("钩子视频不在 AI 片段目录内") from exc
+    if "混剪-钩子" not in relative.parts:
+        raise ValueError("只允许访问混剪钩子目录中的视频")
+    if path.suffix.lower() not in VIDEO_EXTS or not path.is_file():
+        raise ValueError("钩子视频不存在或格式无效")
+    return path
+
+
+def delete_hook_videos(values, paths=None) -> dict:
+    if not isinstance(values, list) or not values:
+        raise ValueError("请至少选择一个钩子视频")
+    paths = paths or mixer_paths()
+    targets = []
+    for value in values:
+        target = safe_hook_video_path(str(value), paths)
+        if target not in targets:
+            targets.append(target)
+    sidecars_deleted = 0
+    for target in targets:
+        target.unlink()
+        sidecar = target.with_suffix(target.suffix + ".product-lock.json")
+        if sidecar.is_file():
+            sidecar.unlink()
+            sidecars_deleted += 1
+    return {
+        "deleted_count": len(targets),
+        "sidecars_deleted": sidecars_deleted,
+        "deleted": [str(path) for path in targets],
+    }
+
+
+def serve_video(handler: BaseHTTPRequestHandler, path: Path) -> None:
+    file_size = path.stat().st_size
+    start = 0
+    end = file_size - 1
+    status = 200
+    range_header = handler.headers.get("Range", "")
+    if range_header.startswith("bytes="):
+        status = 206
+        start_text, end_text = range_header.removeprefix("bytes=").split("-", 1)
+        if start_text:
+            start = int(start_text)
+        if end_text:
+            end = min(int(end_text), file_size - 1)
+    length = max(0, end - start + 1)
+    handler.send_response(status)
+    handler.send_header("Content-Type", mimetypes.guess_type(path.name)[0] or "application/octet-stream")
+    handler.send_header("Accept-Ranges", "bytes")
+    handler.send_header("Content-Length", str(length))
+    if status == 206:
+        handler.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
+    handler.end_headers()
+    try:
+        with path.open("rb") as source:
+            source.seek(start)
+            remaining = length
+            while remaining > 0:
+                chunk = source.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    break
+                handler.wfile.write(chunk)
+                remaining -= len(chunk)
+    except (BrokenPipeError, ConnectionResetError):
+        return
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -111,6 +211,13 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self.send_json({"ok": False, "error": str(exc)}, 500)
             return
+        if parsed.path == "/api/hook-video":
+            try:
+                query = urllib.parse.parse_qs(parsed.query)
+                serve_video(self, safe_hook_video_path(query.get("path", [""])[0]))
+            except Exception as exc:
+                self.send_json({"ok": False, "error": str(exc)}, 400)
+            return
         if parsed.path == "/api/task":
             self.send_json({"ok": True, "task": task_snapshot()})
             return
@@ -123,6 +230,13 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         try:
             payload = self.read_payload()
+            if parsed.path == "/api/hook-video/delete":
+                if task_snapshot()["status"] == "running":
+                    self.send_json({"ok": False, "error": "渲染运行中，暂时不能删除钩子素材"}, 409)
+                    return
+                result = delete_hook_videos(payload.get("hook_paths"))
+                self.send_json({"ok": True, **result})
+                return
             if parsed.path == "/api/plan":
                 plan = build_plan(payload)
                 self.send_json({"ok": True, "plan": plan})
