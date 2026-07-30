@@ -276,7 +276,7 @@ async function loadLibrary(preserveSelection = false) {
     els.summary.textContent = `产品 ${s.products} · 国家 ${s.markets} · 可生产国家 ${s.ready_markets} · 可用钩子 ${s.available_hooks}/${s.hooks} · CTA ${s.ctas} · 音频 ${s.audio} · 展示可用 ${s.available_display}/${s.display} · 使用可用 ${s.available_usage}/${s.usage}`;
     els.product.innerHTML = optionList(data.products.map(item => ({name: item.name})), "请选择产品");
     const p = data.paths;
-    els.paths.textContent = `输入：${p.ai_clip_root} ｜ ${p.audio_root} ｜ ${p.real_root}　工作区：${p.work_root}　成品：${p.output_root}`;
+    els.paths.textContent = `AI片段归档：${p.delivery_archive_root}　其他输入：${p.audio_root} ｜ ${p.real_root}　工作区：${p.work_root}　成品：${p.output_root}`;
     if (previousProduct && data.products.some(item => item.name === previousProduct)) {
       els.product.value = previousProduct;
     }

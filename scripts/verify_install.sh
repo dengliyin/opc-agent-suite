@@ -13,6 +13,7 @@ COMPONENTS=(
   "Hybrid-Script-Analysis"
   "Hybrid-Script-Generation"
   "Hybrid-Video-Mixer"
+  "Hybrid-Audio-Generation"
   "Video-Generation"
   "Finished-Video-Manager"
   "Product-Script-Rewrite"
@@ -43,6 +44,7 @@ done
 "$ROOT_DIR/Hybrid-Script-Analysis/.venv/bin/python" -m compileall -q "$ROOT_DIR/Hybrid-Script-Analysis/scripts"
 "$ROOT_DIR/Hybrid-Script-Generation/.venv/bin/python" -m compileall -q "$ROOT_DIR/Hybrid-Script-Generation/opc_engine"
 "$ROOT_DIR/Hybrid-Video-Mixer/.venv/bin/python" -m compileall -q "$ROOT_DIR/Hybrid-Video-Mixer/app"
+"$ROOT_DIR/Hybrid-Audio-Generation/.venv/bin/python" -m compileall -q "$ROOT_DIR/Hybrid-Audio-Generation/audio_agent"
 "$ROOT_DIR/Video-Generation/.venv/bin/python" -m compileall -q "$ROOT_DIR/Video-Generation/agent"
 "$ROOT_DIR/Finished-Video-Manager/.venv/bin/python" -m compileall -q "$ROOT_DIR/Finished-Video-Manager/finished_video_manager"
 "$ROOT_DIR/Product-Script-Rewrite/.venv/bin/python" -m compileall -q "$ROOT_DIR/Product-Script-Rewrite/product_script_rewrite"
@@ -56,6 +58,7 @@ done
 (cd "$ROOT_DIR/Hybrid-Script-Analysis" && .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -q)
 (cd "$ROOT_DIR/Hybrid-Script-Generation" && .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -q)
 (cd "$ROOT_DIR/Hybrid-Video-Mixer" && .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -q)
+(cd "$ROOT_DIR/Hybrid-Audio-Generation" && .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -q)
 (cd "$ROOT_DIR/Finished-Video-Manager" && .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -q)
 (cd "$ROOT_DIR/Video-Generation" && .venv/bin/python -m pytest -q)
 bash "$ROOT_DIR/Video-Assembly-hd/scripts/validate_app.sh"

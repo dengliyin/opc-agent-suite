@@ -13,7 +13,13 @@ from agent.files import (
     storyboard_image_path,
     video_output_path,
 )
-from agent.exporter import dated_export_root, export_completed_scripts, restore_exported_scripts
+from agent.exporter import (
+    dated_export_root,
+    deliver_hybrid_scripts,
+    export_completed_scripts,
+    restore_exported_scripts,
+    restore_hybrid_deliveries,
+)
 from agent.product_lock import storyboard_meta_path, write_storyboard_product_lock_meta
 from PIL import Image
 
@@ -152,6 +158,85 @@ def test_hybrid_scan_and_output_preserve_type_and_product(tmp_path: Path) -> Non
     assert video_output_path(settings, "P1", hook, 1) == (
         settings.video_output_root / "混剪-钩子" / "P1" / "hook-片段1-omni.mp4"
     )
+
+
+def test_hybrid_delivery_moves_video_to_archive_and_persists_completion(tmp_path: Path) -> None:
+    settings = Settings(
+        **{
+            **settings_for(tmp_path).__dict__,
+            "provider_label": "混剪 Omni",
+            "api_base_path": "/hybrid-omni/api",
+            "workflow": "hybrid_omni",
+            "completed_root": tmp_path / "08混剪工作区" / "片段产出归档",
+        }
+    )
+    settings.reference_root.mkdir(parents=True)
+    (settings.reference_root / "P1.jpg").write_bytes(b"ref")
+    md_path = settings.script_root / "混剪-钩子" / "P1" / "来源A" / "hook.md"
+    md_path.parent.mkdir(parents=True)
+    md_path.write_text(
+        "# Segment 1：00:00 - 00:01\n"
+        "## A. 人物造型参考板提示词\nA\n"
+        "## B. 故事板图片提示词\nB\n",
+        encoding="utf-8",
+    )
+    video = video_output_path(settings, "P1", md_path, 1)
+    video.parent.mkdir(parents=True)
+    video.write_bytes(b"video")
+
+    result = deliver_hybrid_scripts(settings, scan_scripts(settings), [str(md_path)])
+
+    assert len(result["exported"]) == 1
+    assert export_marker_path(md_path).exists()
+    archive_dir = Path(result["exported"][0]["export_dir"])
+    archived_video = archive_dir / video.name
+    assert not video.exists()
+    assert archived_video.exists()
+    assert archived_video.with_suffix(".mp4.delivery.json").exists()
+    assert archive_dir == dated_export_root(settings) / "混剪-钩子" / "P1" / "来源A" / "hook"
+    assert (archive_dir / md_path.name).exists()
+
+    payload = script_to_dict(settings, scan_scripts(settings)[0])
+    assert payload["exported"] is True
+    assert payload["complete"] is True
+    assert payload["upload_status"] == "已导出"
+    assert payload["segments"][0]["video_exists"] is True
+
+
+def test_restore_hybrid_delivery_moves_video_back_and_removes_delivery_records(tmp_path: Path) -> None:
+    settings = Settings(
+        **{
+            **settings_for(tmp_path).__dict__,
+            "provider_label": "混剪 Omni",
+            "api_base_path": "/hybrid-omni/api",
+            "workflow": "hybrid_omni",
+            "completed_root": tmp_path / "08混剪工作区" / "片段产出归档",
+        }
+    )
+    settings.reference_root.mkdir(parents=True)
+    (settings.reference_root / "P1.jpg").write_bytes(b"ref")
+    md_path = settings.script_root / "混剪-CTA" / "P1" / "来源B" / "cta.md"
+    md_path.parent.mkdir(parents=True)
+    md_path.write_text(
+        "# Segment 1：00:00 - 00:01\n"
+        "## A. 人物造型参考板提示词\nA\n"
+        "## B. 故事板图片提示词\nB\n",
+        encoding="utf-8",
+    )
+    video = video_output_path(settings, "P1", md_path, 1)
+    video.parent.mkdir(parents=True)
+    video.write_bytes(b"video")
+    delivered = deliver_hybrid_scripts(settings, scan_scripts(settings), [str(md_path)])
+    archived_video = Path(delivered["exported"][0]["export_dir"]) / video.name
+
+    result = restore_hybrid_deliveries(settings, scan_scripts(settings), [str(md_path)])
+
+    assert len(result["restored"]) == 1
+    assert video.exists()
+    assert not archived_video.exists()
+    assert not export_marker_path(md_path).exists()
+    assert not video.with_suffix(".mp4.delivery.json").exists()
+    assert script_to_dict(settings, scan_scripts(settings)[0])["exported"] is False
 
 
 def test_scan_scripts_matches_reference_with_code_prefix(tmp_path: Path) -> None:

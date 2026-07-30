@@ -40,6 +40,10 @@
             <h2>混剪脚本（钩子 / CTA）</h2>
             <div class="heading-actions">
               <span id="summaryLine" class="muted"></span>
+              <button id="selectCompletedScriptsButton" class="mini-button" type="button">选有视频</button>
+              <button id="exportSelectedButton" class="mini-button primary-mini" type="button">导出已选</button>
+              <button id="restoreSelectedButton" class="mini-button primary-mini" type="button" hidden>恢复生成</button>
+              <button id="archiveToggleButton" class="mini-button" type="button">查看归档</button>
               <button id="selectAllScriptsButton" class="mini-button" type="button">全选</button>
               <button id="clearScriptSelectionButton" class="mini-button" type="button">清空</button>
             </div>
@@ -68,6 +72,6 @@
       </main>
     </div>
     <script>window.AGENT_API_BASE = "/hybrid-omni/api";</script>
-    <script src="/app.js?v=hybrid-omni-1"></script>
+    <script src="/app.js?v=hybrid-omni-3"></script>
   </body>
 </html>

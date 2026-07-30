@@ -520,7 +520,9 @@ function renderArchiveControls() {
     deleteButton.disabled = state.selectedScriptPaths.size === 0;
   }
   if (completeButton) completeButton.hidden = state.showArchived;
-  if (archiveButton) archiveButton.textContent = state.showArchived ? "返回任务" : "查看归档";
+  if (archiveButton) {
+    archiveButton.textContent = state.showArchived ? "返回任务" : "查看归档";
+  }
 }
 
 function setPathSelection(paths, checked) {
@@ -1131,7 +1133,12 @@ async function exportSelectedCompleted() {
     alert("当前没有勾选“所有片段视频已生成且未导出”的脚本");
     return;
   }
-  const ok = confirm(`准备导出 ${exportablePaths.length} 个有视频的脚本：脚本会复制到归档目录，人物图、故事版图和视频会移动到归档目录；原脚本目录仍保留脚本。继续吗？`);
+  const hybridDelivery = state.config?.workflow === "hybrid_omni";
+  const actionLabel = "导出";
+  const description = hybridDelivery
+    ? "脚本和图片会复制到交付归档，视频会移动到交付归档；AI 实拍混剪会直接读取归档视频"
+    : "脚本会复制到归档目录，人物图、故事版图和视频会移动到归档目录；原脚本目录仍保留脚本";
+  const ok = confirm(`准备导出 ${exportablePaths.length} 个有视频的脚本：${description}。继续吗？`);
   if (!ok) return;
   const button = $("#exportSelectedButton");
   if (button) button.disabled = true;
@@ -1141,11 +1148,11 @@ async function exportSelectedCompleted() {
       body: JSON.stringify({ script_paths: exportablePaths }),
     });
     const skippedText = result.skipped?.length ? `，跳过 ${result.skipped.length} 个` : "";
-    alert(`导出完成：${result.exported?.length || 0} 个${skippedText}\n导出目录：${result.export_root}`);
+    alert(`${actionLabel}完成：${result.exported?.length || 0} 个${skippedText}\n归档目录：${result.export_root}`);
     state.selectedScriptPaths.clear();
     await refreshAll();
   } catch (error) {
-    alert(`导出失败：${error.message}`);
+    alert(`${actionLabel}失败：${error.message}`);
   } finally {
     if (button) button.disabled = false;
   }
@@ -1159,7 +1166,11 @@ async function restoreSelectedArchived() {
     alert("当前没有勾选已导出的归档脚本");
     return;
   }
-  const ok = confirm(`准备恢复 ${restorePaths.length} 个归档脚本到可生成状态：脚本和图片会移回原脚本目录；视频默认不搬回。继续吗？`);
+  const hybridDelivery = state.config?.workflow === "hybrid_omni";
+  const description = hybridDelivery
+    ? "将清除交付记录与归档副本，并把仍存在的归档视频移回 05AI片段"
+    : "脚本和图片会移回原脚本目录；视频默认不搬回";
+  const ok = confirm(`准备恢复 ${restorePaths.length} 个归档脚本到可生成状态：${description}。继续吗？`);
   if (!ok) return;
   const button = $("#restoreSelectedButton");
   if (button) button.disabled = true;

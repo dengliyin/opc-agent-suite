@@ -31,7 +31,8 @@ if [ ! -f "$HOME/Library/LaunchAgents/com.kesai.opc-agent.collect.plist" ] || \
    [ ! -f "$HOME/Library/LaunchAgents/com.kesai.opc-agent.hybrid_adapt.plist" ] || \
    [ ! -f "$HOME/Library/LaunchAgents/com.kesai.opc-agent.hybrid_collect.plist" ] || \
    [ ! -f "$HOME/Library/LaunchAgents/com.kesai.opc-agent.hybrid_analyze.plist" ] || \
-   [ ! -f "$HOME/Library/LaunchAgents/com.kesai.opc-agent.hybrid_script.plist" ]; then
+   [ ! -f "$HOME/Library/LaunchAgents/com.kesai.opc-agent.hybrid_script.plist" ] || \
+   [ ! -f "$HOME/Library/LaunchAgents/com.kesai.opc-agent.hybrid_voice.plist" ]; then
   "$ROOT_DIR/scripts/install_agent_launchagents.sh"
 fi
 
