@@ -29,8 +29,8 @@ class ConsoleBoundaryTests(unittest.TestCase):
         self.assertEqual(self.app.ROOT, CONSOLE_ROOT)
         self.assertEqual(self.app.WORKSPACE_ROOT, WORKSPACE_ROOT)
 
-    def test_console_orchestrates_exactly_thirteen_agents(self):
-        self.assertEqual(len(self.app.SERVICES), 13)
+    def test_console_orchestrates_exactly_fourteen_agents(self):
+        self.assertEqual(len(self.app.SERVICES), 14)
         self.assertEqual(set(self.app.ROUTE_TO_SERVICE.values()), set(self.app.SERVICES))
 
     def test_every_service_runs_from_its_agent_directory(self):
@@ -97,11 +97,12 @@ class ConsoleBoundaryTests(unittest.TestCase):
         self.assertIn("'hybrid_adapt'", html)
         self.assertIn("'hybrid_mix'", html)
         self.assertNotIn("10000 待开发", html)
-        self.assertEqual(len(self.app.SERVICES), 13)
+        self.assertEqual(len(self.app.SERVICES), 14)
         service_urls = [str(service.get("url", "")) for service in self.app.SERVICES.values()]
         self.assertTrue(any(":9999" in url for url in service_urls))
         self.assertTrue(any(":10000" in url for url in service_urls))
         self.assertTrue(any(":10003" in url for url in service_urls))
+        self.assertTrue(any(":10004" in url for url in service_urls))
 
     def test_console_exposes_global_path_settings_page(self):
         self.assertIn('href="/settings/paths"', self.app.INDEX_HTML)
@@ -110,6 +111,7 @@ class ConsoleBoundaryTests(unittest.TestCase):
         group_labels = {group["label"] for group in self.app.GLOBAL_PATH_GROUPS}
         self.assertIn("9992 · 脚本解析", group_labels)
         self.assertIn("10003 · 钩子与 CTA 脚本复刻裂变", group_labels)
+        self.assertIn("10004 · 配音智能体", group_labels)
         self.assertIn("9995 · 片段产出", group_labels)
         self.assertIn("9998 · 片段合成", group_labels)
         self.assertIn("10000 · AI＋实拍混剪", group_labels)
@@ -231,6 +233,7 @@ class ConsoleBoundaryTests(unittest.TestCase):
             "Product-Script-Rewrite",
             "Video-Assembly-hd",
             "Hybrid-Video-Mixer",
+            "Hybrid-Audio-Generation",
         ):
             self.assertIn(f'"{directory}"', installer)
         self.assertIn('python_path="$ROOT_DIR/$agent_dir/.venv/bin/python"', installer)
@@ -274,6 +277,15 @@ class ConsoleBoundaryTests(unittest.TestCase):
         )
         self.assertEqual(service["cwd"], WORKSPACE_ROOT / "Hybrid-Video-Mixer")
         self.assertEqual(service["url"], "http://127.0.0.1:10000/")
+
+    def test_hybrid_voice_uses_its_independent_environment(self):
+        service = self.app.SERVICES["hybrid_voice"]
+        self.assertEqual(
+            Path(service["command"][0]),
+            WORKSPACE_ROOT / "Hybrid-Audio-Generation" / ".venv" / "bin" / "python",
+        )
+        self.assertEqual(service["cwd"], WORKSPACE_ROOT / "Hybrid-Audio-Generation")
+        self.assertEqual(service["url"], "http://127.0.0.1:10004/")
 
     def test_double_click_launcher_bootstraps_missing_environment(self):
         launcher = (WORKSPACE_ROOT / "启动OPC集合控制台.command").read_text(encoding="utf-8")

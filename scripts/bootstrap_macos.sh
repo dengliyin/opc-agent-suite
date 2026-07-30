@@ -66,6 +66,7 @@ COMPONENTS=(
   "Hybrid-Script-Analysis"
   "Hybrid-Script-Generation"
   "Hybrid-Video-Mixer"
+  "Hybrid-Audio-Generation"
   "Video-Generation"
   "Finished-Video-Manager"
   "Product-Script-Rewrite"

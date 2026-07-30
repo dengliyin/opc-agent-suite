@@ -18,6 +18,7 @@ from typing import Callable
 
 VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".mkv", ".webm"}
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
+DELIVERY_SIDECAR_SUFFIX = ".delivery.json"
 MAX_REAL_FOOTAGE_USES = 5
 DEDUPLICATION_OPTIONS = (
     "transform",
@@ -72,7 +73,6 @@ COUNTRY_LANGUAGE_CODES = {
 @dataclass(frozen=True)
 class MixerPaths:
     vault_root: Path
-    ai_clip_root: Path
     audio_root: Path
     real_root: Path
     work_root: Path
@@ -99,7 +99,6 @@ def mixer_paths() -> MixerPaths:
     hybrid = vault / "wiki/视频/AI实拍混剪"
     return MixerPaths(
         vault_root=vault,
-        ai_clip_root=Path(os.environ.get("HYBRID_AI_CLIP_ROOT", hybrid / "05AI片段")).expanduser().resolve(),
         audio_root=Path(os.environ.get("HYBRID_PRODUCT_AUDIO_ROOT", hybrid / "06音频文件")).expanduser().resolve(),
         real_root=Path(os.environ.get("HYBRID_REAL_FOOTAGE_ROOT", hybrid / "07实拍素材")).expanduser().resolve(),
         work_root=Path(os.environ.get("HYBRID_MIX_WORK_ROOT", hybrid / "08混剪工作区")).expanduser().resolve(),
@@ -454,47 +453,75 @@ def usage_record(path: Path, root: Path, history: dict) -> dict:
     return record
 
 
+def delivery_archive_root(paths: MixerPaths) -> Path:
+    return paths.work_root / "片段产出归档"
+
+
+def ai_clip_collections(paths: MixerPaths) -> dict[tuple[str, str, str], list[Path]]:
+    collections: dict[tuple[str, str, str], list[Path]] = {}
+    archive_root = delivery_archive_root(paths)
+    if archive_root.is_dir():
+        for sidecar_path in archive_root.rglob(f"*{DELIVERY_SIDECAR_SUFFIX}"):
+            payload = read_json(sidecar_path, {})
+            video_path = Path(str(payload.get("video_path") or "")).expanduser().resolve()
+            try:
+                video_path.relative_to(archive_root.resolve())
+            except ValueError:
+                continue
+            model = str(payload.get("model") or "").strip()
+            script_type = str(payload.get("script_type") or "").strip()
+            product = str(payload.get("product_name") or "").strip()
+            if (
+                model
+                and script_type in {"混剪-钩子", "混剪-CTA"}
+                and product
+                and video_path.is_file()
+                and video_path.suffix.lower() in VIDEO_EXTS
+            ):
+                collections.setdefault((model, script_type, product), []).append(video_path)
+    return {
+        key: sorted(set(items))
+        for key, items in collections.items()
+    }
+
+
+def ai_clip_usage_record(path: Path, paths: MixerPaths, history: dict) -> dict:
+    return usage_record(path, delivery_archive_root(paths), history)
+
+
 def scan_library(paths: MixerPaths | None = None) -> dict:
     paths = paths or mixer_paths()
-    for folder in (paths.ai_clip_root, paths.audio_root, paths.real_root, paths.work_root, paths.output_root):
+    for folder in (paths.audio_root, paths.real_root, paths.work_root, paths.output_root):
         folder.mkdir(parents=True, exist_ok=True)
     history = load_usage_history(paths)
+    ai_clips = ai_clip_collections(paths)
 
     products: set[str] = set()
     if paths.real_root.is_dir():
         products.update(path.name for path in paths.real_root.iterdir() if path.is_dir())
     if paths.audio_root.is_dir():
         products.update(path.name for path in paths.audio_root.iterdir() if path.is_dir())
-    if paths.ai_clip_root.is_dir():
-        for model_dir in paths.ai_clip_root.iterdir():
-            if not model_dir.is_dir():
-                continue
-            for kind in ("混剪-钩子", "混剪-CTA"):
-                kind_dir = model_dir / kind
-                if kind_dir.is_dir():
-                    products.update(path.name for path in kind_dir.iterdir() if path.is_dir())
+    products.update(product for _, _, product in ai_clips)
 
     records: list[dict] = []
     for product in sorted(products):
         models: dict[str, dict] = {}
         market_models: dict[str, dict[str, dict]] = {}
-        if paths.ai_clip_root.is_dir():
-            for model_dir in sorted(path for path in paths.ai_clip_root.iterdir() if path.is_dir()):
-                hooks = media_files(model_dir / "混剪-钩子" / product, VIDEO_EXTS)
-                ctas = media_files(model_dir / "混剪-CTA" / product, VIDEO_EXTS)
-                if hooks or ctas:
-                    models[model_dir.name] = {
-                        "hooks": [usage_record(path, paths.ai_clip_root, history) for path in hooks],
-                        "ctas": [usage_record(path, paths.ai_clip_root, history) for path in ctas],
-                    }
-                for key, items in (("hooks", hooks), ("ctas", ctas)):
-                    for path in items:
-                        market = media_market(path)
-                        model_record = market_models.setdefault(market, {}).setdefault(
-                            model_dir.name,
-                            {"hooks": [], "ctas": []},
-                        )
-                        model_record[key].append(usage_record(path, paths.ai_clip_root, history))
+        for model in sorted({model for model, _, item_product in ai_clips if item_product == product}):
+            hooks = ai_clips.get((model, "混剪-钩子", product), [])
+            ctas = ai_clips.get((model, "混剪-CTA", product), [])
+            models[model] = {
+                "hooks": [ai_clip_usage_record(path, paths, history) for path in hooks],
+                "ctas": [ai_clip_usage_record(path, paths, history) for path in ctas],
+            }
+            for key, items in (("hooks", hooks), ("ctas", ctas)):
+                for path in items:
+                    market = media_market(path)
+                    model_record = market_models.setdefault(market, {}).setdefault(
+                        model,
+                        {"hooks": [], "ctas": []},
+                    )
+                    model_record[key].append(ai_clip_usage_record(path, paths, history))
         audio = media_files(paths.audio_root / product, AUDIO_EXTS)
         market_audio: dict[str, list[dict]] = {}
         for path in audio:
@@ -547,7 +574,10 @@ def scan_library(paths: MixerPaths | None = None) -> dict:
             }
         )
     return {
-        "paths": {key: str(value) for key, value in asdict(paths).items()},
+        "paths": {
+            **{key: str(value) for key, value in asdict(paths).items()},
+            "delivery_archive_root": str(delivery_archive_root(paths)),
+        },
         "products": records,
         "summary": {
             "products": len(records),
@@ -611,6 +641,50 @@ def read_json(path: Path, default):
 def write_json(path: Path, payload) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def delivery_sidecar_path(video_path: Path) -> Path:
+    return video_path.with_suffix(video_path.suffix + DELIVERY_SIDECAR_SUFFIX)
+
+
+def update_delivery_marker(
+    video_path: Path,
+    *,
+    used_output: Path | None = None,
+    cleaned: bool = False,
+) -> bool:
+    sidecar = read_json(delivery_sidecar_path(video_path), {})
+    marker_path = Path(str(sidecar.get("marker_path") or "")).expanduser()
+    if not marker_path.is_file():
+        return False
+    marker = read_json(marker_path, {})
+    if not isinstance(marker, dict):
+        return False
+    now = dt.datetime.now().isoformat(timespec="seconds")
+    if used_output is not None:
+        marker["upload_status"] = "已用于混剪"
+        marker["consumed_at"] = now
+        outputs = [str(path) for path in marker.get("used_outputs") or [] if str(path).strip()]
+        output = str(used_output)
+        if output not in outputs:
+            outputs.append(output)
+        marker["used_outputs"] = outputs
+    if cleaned:
+        for item in marker.get("media_files") or []:
+            if str(item.get("path") or "") == str(video_path):
+                item["cleaned"] = True
+                item["cleaned_at"] = now
+        media_files = marker.get("media_files") or []
+        marker["media_cleaned"] = bool(media_files) and all(
+            bool(item.get("cleaned")) or not Path(str(item.get("path") or "")).exists()
+            for item in media_files
+        )
+        marker["media_cleaned_at"] = now if marker["media_cleaned"] else None
+    try:
+        write_json(marker_path, marker)
+    except OSError:
+        return False
+    return True
 
 
 def assert_inside(path: Path, root: Path) -> Path:
@@ -844,7 +918,7 @@ def build_plan(payload: dict, paths: MixerPaths | None = None) -> dict:
     if not available_hook_items:
         raise ValueError("所选国家没有尚未使用的钩子素材")
 
-    expected_hook_root = paths.ai_clip_root / model / "混剪-钩子" / product
+    expected_hook_root = delivery_archive_root(paths)
     hook_paths = []
     for item in available_hook_items:
         hook = assert_inside(Path(item["path"]), expected_hook_root)
@@ -863,7 +937,7 @@ def build_plan(payload: dict, paths: MixerPaths | None = None) -> dict:
     if include_cta:
         if not model_record["ctas"]:
             raise ValueError("所选国家没有可用的 CTA 素材")
-        expected_cta_root = paths.ai_clip_root / model / "混剪-CTA" / product
+        expected_cta_root = delivery_archive_root(paths)
         for item in model_record["ctas"]:
             cta = assert_inside(Path(item["path"]), expected_cta_root)
             if media_market(cta) != market:
@@ -1042,7 +1116,7 @@ def build_plan(payload: dict, paths: MixerPaths | None = None) -> dict:
         },
         "inputs": {
             "hook_count": len(hook_paths),
-            "hook_pool": [relative_record(path, paths.ai_clip_root) for path in hook_paths],
+            "hook_pool": [relative_record(path, delivery_archive_root(paths)) for path in hook_paths],
             "audio_count": len(audio_paths),
             "audio_pool": [audio_library_record(path, paths.audio_root) for path in audio_paths],
             "subtitle_count": market_record["subtitle_count"],
@@ -1398,6 +1472,8 @@ def update_usage_history(paths: MixerPaths, variant: dict, output: Path) -> None
         if segment["role"] in {"AI钩子", "展示", "使用", "AI CTA"}:
             key = segment["path"]
             history["sources"][key] = history["sources"].get(key, 0) + 1
+            if segment["role"] in {"AI钩子", "AI CTA"}:
+                update_delivery_marker(Path(key), used_output=output)
     history["routes"].append(variant["route_signature"])
     history["routes"] = history["routes"][-1000:]
     middle_signature = variant.get("middle_route_signature")

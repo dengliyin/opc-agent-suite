@@ -26,6 +26,7 @@ from app.mixer import (
     render_plan,
     scan_library,
     shift_ass_subtitles,
+    update_delivery_marker,
 )
 
 
@@ -33,19 +34,53 @@ class MixerTests(unittest.TestCase):
     def paths(self, root: Path) -> MixerPaths:
         return MixerPaths(
             vault_root=root,
-            ai_clip_root=root / "05AI片段",
             audio_root=root / "06音频文件",
             real_root=root / "07实拍素材",
             work_root=root / "08混剪工作区",
             output_root=root / "成品视频",
         )
 
+    def archived_clip(
+        self,
+        paths: MixerPaths,
+        script_type: str,
+        name: str,
+        *,
+        product: str = "测试产品",
+        model: str = "omni",
+    ) -> Path:
+        path = (
+            paths.work_root
+            / "片段产出归档"
+            / model
+            / "2026-07-30"
+            / script_type
+            / product
+            / "来源A"
+            / Path(name).stem
+            / name
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+        path.with_suffix(path.suffix + ".delivery.json").write_text(
+            json.dumps(
+                {
+                    "model": model,
+                    "script_type": script_type,
+                    "product_name": product,
+                    "video_path": str(path),
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
     def test_scan_preserves_model_type_and_product_hierarchy(self):
         with tempfile.TemporaryDirectory() as temp:
             paths = self.paths(Path(temp))
             files = [
-                paths.ai_clip_root / "omni/混剪-钩子/测试产品/hook-IE.mp4",
-                paths.ai_clip_root / "omni/混剪-CTA/测试产品/cta-IE.mp4",
+                self.archived_clip(paths, "混剪-钩子", "hook-IE.mp4"),
+                self.archived_clip(paths, "混剪-CTA", "cta-IE.mp4"),
                 paths.audio_root / "测试产品/AI音频-IE-test.mp3",
                 paths.real_root / "测试产品/展示/display.mp4",
                 paths.real_root / "测试产品/使用/use.mp4",
@@ -63,29 +98,77 @@ class MixerTests(unittest.TestCase):
         self.assertEqual(product["markets"]["IE"]["label"], "IE · 爱尔兰")
         self.assertEqual(product["markets"]["IE"]["models"]["omni"]["hooks"][0]["name"], "hook-IE.mp4")
 
-    def test_hook_preview_media_is_limited_to_ai_clip_root(self):
+    def test_scan_ignores_unexported_ai_clips(self):
         with tempfile.TemporaryDirectory() as temp:
             paths = self.paths(Path(temp))
-            hook = paths.ai_clip_root / "omni/混剪-钩子/测试产品/hook-IE.mp4"
-            cta = paths.ai_clip_root / "omni/混剪-CTA/测试产品/cta-IE.mp4"
+            hook = Path(temp) / "05AI片段/omni/混剪-钩子/测试产品/hook-IE.mp4"
+            hook.parent.mkdir(parents=True)
+            hook.touch()
+
+            library = scan_library(paths)
+
+        self.assertEqual(library["summary"]["hooks"], 0)
+
+    def test_scan_includes_delivered_archive_videos(self):
+        with tempfile.TemporaryDirectory() as temp:
+            paths = self.paths(Path(temp))
+            archived_hook = (
+                paths.work_root
+                / "片段产出归档/omni/2026-07-30/混剪-钩子/测试产品/来源A/hook/hook-IE.mp4"
+            )
+            sidecar = archived_hook.with_suffix(".mp4.delivery.json")
+            files = [
+                archived_hook,
+                paths.audio_root / "测试产品/AI音频-IE-test.mp3",
+                paths.real_root / "测试产品/展示/display.mp4",
+                paths.real_root / "测试产品/使用/use.mp4",
+            ]
+            for path in files:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+            sidecar.write_text(
+                json.dumps(
+                    {
+                        "model": "omni",
+                        "script_type": "混剪-钩子",
+                        "product_name": "测试产品",
+                        "video_path": str(archived_hook),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            library = scan_library(paths)
+
+        product = library["products"][0]
+        hook = product["markets"]["IE"]["models"]["omni"]["hooks"][0]
+        self.assertEqual(hook["path"], str(archived_hook.resolve()))
+        self.assertTrue(product["ready"])
+
+    def test_hook_preview_media_is_limited_to_delivery_archive(self):
+        with tempfile.TemporaryDirectory() as temp:
+            paths = self.paths(Path(temp))
+            hook = Path(temp) / "05AI片段/omni/混剪-钩子/测试产品/hook-IE.mp4"
+            archived = self.archived_clip(paths, "混剪-钩子", "hook2-IE.mp4")
+            cta = self.archived_clip(paths, "混剪-CTA", "cta-IE.mp4")
             outside = Path(temp) / "outside.mp4"
-            for path in (hook, cta, outside):
+            for path in (hook, archived, cta, outside):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.touch()
 
-            self.assertEqual(safe_hook_video_path(str(hook), paths), hook.resolve())
+            self.assertEqual(safe_hook_video_path(str(archived), paths), archived.resolve())
+            with self.assertRaisesRegex(ValueError, "不在片段产出归档目录"):
+                safe_hook_video_path(str(hook), paths)
             with self.assertRaisesRegex(ValueError, "混剪钩子目录"):
                 safe_hook_video_path(str(cta), paths)
-            with self.assertRaisesRegex(ValueError, "不在 AI 片段目录"):
+            with self.assertRaisesRegex(ValueError, "不在片段产出归档目录"):
                 safe_hook_video_path(str(outside), paths)
 
     def test_delete_hook_videos_removes_video_and_product_lock_sidecar(self):
         with tempfile.TemporaryDirectory() as temp:
             paths = self.paths(Path(temp))
-            hook = paths.ai_clip_root / "omni/混剪-钩子/测试产品/hook-IE.mp4"
+            hook = self.archived_clip(paths, "混剪-钩子", "hook-IE.mp4")
             sidecar = hook.with_suffix(".mp4.product-lock.json")
-            hook.parent.mkdir(parents=True, exist_ok=True)
-            hook.write_bytes(b"video")
             sidecar.write_text("{}", encoding="utf-8")
 
             result = delete_hook_videos([str(hook)], paths)
@@ -94,6 +177,68 @@ class MixerTests(unittest.TestCase):
         self.assertEqual(result["sidecars_deleted"], 1)
         self.assertFalse(hook.exists())
         self.assertFalse(sidecar.exists())
+
+    def test_delivery_marker_tracks_use_and_cleanup(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            hook = root / "05AI片段/omni/混剪-钩子/测试产品/hook-IE.mp4"
+            marker = root / "04适配脚本/omni/混剪-钩子/测试产品/hook.exported.json"
+            delivery_sidecar = hook.with_suffix(".mp4.delivery.json")
+            for path in (hook, marker, delivery_sidecar):
+                path.parent.mkdir(parents=True, exist_ok=True)
+            hook.write_bytes(b"video")
+            marker.write_text(
+                json.dumps(
+                    {
+                        "upload_status": "已交付",
+                        "media_cleaned": False,
+                        "media_files": [{"path": str(hook), "cleaned": False}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            delivery_sidecar.write_text(
+                json.dumps({"marker_path": str(marker), "video_path": str(hook)}),
+                encoding="utf-8",
+            )
+
+            self.assertTrue(update_delivery_marker(hook, used_output=root / "成品.mp4"))
+            used = json.loads(marker.read_text(encoding="utf-8"))
+            self.assertEqual(used["upload_status"], "已用于混剪")
+            self.assertEqual(used["used_outputs"], [str(root / "成品.mp4")])
+
+            hook.unlink()
+            self.assertTrue(update_delivery_marker(hook, cleaned=True))
+            cleaned = json.loads(marker.read_text(encoding="utf-8"))
+            self.assertTrue(cleaned["media_cleaned"])
+            self.assertTrue(cleaned["media_files"][0]["cleaned"])
+
+    def test_delete_hook_updates_delivery_marker_and_removes_sidecar(self):
+        with tempfile.TemporaryDirectory() as temp:
+            paths = self.paths(Path(temp))
+            hook = self.archived_clip(paths, "混剪-钩子", "hook-IE.mp4")
+            marker = Path(temp) / "scripts/hook.exported.json"
+            delivery_sidecar = hook.with_suffix(".mp4.delivery.json")
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(
+                json.dumps(
+                    {
+                        "media_cleaned": False,
+                        "media_files": [{"path": str(hook), "cleaned": False}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            delivery_sidecar.write_text(
+                json.dumps({"marker_path": str(marker), "video_path": str(hook)}),
+                encoding="utf-8",
+            )
+
+            result = delete_hook_videos([str(hook)], paths)
+
+            self.assertEqual(result["delivery_markers_updated"], 1)
+            self.assertFalse(delivery_sidecar.exists())
+            self.assertTrue(json.loads(marker.read_text(encoding="utf-8"))["media_cleaned"])
 
     def test_plan_hook_paths_only_returns_ai_hook_segments(self):
         plan = {
@@ -119,7 +264,7 @@ class MixerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             paths = self.paths(Path(temp))
             files = [
-                paths.ai_clip_root / "omni/混剪-钩子/测试产品/hook-ES.mp4",
+                self.archived_clip(paths, "混剪-钩子", "hook-ES.mp4"),
                 paths.audio_root / "测试产品/AI音频-ES-test.mp3",
                 paths.real_root / "测试产品/展示/display.mp4",
                 paths.real_root / "测试产品/使用/use.mp4",
@@ -136,7 +281,7 @@ class MixerTests(unittest.TestCase):
     def test_scan_marks_rendered_hook_as_unavailable(self):
         with tempfile.TemporaryDirectory() as temp:
             paths = self.paths(Path(temp))
-            hook = paths.ai_clip_root / "omni/混剪-钩子/测试产品/hook-IE.mp4"
+            hook = self.archived_clip(paths, "混剪-钩子", "hook-IE.mp4")
             files = [
                 hook,
                 paths.audio_root / "测试产品/AI音频-IE-test.mp3",
@@ -162,10 +307,10 @@ class MixerTests(unittest.TestCase):
     def test_build_plan_omits_optional_cta(self):
         with tempfile.TemporaryDirectory() as temp:
             paths = self.paths(Path(temp))
-            hook = paths.ai_clip_root / "omni/混剪-钩子/测试产品/hook-IE.mp4"
-            hook2 = paths.ai_clip_root / "omni/混剪-钩子/测试产品/hook2-IE.mp4"
-            cta = paths.ai_clip_root / "omni/混剪-CTA/测试产品/cta-IE.mp4"
-            cta2 = paths.ai_clip_root / "omni/混剪-CTA/测试产品/cta2-IE.mp4"
+            hook = self.archived_clip(paths, "混剪-钩子", "hook-IE.mp4")
+            hook2 = self.archived_clip(paths, "混剪-钩子", "hook2-IE.mp4")
+            cta = self.archived_clip(paths, "混剪-CTA", "cta-IE.mp4")
+            cta2 = self.archived_clip(paths, "混剪-CTA", "cta2-IE.mp4")
             audio = paths.audio_root / "测试产品/AI音频-IE-test.mp3"
             audio2 = paths.audio_root / "测试产品/AI音频-IE-test2.mp3"
             display = paths.real_root / "测试产品/展示/display.mp4"
@@ -267,7 +412,7 @@ class MixerTests(unittest.TestCase):
     def test_build_plan_does_not_cross_country_for_audio_pool(self):
         with tempfile.TemporaryDirectory() as temp:
             paths = self.paths(Path(temp))
-            hook = paths.ai_clip_root / "omni/混剪-钩子/测试产品/hook-IE.mp4"
+            hook = self.archived_clip(paths, "混剪-钩子", "hook-IE.mp4")
             audio = paths.audio_root / "测试产品/AI音频-ES-test.mp3"
             for path in (hook, audio):
                 path.parent.mkdir(parents=True, exist_ok=True)

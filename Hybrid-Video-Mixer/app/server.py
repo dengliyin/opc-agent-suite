@@ -10,9 +10,29 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 try:
-    from app.mixer import VIDEO_EXTS, build_plan, list_outputs, mixer_paths, read_json, render_plan, scan_library
+    from app.mixer import (
+        VIDEO_EXTS,
+        build_plan,
+        delivery_sidecar_path,
+        list_outputs,
+        mixer_paths,
+        read_json,
+        render_plan,
+        scan_library,
+        update_delivery_marker,
+    )
 except ModuleNotFoundError:
-    from mixer import VIDEO_EXTS, build_plan, list_outputs, mixer_paths, read_json, render_plan, scan_library
+    from mixer import (
+        VIDEO_EXTS,
+        build_plan,
+        delivery_sidecar_path,
+        list_outputs,
+        mixer_paths,
+        read_json,
+        render_plan,
+        scan_library,
+        update_delivery_marker,
+    )
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -89,9 +109,9 @@ def safe_hook_video_path(value: str, paths=None) -> Path:
     paths = paths or mixer_paths()
     path = Path(value).expanduser().resolve()
     try:
-        relative = path.relative_to(paths.ai_clip_root.resolve())
+        relative = path.relative_to((paths.work_root / "片段产出归档").resolve())
     except ValueError as exc:
-        raise ValueError("钩子视频不在 AI 片段目录内") from exc
+        raise ValueError("钩子视频不在片段产出归档目录内") from exc
     if "混剪-钩子" not in relative.parts:
         raise ValueError("只允许访问混剪钩子目录中的视频")
     if path.suffix.lower() not in VIDEO_EXTS or not path.is_file():
@@ -109,15 +129,20 @@ def delete_hook_videos(values, paths=None) -> dict:
         if target not in targets:
             targets.append(target)
     sidecars_deleted = 0
+    delivery_markers_updated = 0
     for target in targets:
         target.unlink()
+        if update_delivery_marker(target, cleaned=True):
+            delivery_markers_updated += 1
         sidecar = target.with_suffix(target.suffix + ".product-lock.json")
         if sidecar.is_file():
             sidecar.unlink()
             sidecars_deleted += 1
+        delivery_sidecar_path(target).unlink(missing_ok=True)
     return {
         "deleted_count": len(targets),
         "sidecars_deleted": sidecars_deleted,
+        "delivery_markers_updated": delivery_markers_updated,
         "deleted": [str(path) for path in targets],
     }
 

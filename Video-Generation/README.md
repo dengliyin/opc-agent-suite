@@ -68,6 +68,7 @@ python3 -m venv .venv
 - Omni 视频：写入 `VIDEO_OUTPUT_ROOT/<产品名>/<md名>-片段x-omni.mp4`
 - 混剪 Omni 输入：读取 `HYBRID_OMNI_SCRIPT_ROOT/混剪-钩子|混剪-CTA/<产品名>/<来源脚本>/*.md`
 - 混剪 Omni 视频：写入 `HYBRID_OMNI_VIDEO_OUTPUT_ROOT/混剪-钩子|混剪-CTA/<产品名>/<md名>-片段x-omni.mp4`
+- 混剪 Omni “导出已选”：脚本与图片复制到 `HYBRID_MIX_WORK_ROOT/片段产出归档/omni/<日期>/...`，视频从 `05AI片段` 移动到同一归档；AI＋实拍混剪只读取归档中的真实视频路径，未导出的 `05AI片段` 不进入混剪素材池。导出标记会在素材使用或删除后更新状态，删除视频不会让脚本重新显示为“未生成”
 
 片段产出 Agent 只负责生成与导出素材。已拼接素材的成品校验和清理由 `http://127.0.0.1:9998/` 的片段合成 Agent 负责；归档列表只读取导出记录并显示“已清理”，不再提供删除媒体的入口。
 

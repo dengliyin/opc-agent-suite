@@ -10,7 +10,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .config import ENV_PATH, SETTINGS_PATH, Settings, load_hybrid_omni_settings, load_settings, mask_secrets, update_env_values
-from .exporter import export_completed_scripts, restore_exported_scripts
+from .exporter import (
+    deliver_hybrid_scripts,
+    export_completed_scripts,
+    restore_exported_scripts,
+    restore_hybrid_deliveries,
+)
 from .files import character_image_path, scan_scripts, script_to_dict, storyboard_image_path, summarize_catalog, video_output_path
 from .product_lock import storyboard_meta_path
 from .tasks import JobManager, VALID_STAGES
@@ -745,6 +750,8 @@ def _export_completed(provider: str, request: ExportRequest) -> Dict[str, Any]:
     current = _settings_for(provider)
     try:
         scripts = scan_scripts(current)
+        if current.workflow == "hybrid_omni":
+            return deliver_hybrid_scripts(current, scripts, request.script_paths)
         return export_completed_scripts(current, scripts, request.script_paths)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=_safe(str(exc)))
@@ -756,6 +763,8 @@ def _restore_exported(provider: str, request: RestoreRequest) -> Dict[str, Any]:
     current = _settings_for(provider)
     try:
         scripts = scan_scripts(current, include_archived=True)
+        if current.workflow == "hybrid_omni":
+            return restore_hybrid_deliveries(current, scripts, request.script_paths)
         return restore_exported_scripts(current, scripts, request.script_paths, bool(request.restore_videos))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=_safe(str(exc)))
@@ -1050,6 +1059,11 @@ def export_grok_completed(request: ExportRequest) -> Dict[str, Any]:
     return _export_completed("grok", request)
 
 
+@app.post("/hybrid-omni/api/export-completed")
+def export_hybrid_omni_completed(request: ExportRequest) -> Dict[str, Any]:
+    return _export_completed("hybrid_omni", request)
+
+
 
 
 @app.post("/api/restore-exported")
@@ -1061,6 +1075,11 @@ def restore_omni_exported(request: RestoreRequest) -> Dict[str, Any]:
 @app.post("/grok/api/restore-exported")
 def restore_grok_exported(request: RestoreRequest) -> Dict[str, Any]:
     return _restore_exported("grok", request)
+
+
+@app.post("/hybrid-omni/api/restore-exported")
+def restore_hybrid_omni_exported(request: RestoreRequest) -> Dict[str, Any]:
+    return _restore_exported("hybrid_omni", request)
 
 
 @app.delete("/api/scripts")
