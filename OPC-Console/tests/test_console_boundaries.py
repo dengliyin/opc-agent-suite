@@ -238,6 +238,16 @@ class ConsoleBoundaryTests(unittest.TestCase):
             self.assertIn(f'"{directory}"', installer)
         self.assertIn('python_path="$ROOT_DIR/$agent_dir/.venv/bin/python"', installer)
 
+    def test_install_and_manual_start_register_agent_launchagents(self):
+        installer_call = '"$ROOT_DIR/scripts/install_agent_launchagents.sh"'
+        bootstrap = (WORKSPACE_ROOT / "scripts" / "bootstrap_macos.sh").read_text(encoding="utf-8")
+        start = (WORKSPACE_ROOT / "scripts" / "start_console.sh").read_text(encoding="utf-8")
+
+        self.assertIn(installer_call, bootstrap)
+        self.assertLess(bootstrap.index('"$ROOT_DIR/scripts/verify_install.sh"'), bootstrap.index(installer_call))
+        self.assertIn(installer_call, start)
+        self.assertLess(start.index(installer_call), start.index("if curl"))
+
     def test_console_no_longer_exposes_legacy_business_routes(self):
         self.assertTrue({"/product", "/publish", "/metrics", "/optimize"}.isdisjoint(self.app.ROUTE_TO_SERVICE))
 

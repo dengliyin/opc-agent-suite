@@ -65,7 +65,13 @@ export OPC_VIDEO_ASSEMBLY_RUNTIME_SOURCE="/path/to/Video-Assembly-hd/runtime"
 ./scripts/start_console.sh
 ```
 
-打开 `http://127.0.0.1:8888/`。其余 Agent 由控制台上的“启动/检测”按钮按需启动。
+`bootstrap_macos.sh` 会创建全部 Python 环境，并自动安装 14 个按需运行的 Agent LaunchAgent 配置；`start_console.sh` 每次启动时也会检查并补齐这些配置。打开 `http://127.0.0.1:8888/` 后，其余 Agent 可由控制台上的“启动/检测”按钮按需启动。
+
+如果旧副本已经完成环境安装，但曾出现“Agent LaunchAgent 配置不存在”，可单独执行一次：
+
+```bash
+./scripts/install_agent_launchagents.sh
+```
 
 ### 让控制台在 macOS 常驻
 
