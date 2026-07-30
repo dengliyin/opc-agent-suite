@@ -47,7 +47,7 @@ cp .env.example .env
 OPC_VAULT_ROOT="$HOME/Documents/Obsidian Vault"
 ```
 
-仓库内的 `storage-template/` 只保存空目录结构，不包含任何业务数据。新版 `.env.example` 默认设置 `OPC_INITIALIZE_STORAGE_LAYOUT="1"`，仅供首次安装自动建立这些目录。已有用户的 `.env` 没有这个开关，更新代码或再次运行安装脚本时不会改动其现有路径。
+仓库内的 `storage-template/` 只保存空目录结构，不包含任何业务数据。首次安装时会建立这些目录；之后每次启动控制台或任一 Agent，也会根据本机 `.env` 中的 `OPC_VAULT_ROOT` 自动补齐新增目录，只创建缺失目录，不覆盖已有文件。
 
 需要主动补建输入/输出目录时，也可以单独执行：
 
@@ -55,7 +55,7 @@ OPC_VAULT_ROOT="$HOME/Documents/Obsidian Vault"
 ./scripts/create_storage_layout.sh
 ```
 
-首次安装时 `bootstrap_macos.sh` 会自动执行这一步，只创建缺失目录，不覆盖已有文件。删除或设为 `OPC_INITIALIZE_STORAGE_LAYOUT="0"` 即可关闭自动初始化。
+首次安装时 `bootstrap_macos.sh` 会执行这一步。运行期自动补齐要求 `OPC_VAULT_ROOT` 已存在且可写；如果外接盘未挂载或路径配置错误，程序会停止并明确报错，避免在错误位置创建空目录。
 
 然后执行：
 
