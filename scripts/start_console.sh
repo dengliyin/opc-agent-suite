@@ -54,11 +54,10 @@ SESSION_NAME="opc-agent-suite-${PORT}"
 
 if command -v screen >/dev/null 2>&1; then
   screen -S "$SESSION_NAME" -X quit >/dev/null 2>&1 || true
-  screen -dmS "$SESSION_NAME" bash -lc "cd '$ROOT_DIR/OPC-Console' && exec env KESAI_APP_NO_OPEN=1 PYTHONUNBUFFERED=1 '$PYTHON_BIN' kesai_app.py >>'$LOG_FILE' 2>&1"
+  screen -dmS "$SESSION_NAME" bash -lc "exec env KESAI_APP_NO_OPEN=1 PYTHONUNBUFFERED=1 '$PYTHON_BIN' '$ROOT_DIR/scripts/run_console_foreground.py' >>'$LOG_FILE' 2>&1"
 else
-  cd "$ROOT_DIR/OPC-Console"
   nohup env KESAI_APP_NO_OPEN=1 PYTHONUNBUFFERED=1 \
-    "$PYTHON_BIN" kesai_app.py >"$LOG_FILE" 2>&1 </dev/null &
+    "$PYTHON_BIN" "$ROOT_DIR/scripts/run_console_foreground.py" >"$LOG_FILE" 2>&1 </dev/null &
 fi
 
 for _ in {1..30}; do

@@ -6,7 +6,7 @@ import os
 import sys
 from pathlib import Path
 
-from run_console_foreground import ROOT_DIR, load_env
+from run_console_foreground import ROOT_DIR, ensure_storage_layout, load_env
 
 
 def load_console_app():
@@ -25,6 +25,7 @@ def main() -> None:
 
     env_file = Path(os.environ.get("OPC_ENV_FILE", ROOT_DIR / ".env"))
     load_env(env_file)
+    ensure_storage_layout()
     app = load_console_app()
     service_id = sys.argv[1]
     if service_id not in app.SERVICES:

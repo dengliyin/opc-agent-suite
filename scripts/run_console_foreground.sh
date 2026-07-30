@@ -19,6 +19,5 @@ set -a
 source "$ENV_FILE"
 set +a
 
-cd "$ROOT_DIR/OPC-Console"
 exec env KESAI_APP_NO_OPEN=1 PYTHONUNBUFFERED=1 \
-  "$PYTHON_BIN" kesai_app.py
+  "$PYTHON_BIN" "$ROOT_DIR/scripts/run_console_foreground.py"

@@ -25,9 +25,28 @@ def load_env(path: Path) -> None:
         os.environ[key.strip()] = os.path.expandvars(value)
 
 
+def ensure_storage_layout() -> Path:
+    configured = os.environ.get("OPC_VAULT_ROOT", "").strip()
+    if not configured:
+        raise RuntimeError("OPC_VAULT_ROOT 未配置，请先设置本机 Obsidian Vault 路径")
+    vault_root = Path(configured).expanduser()
+    if not vault_root.is_dir():
+        raise RuntimeError(f"OPC_VAULT_ROOT 不存在或外接盘未挂载：{vault_root}")
+    if not os.access(vault_root, os.W_OK):
+        raise RuntimeError(f"OPC_VAULT_ROOT 不可写：{vault_root}")
+
+    template_root = ROOT_DIR / "storage-template"
+    if not template_root.is_dir():
+        raise RuntimeError(f"存储目录模板不存在：{template_root}")
+    for template_dir in sorted(path for path in template_root.rglob("*") if path.is_dir()):
+        (vault_root / template_dir.relative_to(template_root)).mkdir(parents=True, exist_ok=True)
+    return vault_root
+
+
 def main() -> None:
     env_file = Path(os.environ.get("OPC_ENV_FILE", ROOT_DIR / ".env"))
     load_env(env_file)
+    ensure_storage_layout()
     os.environ["KESAI_APP_NO_OPEN"] = "1"
     os.environ["PYTHONUNBUFFERED"] = "1"
 
