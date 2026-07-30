@@ -21,6 +21,8 @@ set -a
 source "$ENV_FILE"
 set +a
 
+"$ROOT_DIR/scripts/install_agent_launchagents.sh"
+
 HOST="${KESAI_APP_HOST:-127.0.0.1}"
 PORT="${KESAI_APP_PORT:-8888}"
 URL="http://${HOST}:${PORT}/"

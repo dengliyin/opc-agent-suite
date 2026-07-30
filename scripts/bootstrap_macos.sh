@@ -108,4 +108,5 @@ else
 fi
 
 "$ROOT_DIR/scripts/verify_install.sh"
-echo "Installation verified. Start the console with: $ROOT_DIR/scripts/start_console.sh"
+"$ROOT_DIR/scripts/install_agent_launchagents.sh"
+echo "Installation verified and Agent LaunchAgents installed. Start the console with: $ROOT_DIR/scripts/start_console.sh"
