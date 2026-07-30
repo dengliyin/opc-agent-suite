@@ -1129,7 +1129,7 @@ def build_plan(payload: dict, paths: MixerPaths | None = None) -> dict:
         },
         "variants": variants,
     }
-    plan_path = paths.work_root / product / market / "plans" / f"{plan_id}.json"
+    plan_path = paths.work_root / product / "plans" / f"{plan_id}.json"
     write_json(plan_path, plan)
     plan["plan_path"] = str(plan_path)
     return plan
