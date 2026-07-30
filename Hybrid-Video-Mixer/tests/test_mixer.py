@@ -384,6 +384,14 @@ class MixerTests(unittest.TestCase):
         variant = plan["variants"][0]
         self.assertEqual(plan["inputs"]["hook_count"], 2)
         self.assertEqual(
+            Path(plan["plan_path"]).parent,
+            paths.work_root / "测试产品" / "plans",
+        )
+        self.assertEqual(
+            Path(plan_with_cta["plan_path"]).parent,
+            paths.work_root / "测试产品" / "plans",
+        )
+        self.assertEqual(
             len({item["segments"][0]["path"] for item in plan["variants"]}),
             2,
         )
