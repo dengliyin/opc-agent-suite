@@ -183,8 +183,8 @@ function updateDeduplicationMode() {
 function updateProduct() {
   resetHookBrowser();
   const product = currentProduct();
-  const availableDisplay = product?.display.filter(item => item.used_count < 5).length ?? 0;
-  const availableUsage = product?.usage.filter(item => item.used_count < 5).length ?? 0;
+  const availableDisplay = product?.display.filter(item => item.used_count < 100).length ?? 0;
+  const availableUsage = product?.usage.filter(item => item.used_count < 100).length ?? 0;
   els.footageSummary.textContent = product
     ? `实拍素材池　展示可用 ${availableDisplay}/${product.display.length} 条　｜　使用可用 ${availableUsage}/${product.usage.length} 条`
     : "选择产品后显示实拍素材数量";

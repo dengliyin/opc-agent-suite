@@ -47,7 +47,7 @@ LEGACY_LOCAL_INPUTS_PATH = CONFIG_DIR / "inputs.json"
 LEGACY_LOCAL_MODEL_SETTINGS_PATH = CONFIG_DIR / "model_settings.json"
 LOCAL_INPUTS_PATH = RUNTIME_CONFIG_DIR / "inputs.json"
 SCRIPT_INPUTS_PATH = Path(os.environ.get("SCRIPT_GENERATION_INPUTS_PATH", str(LOCAL_INPUTS_PATH))).expanduser()
-SHARED_MODEL_SETTINGS_PATH = CONFIG_DIR / "model_defaults.json"
+SHARED_MODEL_SETTINGS_PATH = RUNTIME_CONFIG_DIR / "model_defaults.json"
 LOCAL_MODEL_SETTINGS_PATH = RUNTIME_CONFIG_DIR / "model_settings.json"
 VAULT_ROOT = Path(
     os.environ.get("OPC_VAULT_ROOT", str(Path.home() / "Documents" / "Obsidian Vault"))
@@ -368,6 +368,24 @@ def read_json_config(path):
     return {key: value for key, value in data.items() if key not in IGNORED_CONFIG_FIELDS and not key.startswith("_")}
 
 
+def ensure_runtime_model_defaults():
+    if SHARED_MODEL_SETTINGS_PATH.exists():
+        return
+    defaults = {
+        "_说明": "脚本生成智能体运行默认配置，不包含 API Key。",
+        "modelmesh_base_url": DEFAULT_BASE_URL,
+        "script_generation_model": DEFAULT_MODEL,
+        "script_generation_max_output_tokens": DEFAULT_MAX_OUTPUT_TOKENS,
+        "script_generation_timeout": DEFAULT_TIMEOUT,
+    }
+    SHARED_MODEL_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SHARED_MODEL_SETTINGS_PATH.write_text(
+        json.dumps(defaults, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    SHARED_MODEL_SETTINGS_PATH.chmod(0o600)
+
+
 def migrate_legacy_local_configs():
     migrated = []
     for legacy_path, runtime_path in (
@@ -388,6 +406,7 @@ def migrate_legacy_local_configs():
 
 def load_script_generation_config():
     migrate_legacy_local_configs()
+    ensure_runtime_model_defaults()
     config = read_json_config(SHARED_MODEL_SETTINGS_PATH)
     config.update(read_json_config(LOCAL_MODEL_SETTINGS_PATH))
     config.update(read_json_config(SCRIPT_INPUTS_PATH))

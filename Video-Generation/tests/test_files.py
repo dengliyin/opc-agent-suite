@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from agent import files as files_module
@@ -284,6 +285,39 @@ def test_scan_archived_scripts_requires_date_product_script_layout(tmp_path: Pat
     assert [script.product_name for script in scripts] == ["P1"]
     assert [script.product_dir.name for script in scripts] == ["P1"]
     assert all(script.exported for script in scripts)
+
+
+def test_catalog_summary_separates_video_full_mode_and_cleaned_archive(tmp_path: Path) -> None:
+    settings = settings_for(tmp_path)
+    settings.reference_root.mkdir(parents=True)
+    (settings.reference_root / "P1.png").write_bytes(b"ref")
+    archive_dir = settings.completed_script_root / "2026-07-08" / "P1" / "quick"
+    archive_dir.mkdir(parents=True)
+    md_path = archive_dir / "quick.md"
+    md_path.write_text(
+        "# Segment 1：00:00 - 00:01\n"
+        "## A. 人物造型参考板提示词\nA\n"
+        "## B. 故事板图片提示词\nB\n",
+        encoding="utf-8",
+    )
+    marker = {
+        "media_cleaned": True,
+        "moved_files": [str(archive_dir / "quick-片段1-omni.mp4")],
+        "copied_files": [str(md_path)],
+        "media_files": [{"name": "quick-片段1-omni.mp4", "type": "video", "cleaned": True}],
+    }
+    export_marker_path(md_path).write_text(json.dumps(marker), encoding="utf-8")
+
+    scripts = scan_scripts(settings, include_archived=True)
+    summary = files_module.summarize_catalog(settings, scripts)
+    payload = script_to_dict(settings, scripts[0])
+
+    assert summary["video_scripts"] == 1
+    assert summary["full_mode_completed_scripts"] == 0
+    assert summary["exported_scripts"] == 1
+    assert summary["cleaned_exported_scripts"] == 1
+    assert payload["has_video"] is True
+    assert payload["full_mode_complete"] is False
 
 
 def test_scan_archived_scripts_matches_references_once_per_product(tmp_path: Path, monkeypatch) -> None:

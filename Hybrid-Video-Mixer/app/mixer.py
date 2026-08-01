@@ -19,7 +19,7 @@ from typing import Callable
 VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".mkv", ".webm"}
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
 DELIVERY_SIDECAR_SUFFIX = ".delivery.json"
-MAX_REAL_FOOTAGE_USES = 5
+MAX_REAL_FOOTAGE_USES = 100
 DEDUPLICATION_OPTIONS = (
     "transform",
     "color",
@@ -829,7 +829,10 @@ def choose_middle_timeline(
             and history.get("sources", {}).get(item["path"], 0) < MAX_REAL_FOOTAGE_USES
         ]
         if not candidates:
-            raise ValueError(f"{category}实拍素材不足：没有未在本片使用且使用次数少于5次的片段")
+            raise ValueError(
+                f"{category}实拍素材不足：没有未在本片使用且使用次数少于"
+                f"{MAX_REAL_FOOTAGE_USES}次的片段"
+            )
         if timeline:
             non_adjacent = [item for item in candidates if item["path"] != timeline[-1]["path"]]
             if non_adjacent:

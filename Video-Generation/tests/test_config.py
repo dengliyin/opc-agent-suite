@@ -49,6 +49,16 @@ def test_shared_settings_override_stale_local_model_values(tmp_path: Path, monke
     assert settings.image_fallback_models == []
 
 
+def test_completed_root_follows_configured_video_output_root(tmp_path: Path, monkeypatch) -> None:
+    video_output_root = tmp_path / "纯AI视频" / "05AI片段" / "omni"
+    monkeypatch.setenv("VIDEO_OUTPUT_ROOT", str(video_output_root))
+    monkeypatch.delenv("VIDEO_ASSEMBLY_PENDING_ROOT", raising=False)
+
+    settings = config.load_settings("omni")
+
+    assert settings.completed_script_root == tmp_path / "纯AI视频" / "06合成工作区" / "omni"
+
+
 def test_tracked_video_generation_settings_contain_no_api_keys() -> None:
     text = config.SETTINGS_PATH.read_text(encoding="utf-8")
 

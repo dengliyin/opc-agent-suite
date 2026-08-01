@@ -49,6 +49,9 @@ launcher_escaped="$(sed_escape "$LAUNCHER_PATH")"
 for service_id in "${SERVICE_IDS[@]}"; do
   agent_dir="$(service_dir "$service_id")"
   python_path="$ROOT_DIR/$agent_dir/.venv/bin/python"
+  if [ "$service_id" = "finished" ] && [ -x "$HOME/Library/Application Support/OPC-Agent-Suite/finished-python/venv/bin/python" ]; then
+    python_path="$HOME/Library/Application Support/OPC-Agent-Suite/finished-python/venv/bin/python"
+  fi
   if [ ! -x "$python_path" ]; then
     echo "Missing Agent virtual environment: $agent_dir/.venv" >&2
     exit 1
