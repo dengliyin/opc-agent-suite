@@ -11,6 +11,7 @@ from unittest.mock import patch
 from app.server import delete_hook_videos, plan_hook_paths, safe_hook_video_path
 from app.mixer import (
     DEDUPLICATION_OPTIONS,
+    MAX_REAL_FOOTAGE_USES,
     MixerPaths,
     audio_subtitle_paths,
     build_plan,
@@ -482,7 +483,7 @@ class MixerTests(unittest.TestCase):
         self.assertAlmostEqual(timeline[-1]["duration"], 2.0, places=2)
         self.assertAlmostEqual(sum(item["duration"] for item in timeline), 5.0, places=2)
 
-    def test_middle_timeline_excludes_footage_used_five_times(self):
+    def test_middle_timeline_excludes_footage_at_usage_limit(self):
         display = [
             {"path": "/d/exhausted.mp4", "name": "exhausted", "duration": 2.0},
             {"path": "/d/available.mp4", "name": "available", "duration": 2.0},
@@ -491,7 +492,7 @@ class MixerTests(unittest.TestCase):
 
         timeline = choose_middle_timeline(
             display, usage, 4.0, seed=11,
-            history={"sources": {"/d/exhausted.mp4": 5}},
+            history={"sources": {"/d/exhausted.mp4": MAX_REAL_FOOTAGE_USES}},
         )
 
         self.assertNotIn("/d/exhausted.mp4", [item["path"] for item in timeline])

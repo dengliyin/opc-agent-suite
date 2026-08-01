@@ -462,10 +462,7 @@ def script_to_dict(settings: Settings, script: ScriptFile) -> Dict[str, object]:
         segment_to_dict(settings, script, segment, marker=marker)
         for segment in script.segments
     ]
-    complete = True if exported else bool(segments) and all(
-        bool(segment["character_exists"]) and bool(segment["storyboard_exists"]) and bool(segment["video_exists"])
-        for segment in segments
-    )
+    generation_status = script_generation_status(script, segments, marker)
     reference_images = getattr(script, "reference_images", ())
     if not reference_images and script.reference_image is not None:
         reference_images = (script.reference_image,)
@@ -492,7 +489,9 @@ def script_to_dict(settings: Settings, script: ScriptFile) -> Dict[str, object]:
         "created_at": getattr(script, "created_at", ""),
         "upstream_script_path": getattr(script, "upstream_script_path", ""),
         "script_type": getattr(script, "script_type", ""),
-        "complete": complete,
+        "complete": True if exported else generation_status["full_mode_complete"],
+        "has_video": generation_status["has_video"],
+        "full_mode_complete": generation_status["full_mode_complete"],
         "exported": exported,
         "export_marker": str(export_marker_path(script.md_path)) if exported else None,
         "upload_status": marker.get("upload_status", "") if exported else "",
@@ -552,25 +551,76 @@ def summarize_catalog(settings: Settings, scripts: Iterable[ScriptFile]) -> Dict
     segment_count = 0
     missing_references = 0
     complete_scripts = 0
+    video_scripts = 0
     exported_scripts = 0
+    cleaned_exported_scripts = 0
     for script in scripts:
         product_names.add(script.product_name)
         script_count += 1
         segment_count += len(script.segments)
         if not getattr(script, "reference_images", ()) and script.reference_image is None:
             missing_references += 1
-        if script_is_complete(settings, script):
+        exported = bool(getattr(script, "exported", False)) or script_exported(script.md_path)
+        marker = read_export_marker(script.md_path) if exported else {}
+        segments = [segment_to_dict(settings, script, segment, marker=marker) for segment in script.segments]
+        generation_status = script_generation_status(script, segments, marker)
+        if generation_status["has_video"]:
+            video_scripts += 1
+        if generation_status["full_mode_complete"]:
             complete_scripts += 1
-        if bool(getattr(script, "exported", False)) or script_exported(script.md_path):
+        if exported:
             exported_scripts += 1
+            if bool(marker.get("media_cleaned")):
+                cleaned_exported_scripts += 1
     return {
         "products": len(product_names),
         "scripts": script_count,
         "segments": segment_count,
         "missing_references": missing_references,
+        "video_scripts": video_scripts,
         "complete_scripts": complete_scripts,
+        "full_mode_completed_scripts": complete_scripts,
         "exported_scripts": exported_scripts,
+        "cleaned_exported_scripts": cleaned_exported_scripts,
     }
+
+
+def script_generation_status(
+    script: ScriptFile,
+    segments: List[Dict[str, object]],
+    marker: Dict[str, Any],
+) -> Dict[str, bool]:
+    exported_names = {
+        Path(str(path)).name
+        for key in ("copied_files", "moved_files")
+        for path in marker.get(key, [])
+        if path
+    }
+    exported_names.update(
+        str(item.get("name") or Path(str(item.get("path") or "")).name)
+        for item in marker.get("media_files", [])
+        if isinstance(item, dict)
+    )
+    has_video = False
+    full_mode_complete = bool(segments)
+    for parsed, segment in zip(script.segments, segments):
+        character_name = character_image_path(script.md_path, parsed.index).name
+        storyboard_name = storyboard_image_path(script.md_path, parsed.index).name
+        video_name = next(
+            (
+                name
+                for name in exported_names
+                if name.startswith(f"{script.md_path.stem}-片段{parsed.index}-")
+                and Path(name).suffix.lower() in {".mp4", ".mov", ".webm"}
+            ),
+            "",
+        )
+        character_done = bool(segment["character_exists"]) or character_name in exported_names
+        storyboard_done = bool(segment["storyboard_exists"]) or storyboard_name in exported_names
+        video_done = bool(segment["video_exists"]) or bool(video_name)
+        has_video = has_video or video_done
+        full_mode_complete = full_mode_complete and character_done and storyboard_done and video_done
+    return {"has_video": has_video, "full_mode_complete": full_mode_complete}
 
 
 def script_is_complete(settings: Settings, script: ScriptFile) -> bool:

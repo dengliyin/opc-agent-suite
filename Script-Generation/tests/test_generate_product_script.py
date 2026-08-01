@@ -618,12 +618,25 @@ class GenerateProductScriptTests(unittest.TestCase):
                 patch.object(generate_product_script, "SHARED_MODEL_SETTINGS_PATH", shared),
                 patch.object(generate_product_script, "LOCAL_MODEL_SETTINGS_PATH", local),
                 patch.object(generate_product_script, "SCRIPT_INPUTS_PATH", inputs),
+                patch.object(generate_product_script, "ensure_runtime_model_defaults"),
             ):
                 config = generate_product_script.load_script_generation_config()
 
         self.assertEqual(config["modelmesh_base_url"], "https://stale.test")
         self.assertEqual(config["script_generation_model"], "shared-model")
         self.assertEqual(config["modelmesh_api_key"], "secret")
+
+    def test_runtime_model_defaults_are_created_without_bundled_config_access(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            shared = Path(temp_dir) / "runtime" / "model_defaults.json"
+
+            with patch.object(generate_product_script, "SHARED_MODEL_SETTINGS_PATH", shared):
+                generate_product_script.ensure_runtime_model_defaults()
+
+            defaults = json.loads(shared.read_text(encoding="utf-8"))
+            self.assertEqual(defaults["modelmesh_base_url"], generate_product_script.DEFAULT_BASE_URL)
+            self.assertEqual(defaults["script_generation_model"], generate_product_script.DEFAULT_MODEL)
+            self.assertEqual(shared.stat().st_mode & 0o777, 0o600)
 
     def test_legacy_local_configs_migrate_to_runtime_directory(self):
         with tempfile.TemporaryDirectory() as temp_dir:

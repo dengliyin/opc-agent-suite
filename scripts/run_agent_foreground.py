@@ -39,6 +39,8 @@ def main() -> None:
         env["PLAYWRIGHT_CHROMIUM_EXECUTABLE"] = str(chrome_path)
 
     command = [str(part) for part in service["command"]]
+    if service_id == "finished":
+        command[0] = sys.executable
     cwd = Path(service.get("launch_cwd", service["cwd"]))
     os.chdir(cwd)
     os.execvpe(command[0], command, env)

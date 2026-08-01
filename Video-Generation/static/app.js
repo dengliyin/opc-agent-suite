@@ -206,10 +206,11 @@ function renderCatalog() {
   const summary = state.catalog?.summary;
   if (summary) {
     const exported = Number(summary.exported_scripts || 0);
-    const complete = Number(summary.complete_scripts || 0);
-    const exportedText = exported ? ` · 已导出 ${exported}` : "";
+    const videoScripts = Number(summary.video_scripts || 0);
+    const fullModeCompleted = Number(summary.full_mode_completed_scripts || summary.complete_scripts || 0);
+    const cleanedExported = Number(summary.cleaned_exported_scripts || 0);
     const modeText = state.showArchived ? "归档" : "任务";
-    $("#summaryLine").textContent = `${summary.products} 产品 · ${summary.scripts} 脚本 · ${summary.segments} 片段 · 完整 ${complete}${exportedText} · ${modeText}已选 ${state.selectedScriptPaths.size}`;
+    $("#summaryLine").textContent = `${summary.products} 产品 · ${summary.scripts} 脚本 · ${summary.segments} 片段 · 有视频 ${videoScripts} · 完整模式完成 ${fullModeCompleted} · 已导出 ${exported} · 已导出但视频已清理 ${cleanedExported} · ${modeText}已选 ${state.selectedScriptPaths.size}`;
   }
 
   const list = $("#scriptList");
@@ -346,7 +347,7 @@ function renderScriptCard(script, scripts, runningContexts, scriptStatuses) {
   const feedback = feedbackForScript(script, scriptStatuses);
   const runningBadge = running ? `<span class="chip running-badge">${escapeHtml(currentContextLabel(runningContext))}</span>` : "";
   const feedbackBadge = feedback ? renderScriptFeedbackBadge(feedback) : "";
-  const completeBadge = complete ? `<span class="chip ok">完整</span>` : "";
+  const completeBadge = complete ? `<span class="chip ok">完整模式完成</span>` : script.has_video ? `<span class="chip ok">有视频</span>` : "";
   const exportedBadge = exported ? `<span class="chip exported-chip">已导出</span>` : "";
   const archiveStatusBadge = exported && script.media_cleaned
     ? `<span class="chip warn">已清理</span>`
@@ -1029,6 +1030,7 @@ function selectedScript() {
 }
 
 function isScriptComplete(script) {
+  if (script?.full_mode_complete !== undefined) return Boolean(script.full_mode_complete);
   if (script?.complete !== undefined) return Boolean(script.complete);
   const segments = script?.segments || [];
   return Boolean(segments.length) && segments.every((segment) => segment.character_exists && segment.storyboard_exists && segment.video_exists);

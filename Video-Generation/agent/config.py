@@ -205,6 +205,11 @@ def load_settings(provider: str = "omni") -> Settings:
     if provider == "grok":
         script_root = Path(os.getenv("GROK_SCRIPT_ROOT", str(DEFAULT_GROK_SCRIPT_ROOT))).expanduser()
         video_output_root = Path(os.getenv("GROK_VIDEO_OUTPUT_ROOT", str(DEFAULT_GROK_VIDEO_OUTPUT_ROOT)))
+    resolved_video_output_root = (
+        Path(os.getenv("VIDEO_OUTPUT_ROOT", str(video_output_root))).expanduser()
+        if provider == "omni"
+        else video_output_root.expanduser()
+    )
     provider_labels = {"omni": "Omni", "grok": "Grok"}
     provider_prefixes = {"omni": "OMNI", "grok": "GROK"}
     prefix = provider_prefixes[provider]
@@ -246,11 +251,12 @@ def load_settings(provider: str = "omni") -> Settings:
         overwrite=_env_bool("OVERWRITE", False),
         script_root=script_root,
         reference_root=Path(os.getenv("REFERENCE_ROOT", str(DEFAULT_REFERENCE_ROOT))).expanduser(),
-        video_output_root=Path(os.getenv("VIDEO_OUTPUT_ROOT", str(video_output_root))).expanduser()
-        if provider == "omni"
-        else video_output_root.expanduser(),
+        video_output_root=resolved_video_output_root,
         completed_root=Path(
-            os.getenv("VIDEO_ASSEMBLY_PENDING_ROOT", str(DEFAULT_COMPLETED_SCRIPT_ROOT))
+            os.getenv(
+                "VIDEO_ASSEMBLY_PENDING_ROOT",
+                str(resolved_video_output_root.parent.parent / "06合成工作区"),
+            )
         ).expanduser(),
         script_concurrency=_env_int(f"{prefix}_SCRIPT_CONCURRENCY", _env_int("SCRIPT_CONCURRENCY", 3)),
         character_api_model=os.getenv(f"{prefix}_CHARACTER_API_MODEL", default_character_api_model),
