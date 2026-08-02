@@ -15,6 +15,11 @@
   <true/>
   <key>ProcessType</key>
   <string>Background</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>OPC_ENV_FILE</key>
+    <string>__ENV_FILE__</string>
+  </dict>
   <key>ThrottleInterval</key>
   <integer>5</integer>
   <key>StandardOutPath</key>

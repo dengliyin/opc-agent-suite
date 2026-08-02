@@ -6,7 +6,7 @@ import os
 import sys
 from pathlib import Path
 
-from run_console_foreground import ROOT_DIR, ensure_storage_layout, load_env
+from run_console_foreground import DEFAULT_ENV_FILE, ROOT_DIR, ensure_storage_layout, load_env
 
 
 def load_console_app():
@@ -23,7 +23,7 @@ def main() -> None:
     if len(sys.argv) != 2:
         raise SystemExit("用法：run_agent_foreground.py <service-id>")
 
-    env_file = Path(os.environ.get("OPC_ENV_FILE", ROOT_DIR / ".env"))
+    env_file = Path(os.environ.get("OPC_ENV_FILE", DEFAULT_ENV_FILE)).expanduser()
     load_env(env_file)
     ensure_storage_layout()
     app = load_console_app()

@@ -51,7 +51,7 @@ HOST = "127.0.0.1"
 DEFAULT_PORT = 10003
 IMPORTED_INPUTS_DIR = RUNTIME_CONFIG_DIR / "imported_inputs"
 VAULT_ROOT = Path(
-    os.environ.get("OPC_VAULT_ROOT", str(Path.home() / "Documents" / "Obsidian Vault"))
+    os.environ.get("OPC_VAULT_ROOT") or "/__OPC_VAULT_ROOT_NOT_CONFIGURED__"
 ).expanduser()
 PRODUCT_INFO_SOURCE_DIR = VAULT_ROOT / "wiki" / "产品" / "产品信息"
 HYBRID_WORKFLOW_ROOT = VAULT_ROOT / "wiki" / "视频" / "AI实拍混剪"
@@ -108,8 +108,11 @@ def resolve_root_path(value: str) -> Path:
 
 
 def read_text(path: Path) -> str:
-    if path.exists() and path.is_file():
-        return path.read_text(encoding="utf-8", errors="ignore")
+    try:
+        if path.exists() and path.is_file():
+            return path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        pass
     return ""
 
 

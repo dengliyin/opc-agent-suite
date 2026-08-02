@@ -81,17 +81,12 @@ class MixerPaths:
 
 def detect_vault_root() -> Path:
     configured = os.environ.get("OPC_VAULT_ROOT", "").strip()
-    candidates = [
-        Path(configured).expanduser() if configured else None,
-        Path("/Volumes/seafer/Obsidian Vault"),
-        Path.home() / "Documents/Obsidian Vault",
-    ]
-    for candidate in candidates:
-        if candidate and (candidate / "wiki/视频/AI实拍混剪").is_dir():
-            return candidate.resolve()
-    if configured:
-        return Path(configured).expanduser().resolve()
-    return (Path.home() / "Documents/Obsidian Vault").resolve()
+    if not configured:
+        raise RuntimeError("OPC_VAULT_ROOT 未配置，拒绝回退到旧资料库")
+    vault = Path(configured).expanduser().resolve()
+    if not vault.is_dir():
+        raise RuntimeError(f"OPC_VAULT_ROOT 不存在或外接盘未挂载：{vault}")
+    return vault
 
 
 def mixer_paths() -> MixerPaths:

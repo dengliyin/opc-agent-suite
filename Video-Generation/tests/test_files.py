@@ -13,6 +13,8 @@ from agent.files import (
     script_to_dict,
     storyboard_image_path,
     video_output_path,
+    fragment_delete_marker_path,
+    suppress_script,
 )
 from agent.exporter import (
     dated_export_root,
@@ -68,6 +70,36 @@ def test_reference_matching_and_output_names(tmp_path: Path) -> None:
     assert character_image_path(md_path, 2, grok_settings.artifact_prefix).name == "demo-片段2-人物图.png"
     assert storyboard_image_path(md_path, 2, grok_settings.artifact_prefix).name == "demo-片段2-故事版.png"
     assert video_output_path(grok_settings, "SIMC染发棒", md_path, 2).name == "demo-片段2-grok.mp4"
+
+
+def test_suppressed_script_stays_for_upstream_but_disappears_until_rewritten(tmp_path: Path) -> None:
+    settings = settings_for(tmp_path)
+    product_dir = settings.script_root / "P1"
+    product_dir.mkdir(parents=True)
+    settings.reference_root.mkdir(parents=True)
+    (settings.reference_root / "P1.png").write_bytes(b"ref")
+    md_path = product_dir / "demo.md"
+    md_path.write_text(
+        "# Segment 1：00:00 - 00:01\n"
+        "## A. 人物造型参考板提示词\nA\n"
+        "## B. 故事板图片提示词\nB\n",
+        encoding="utf-8",
+    )
+
+    suppress_script(md_path)
+
+    assert md_path.exists()
+    assert fragment_delete_marker_path(md_path).exists()
+    assert scan_scripts(settings) == []
+
+    md_path.write_text(
+        "# Segment 1：00:00 - 00:02\n"
+        "## A. 人物造型参考板提示词\nA2\n"
+        "## B. 故事板图片提示词\nB2\n",
+        encoding="utf-8",
+    )
+
+    assert [script.md_path for script in scan_scripts(settings)] == [md_path]
 
 
 def test_reference_matching_returns_all_product_skus(tmp_path: Path) -> None:

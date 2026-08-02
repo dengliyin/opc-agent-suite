@@ -25,7 +25,7 @@ VENDOR_ROOT = APP_ROOT / "vendor"
 CAPTION_TOOL_ROOT = VENDOR_ROOT / "tiktok-karaoke-captions"
 CAPTION_TOOL_PATH = CAPTION_TOOL_ROOT / "caption.py"
 VAULT_ROOT = Path(
-    os.environ.get("OPC_VAULT_ROOT", str(Path.home() / "Documents" / "Obsidian Vault"))
+    os.environ.get("OPC_VAULT_ROOT") or "/__OPC_VAULT_ROOT_NOT_CONFIGURED__"
 ).expanduser()
 PENDING_ROOT = Path(
     os.environ.get(

@@ -2,20 +2,28 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENV_FILE="${OPC_ENV_FILE:-${ROOT_DIR}/.env}"
+CONFIG_DIR="$HOME/Library/Application Support/OPC-Agent-Suite"
+ENV_FILE="${OPC_ENV_FILE:-$CONFIG_DIR/.env}"
+RUNTIME_ROOT="${OPC_SERVICE_RUNTIME_ROOT:-$CONFIG_DIR/Service-Runtime}"
 LABEL="com.kesai.opc-console"
 DOMAIN="gui/$(id -u)"
 PLIST_DIR="$HOME/Library/LaunchAgents"
 PLIST_PATH="$PLIST_DIR/$LABEL.plist"
 TEMPLATE_PATH="$ROOT_DIR/scripts/launchd/$LABEL.plist.template"
-PYTHON_PATH="$ROOT_DIR/OPC-Console/.venv/bin/python"
-LAUNCHER_PATH="$ROOT_DIR/scripts/run_console_foreground.py"
-LOG_DIR="$ROOT_DIR/.runtime/logs"
+PYTHON_PATH="$RUNTIME_ROOT/OPC-Console/.venv/bin/python"
+LAUNCHER_PATH="$RUNTIME_ROOT/scripts/run_console_foreground.py"
+LOG_DIR="$HOME/Library/Logs/OPC-Agent-Suite"
 
+mkdir -p "$CONFIG_DIR"
+if [ ! -f "$ENV_FILE" ] && [ -f "$ROOT_DIR/.env" ]; then
+  cp "$ROOT_DIR/.env" "$ENV_FILE"
+  chmod 600 "$ENV_FILE"
+fi
 if [ ! -f "$ENV_FILE" ]; then
   echo "Missing $ENV_FILE. Run scripts/bootstrap_macos.sh first." >&2
   exit 1
 fi
+"$ROOT_DIR/scripts/stage_service_runtime.sh" >/dev/null
 if [ ! -x "$PYTHON_PATH" ]; then
   echo "Missing OPC-Console virtual environment. Run scripts/bootstrap_macos.sh first." >&2
   exit 1
@@ -41,7 +49,7 @@ launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
 for pid in $(lsof -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true); do
   command_line="$(ps -p "$pid" -o command= 2>/dev/null || true)"
   process_cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)"
-  if [[ "$command_line" == *"$ROOT_DIR"* || "$process_cwd" == "$ROOT_DIR" || "$process_cwd" == "$ROOT_DIR/"* ]]; then
+  if [[ "$command_line" == *"$ROOT_DIR"* || "$command_line" == *"$RUNTIME_ROOT"* || "$process_cwd" == "$ROOT_DIR" || "$process_cwd" == "$ROOT_DIR/"* || "$process_cwd" == "$RUNTIME_ROOT" || "$process_cwd" == "$RUNTIME_ROOT/"* ]]; then
     kill "$pid" 2>/dev/null || true
   else
     echo "Port $PORT is occupied by an unrelated process: $command_line" >&2
@@ -59,10 +67,12 @@ python_escaped="$(sed_escape "$PYTHON_PATH")"
 launcher_escaped="$(sed_escape "$LAUNCHER_PATH")"
 stdout_escaped="$(sed_escape "$LOG_DIR/console-launchd.out.log")"
 stderr_escaped="$(sed_escape "$LOG_DIR/console-launchd.err.log")"
+env_file_escaped="$(sed_escape "$ENV_FILE")"
 
 sed \
   -e "s|__PYTHON__|$python_escaped|g" \
   -e "s|__LAUNCHER__|$launcher_escaped|g" \
+  -e "s|__ENV_FILE__|$env_file_escaped|g" \
   -e "s|__STDOUT__|$stdout_escaped|g" \
   -e "s|__STDERR__|$stderr_escaped|g" \
   "$TEMPLATE_PATH" > "$PLIST_PATH"

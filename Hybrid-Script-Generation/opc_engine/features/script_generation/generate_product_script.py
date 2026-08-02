@@ -49,7 +49,7 @@ SCRIPT_INPUTS_PATH = Path(os.environ.get("SCRIPT_GENERATION_INPUTS_PATH", str(LO
 SHARED_MODEL_SETTINGS_PATH = CONFIG_DIR / "model_defaults.json"
 LOCAL_MODEL_SETTINGS_PATH = RUNTIME_CONFIG_DIR / "model_settings.json"
 VAULT_ROOT = Path(
-    os.environ.get("OPC_VAULT_ROOT", str(Path.home() / "Documents" / "Obsidian Vault"))
+    os.environ.get("OPC_VAULT_ROOT") or "/__OPC_VAULT_ROOT_NOT_CONFIGURED__"
 ).expanduser()
 SCRIPT_OUTPUT_SOURCE_ROOT = Path(
     os.environ.get(
@@ -467,16 +467,19 @@ def get_content_knowledge_base(config):
         or config.get("video_teardown_knowledge_base_path")
     )
     knowledge_path = resolve_content_knowledge_path(configured)
-    if knowledge_path.is_dir():
-        matched_path = product_mistake_book_file(config, knowledge_path)
-        if not matched_path:
-            return ""
-        text = read_text_file(matched_path).strip()
-        if not text:
-            return ""
-        return f"# 错题本\n\n来源文件：{matched_path.as_posix()}\n\n---\n\n## {matched_path.name}\n\n{text}"
-    if knowledge_path.exists():
-        return read_text_file(knowledge_path)
+    try:
+        if knowledge_path.is_dir():
+            matched_path = product_mistake_book_file(config, knowledge_path)
+            if not matched_path:
+                return ""
+            text = read_text_file(matched_path).strip()
+            if not text:
+                return ""
+            return f"# 错题本\n\n来源文件：{matched_path.as_posix()}\n\n---\n\n## {matched_path.name}\n\n{text}"
+        if knowledge_path.exists():
+            return read_text_file(knowledge_path)
+    except OSError:
+        return ""
     return ""
 
 

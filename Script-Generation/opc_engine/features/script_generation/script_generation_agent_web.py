@@ -54,7 +54,7 @@ HOST = "127.0.0.1"
 DEFAULT_PORT = 9993
 IMPORTED_INPUTS_DIR = RUNTIME_CONFIG_DIR / "imported_inputs"
 VAULT_ROOT = Path(
-    os.environ.get("OPC_VAULT_ROOT", str(Path.home() / "Documents" / "Obsidian Vault"))
+    os.environ.get("OPC_VAULT_ROOT") or "/__OPC_VAULT_ROOT_NOT_CONFIGURED__"
 ).expanduser()
 PRODUCT_INFO_SOURCE_DIR = VAULT_ROOT / "wiki" / "产品" / "产品信息"
 HOT_SCRIPT_SOURCE_ROOT = Path(

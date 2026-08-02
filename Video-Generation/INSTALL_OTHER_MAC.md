@@ -17,7 +17,7 @@
 
 ```bash
 chmod +x scripts/install_mac.sh
-./scripts/install_mac.sh "$HOME/Documents/Obsidian Vault"
+./scripts/install_mac.sh "/path/to/Obsidian Vault"
 ```
 
 如果你想把任务包放到别的位置，把第二行里的路径换成你的数据根目录即可。

@@ -44,17 +44,10 @@ def test_status_record_uses_preloaded_log_without_reading_directory(monkeypatch,
 
 
 class HybridAgentConfigurationTests(unittest.TestCase):
-    def test_vault_root_is_detected_when_process_environment_is_missing(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            vault_root = Path(temp_dir) / "Obsidian Vault"
-            (vault_root / "wiki/视频/AI实拍混剪").mkdir(parents=True)
-            with patch.dict(agent.os.environ, {}, clear=True), patch.object(
-                agent,
-                "VAULT_ROOT_CANDIDATES",
-                (vault_root,),
-            ):
+    def test_vault_root_is_required_when_process_environment_is_missing(self) -> None:
+        with patch.dict(agent.os.environ, {}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "OPC_VAULT_ROOT 未配置"):
                 agent.ensure_vault_root_environment()
-                self.assertEqual(agent.os.environ["OPC_VAULT_ROOT"], str(vault_root))
 
     def test_hybrid_agent_has_independent_identity_and_default_paths(self) -> None:
         settings_path = (

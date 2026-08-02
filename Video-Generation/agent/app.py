@@ -16,7 +16,7 @@ from .exporter import (
     restore_exported_scripts,
     restore_hybrid_deliveries,
 )
-from .files import character_image_path, scan_scripts, script_to_dict, storyboard_image_path, summarize_catalog, video_output_path
+from .files import character_image_path, scan_scripts, script_to_dict, storyboard_image_path, summarize_catalog, suppress_script, video_output_path
 from .product_lock import storyboard_meta_path
 from .tasks import JobManager, VALID_STAGES
 
@@ -223,6 +223,7 @@ def _config_payload(current: Settings) -> Dict[str, Any]:
         "script_root": str(current.script_root),
         "reference_root": str(current.reference_root),
         "video_output_root": str(current.video_output_root),
+        "preserve_adapted_script_on_delete": True,
         "workflow": current.workflow,
     }
 
@@ -696,6 +697,21 @@ def _provider_has_active_job(provider: str) -> bool:
     return any(job["provider"] == provider for job in _active_jobs())
 
 
+def _job_locked_script_paths(job: Dict[str, Any]) -> tuple[bool, set[Path]]:
+    statuses = job.get("script_statuses") or {}
+    if statuses:
+        locked = {
+            Path(str(path)).expanduser().resolve()
+            for path, status in statuses.items()
+            if str((status or {}).get("status") or "").lower() in {"pending", "queued", "running"}
+        }
+        return False, locked
+    raw_job_paths = job.get("script_paths")
+    if raw_job_paths is None:
+        return True, set()
+    return False, {Path(path).expanduser().resolve() for path in raw_job_paths if path}
+
+
 def _reload_runtime_settings() -> None:
     global omni_settings, grok_settings, hybrid_omni_settings, settings, job_managers, job_manager
     omni_settings = load_settings("omni")
@@ -741,10 +757,9 @@ def _export_completed(provider: str, request: ExportRequest) -> Dict[str, Any]:
     for job in _manager_for(provider).list_jobs():
         if job.get("status") not in {"queued", "running"}:
             continue
-        raw_job_paths = job.get("script_paths")
-        if raw_job_paths is None:
+        locks_all, active_paths = _job_locked_script_paths(job)
+        if locks_all:
             raise HTTPException(status_code=409, detail="当前任务会处理全部脚本，暂不能导出")
-        active_paths = {Path(path).expanduser().resolve() for path in raw_job_paths if path}
         if selected_paths & active_paths:
             raise HTTPException(status_code=409, detail="所选脚本正在运行或排队，请等待任务完成或先取消任务")
     current = _settings_for(provider)
@@ -779,10 +794,9 @@ def _delete_scripts(provider: str, request: ScriptDeleteRequest) -> Dict[str, An
     for job in _manager_for(provider).list_jobs():
         if job.get("status") not in {"queued", "running"}:
             continue
-        raw_job_paths = job.get("script_paths")
-        if raw_job_paths is None:
+        locks_all, active_paths = _job_locked_script_paths(job)
+        if locks_all:
             raise HTTPException(status_code=409, detail="当前任务会处理全部脚本，暂不能删除脚本")
-        active_paths = {Path(path).expanduser().resolve() for path in raw_job_paths if path}
         if selected_paths & active_paths:
             raise HTTPException(status_code=409, detail="所选脚本正在运行或排队，请等待任务完成或先取消任务")
 
@@ -798,7 +812,6 @@ def _delete_scripts(provider: str, request: ScriptDeleteRequest) -> Dict[str, An
     deletion_plan: List[Path] = []
     for script_path in sorted(selected_paths):
         script = scripts_by_path[script_path]
-        deletion_plan.append(script.md_path.resolve())
         for segment in script.segments:
             character_path = character_image_path(script.md_path, segment.index, current.artifact_prefix).resolve()
             storyboard_path = storyboard_image_path(script.md_path, segment.index, current.artifact_prefix).resolve()
@@ -819,9 +832,15 @@ def _delete_scripts(provider: str, request: ScriptDeleteRequest) -> Dict[str, An
             if target.exists() and target.is_file():
                 target.unlink()
                 deleted.append(str(target))
+        suppressed = [str(suppress_script(scripts_by_path[path].md_path)) for path in sorted(selected_paths)]
     except Exception as exc:
         raise HTTPException(status_code=500, detail=_safe(f"删除脚本及附属文件失败：{exc}"))
-    return {"scripts_deleted": len(selected_paths), "files_deleted": len(deleted), "deleted": deleted}
+    return {
+        "scripts_deleted": len(selected_paths),
+        "files_deleted": len(deleted),
+        "deleted": deleted,
+        "suppressed": suppressed,
+    }
 
 
 def _list_jobs(provider: str) -> Dict[str, Any]:

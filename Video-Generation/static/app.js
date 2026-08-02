@@ -1194,6 +1194,10 @@ async function restoreSelectedArchived() {
 }
 
 async function deleteSelectedScripts() {
+  if (!state.config?.preserve_adapted_script_on_delete) {
+    alert("删除规则更新将在当前任务结束、服务重启后生效；为避免丢失上游适配记录，现在暂不能删除脚本。");
+    return;
+  }
   const scripts = state.catalog?.scripts || [];
   const scriptByPath = new Map(scripts.map((script) => [script.md_path, script]));
   const deletePaths = Array.from(state.selectedScriptPaths).filter((path) => {
@@ -1210,7 +1214,7 @@ async function deleteSelectedScripts() {
     .join("\n");
   const remaining = deletePaths.length > 8 ? `\n• 另有 ${deletePaths.length - 8} 个脚本` : "";
   const ok = confirm(
-    `确定永久删除以下 ${deletePaths.length} 个脚本吗？\n\n${names}${remaining}\n\n将同步删除这些脚本的人物图、故事版图、视频和产物元数据；不会删除产品参考图。此操作无法撤销。`,
+    `确定从片段产出列表移除以下 ${deletePaths.length} 个脚本吗？\n\n${names}${remaining}\n\n将同步删除人物图、故事版图、视频和产物元数据；会保留适配脚本作为上游“已适配”记录，不会删除产品参考图。`,
   );
   if (!ok) return;
   const button = $("#deleteSelectedScriptsButton");
@@ -1220,7 +1224,7 @@ async function deleteSelectedScripts() {
       method: "DELETE",
       body: JSON.stringify({ script_paths: deletePaths }),
     });
-    alert(`删除完成：${result.scripts_deleted || 0} 个脚本，共 ${result.files_deleted || 0} 个文件`);
+    alert(`移除完成：${result.scripts_deleted || 0} 个脚本，共删除 ${result.files_deleted || 0} 个附属文件；上游适配记录已保留`);
     state.selectedScriptPaths.clear();
     await refreshAll();
   } catch (error) {

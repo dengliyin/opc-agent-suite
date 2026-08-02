@@ -12,6 +12,13 @@ from opc_engine.features.script_generation.script_generation_agent_web import HT
 
 
 class ScriptGenerationAgentWebTests(unittest.TestCase):
+    def test_unreadable_optional_file_is_treated_as_empty(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "optional.md"
+            path.write_text("content", encoding="utf-8")
+            with patch.object(Path, "read_text", side_effect=PermissionError("denied")):
+                self.assertEqual(script_generation_agent_web.read_text(path), "")
+
     def test_reference_status_uses_markdown_stems_across_target_countries(self):
         reference = Path("/tmp/混剪-钩子/product/MX-author-1234567890123456789-example.md")
         stems = (

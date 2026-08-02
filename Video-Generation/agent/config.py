@@ -19,7 +19,7 @@ load_dotenv(SETTINGS_PATH, override=True)
 
 
 DEFAULT_VAULT_ROOT = Path(
-    os.environ.get("OPC_VAULT_ROOT", str(Path.home() / "Documents" / "Obsidian Vault"))
+    os.environ.get("OPC_VAULT_ROOT") or "/__OPC_VAULT_ROOT_NOT_CONFIGURED__"
 ).expanduser()
 DEFAULT_SCRIPT_ROOT = DEFAULT_VAULT_ROOT / "wiki" / "视频" / "纯AI视频" / "04适配脚本" / "omni"
 DEFAULT_GROK_SCRIPT_ROOT = DEFAULT_VAULT_ROOT / "wiki" / "视频" / "纯AI视频" / "04适配脚本" / "grok"
@@ -295,6 +295,10 @@ def load_hybrid_omni_settings() -> Settings:
     ai_clip_root = Path(
         os.getenv("HYBRID_AI_CLIP_ROOT", str(DEFAULT_HYBRID_AI_CLIP_ROOT))
     ).expanduser()
+    video_output_root = Path(
+        os.getenv("HYBRID_OMNI_VIDEO_OUTPUT_ROOT", str(ai_clip_root / "omni"))
+    ).expanduser()
+    hybrid_root = video_output_root.parent.parent
     return replace(
         base,
         provider_label="混剪 Omni",
@@ -302,13 +306,8 @@ def load_hybrid_omni_settings() -> Settings:
         script_root=Path(
             os.getenv("HYBRID_OMNI_SCRIPT_ROOT", str(DEFAULT_HYBRID_OMNI_SCRIPT_ROOT))
         ).expanduser(),
-        video_output_root=Path(
-            os.getenv("HYBRID_OMNI_VIDEO_OUTPUT_ROOT", str(ai_clip_root / "omni"))
-        ).expanduser(),
-        completed_root=Path(
-            os.getenv("HYBRID_MIX_WORK_ROOT", str(DEFAULT_HYBRID_MIX_WORK_ROOT))
-        ).expanduser()
-        / "片段产出归档",
+        video_output_root=video_output_root,
+        completed_root=hybrid_root / "08混剪工作区" / "片段产出归档",
         workflow="hybrid_omni",
     )
 

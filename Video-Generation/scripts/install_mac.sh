@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-OPC_VAULT_ROOT="${1:-${OPC_VAULT_ROOT:-$HOME/Documents/Obsidian Vault}}"
+OPC_VAULT_ROOT="${1:-${OPC_VAULT_ROOT:?OPC_VAULT_ROOT must be configured}}"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "未检测到 Docker。请先安装并启动 Docker Desktop for Mac。"

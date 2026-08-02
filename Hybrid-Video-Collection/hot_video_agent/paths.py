@@ -10,7 +10,7 @@ from .config import product_slug, safe_name
 
 
 VAULT_ROOT = Path(
-    os.environ.get("OPC_VAULT_ROOT", str(Path.home() / "Documents" / "Obsidian Vault"))
+    os.environ.get("OPC_VAULT_ROOT") or "/__OPC_VAULT_ROOT_NOT_CONFIGURED__"
 ).expanduser()
 HOT_VIDEO_LIBRARY_ROOT = VAULT_ROOT / "wiki" / "视频" / "AI实拍混剪" / "01参考视频"
 HYBRID_MATERIAL_TYPES = {"混剪-钩子", "混剪-CTA"}

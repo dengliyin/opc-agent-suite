@@ -12,6 +12,17 @@ from opc_engine.features.script_generation import generate_product_script
 
 
 class GenerateProductScriptTests(unittest.TestCase):
+    def test_unreadable_mistake_book_is_treated_as_missing(self):
+        knowledge_dir = Path("/tmp/mistake-books")
+        mistake_book = knowledge_dir / "product.md"
+        with (
+            patch.object(generate_product_script, "resolve_content_knowledge_path", return_value=knowledge_dir),
+            patch.object(Path, "is_dir", return_value=True),
+            patch.object(generate_product_script, "product_mistake_book_file", return_value=mistake_book),
+            patch.object(generate_product_script, "read_text_file", side_effect=PermissionError("denied")),
+        ):
+            self.assertEqual(generate_product_script.get_content_knowledge_base({}), "")
+
     def test_preserved_duration_restores_each_reference_shot_timecode(self):
         reference = """镜头 1 (00:00.000 - 00:01.000):
 

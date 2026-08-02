@@ -217,7 +217,7 @@ class ConsoleBoundaryTests(unittest.TestCase):
         self.assertNotIn("RunAtLoad", template)
         self.assertNotIn("KeepAlive", template)
 
-    def test_agent_installer_uses_each_agents_virtual_environment(self):
+    def test_agent_installer_uses_each_agents_staged_virtual_environment(self):
         installer = (WORKSPACE_ROOT / "scripts" / "install_agent_launchagents.sh").read_text(encoding="utf-8")
         for directory in (
             "Video-Collection",
@@ -236,7 +236,7 @@ class ConsoleBoundaryTests(unittest.TestCase):
             "Hybrid-Audio-Generation",
         ):
             self.assertIn(f'"{directory}"', installer)
-        self.assertIn('python_path="$ROOT_DIR/$agent_dir/.venv/bin/python"', installer)
+        self.assertIn('python_path="$RUNTIME_ROOT/$agent_dir/.venv/bin/python"', installer)
 
     def test_install_and_manual_start_register_agent_launchagents(self):
         installer_call = '"$ROOT_DIR/scripts/install_agent_launchagents.sh"'

@@ -41,13 +41,13 @@ cd opc-agent-suite
 cp .env.example .env
 ```
 
-编辑 `.env`，至少确认：
+编辑仓库 `.env`，至少确认以下初始值。首次安装后，实际运行配置统一保存到 `~/Library/Application Support/OPC-Agent-Suite/.env`：
 
 ```bash
-OPC_VAULT_ROOT="$HOME/Documents/Obsidian Vault"
+OPC_VAULT_ROOT="/path/to/Obsidian Vault"
 ```
 
-仓库内的 `storage-template/` 只保存空目录结构，不包含任何业务数据。首次安装时会建立这些目录；之后每次启动控制台或任一 Agent，也会根据本机 `.env` 中的 `OPC_VAULT_ROOT` 自动补齐新增目录，只创建缺失目录，不覆盖已有文件。
+仓库内的 `storage-template/` 只保存空目录结构，不包含任何业务数据。首次安装时会建立这些目录；之后每次启动控制台或任一 Agent，也会根据统一运行配置中的 `OPC_VAULT_ROOT` 自动补齐新增目录，只创建缺失目录，不覆盖已有文件。
 
 需要主动补建输入/输出目录时，也可以单独执行：
 
@@ -82,7 +82,9 @@ export OPC_VIDEO_ASSEMBLY_RUNTIME_SOURCE="/path/to/Video-Assembly-hd/runtime"
 ```
 
 8888 的“启动”按钮通过 `launchctl kickstart -k` 恢复对应 Agent，并持续检测最多 30 秒，健康检查成功后才显示“已启动”。Agent 不再是控制台子进程，因此重启 8888 不会带走已运行的 Agent；未点击启动的 Agent 也不会在登录时自动运行。
-LaunchAgent 的标准输出和错误日志位于 `~/Library/Logs/OPC-Agent-Suite/`，避免 macOS 阻止 launchd 在 `Documents` 下创建日志文件。
+安装器会把控制台和 Agent 的运行副本同步到 `~/Library/Application Support/OPC-Agent-Suite/Service-Runtime/`。LaunchAgent 只从这里读取程序和 Python 环境，避免 macOS 间歇性阻止后台进程读取 `Documents`。业务输入输出仍全部指向 `OPC_VAULT_ROOT`；每个 Agent 在运行副本内产生的本机配置和状态会在后续更新时保留。
+
+LaunchAgent 的标准输出和错误日志位于 `~/Library/Logs/OPC-Agent-Suite/`。
 
 取消常驻：
 
@@ -91,7 +93,7 @@ LaunchAgent 的标准输出和错误日志位于 `~/Library/Logs/OPC-Agent-Suite
 ./scripts/uninstall_agent_launchagents.sh
 ```
 
-LaunchAgent 直接通过控制台的 Python 环境启动，不依赖 `/bin/bash` 读取 `Documents` 中的脚本。
+LaunchAgent 直接通过各自运行副本中的 Python 环境启动，不依赖 `/bin/bash`，也不读取 `Documents` 中的程序文件。
 
 检查服务：
 
@@ -138,7 +140,7 @@ OPC_SKIP_PLAYWRIGHT_BROWSER_INSTALL=1 ./scripts/bootstrap_macos.sh
 - 各 Agent 的 `.venv`。
 - `Video-Assembly-hd/runtime`。该目录约 832 MB，并包含超过 GitHub 单文件限制的二进制。
 
-Vault 根目录统一由 `OPC_VAULT_ROOT` 提供。代码中不再依赖固定用户名路径。
+Vault 根目录统一由 `~/Library/Application Support/OPC-Agent-Suite/.env` 中的 `OPC_VAULT_ROOT` 提供。代码中不再依赖固定用户名路径，也不会在配置缺失时猜测旧目录。
 
 模型配置统一规则：视频拆解使用 `Script-Analysis/config/settings.json`，脚本产出使用 `Script-Generation/opc_engine/features/script_generation/config/model_defaults.json`，脚本适配和产品脚本改写使用各自的 `agent_settings.json`，视频生成使用 `Video-Generation/agent_settings.env`。这些文件随 Git 同步；另一台电脑只需填写各 Agent 的 API Key 和本机路径。
 
