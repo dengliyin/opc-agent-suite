@@ -50,7 +50,7 @@ SCRIPT_INPUTS_PATH = Path(os.environ.get("SCRIPT_GENERATION_INPUTS_PATH", str(LO
 SHARED_MODEL_SETTINGS_PATH = RUNTIME_CONFIG_DIR / "model_defaults.json"
 LOCAL_MODEL_SETTINGS_PATH = RUNTIME_CONFIG_DIR / "model_settings.json"
 VAULT_ROOT = Path(
-    os.environ.get("OPC_VAULT_ROOT", str(Path.home() / "Documents" / "Obsidian Vault"))
+    os.environ.get("OPC_VAULT_ROOT") or "/__OPC_VAULT_ROOT_NOT_CONFIGURED__"
 ).expanduser()
 SCRIPT_OUTPUT_SOURCE_ROOT = Path(
     os.environ.get(

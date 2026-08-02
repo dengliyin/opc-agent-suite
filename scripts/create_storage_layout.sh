@@ -12,7 +12,7 @@ if [ -f "$ENV_FILE" ]; then
   set +a
 fi
 
-VAULT_ROOT="${1:-${OPC_VAULT_ROOT:-$HOME/Documents/Obsidian Vault}}"
+VAULT_ROOT="${1:-${OPC_VAULT_ROOT:?OPC_VAULT_ROOT must be configured}}"
 
 if [ ! -d "$TEMPLATE_ROOT" ]; then
   echo "Storage template not found: $TEMPLATE_ROOT" >&2

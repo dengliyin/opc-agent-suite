@@ -15,7 +15,7 @@ from agent.app import (
     _function_api_model_options,
 )
 from agent.config import Settings
-from agent.files import character_image_path, storyboard_image_path, video_output_path
+from agent.files import character_image_path, scan_scripts, storyboard_image_path, video_output_path
 from agent.product_lock import storyboard_meta_path
 
 
@@ -102,7 +102,7 @@ def create_script_with_assets(settings: Settings) -> tuple[Path, list[Path]]:
     return script, [character, storyboard, storyboard_meta_path(storyboard), video, storyboard_meta_path(video)]
 
 
-def test_delete_scripts_removes_script_assets_and_metadata_only(monkeypatch, tmp_path: Path) -> None:
+def test_delete_scripts_preserves_adapted_script_and_removes_fragment_assets(monkeypatch, tmp_path: Path) -> None:
     settings = settings_for(tmp_path)
     script, assets = create_script_with_assets(settings)
     reference = settings.reference_root / "P1.png"
@@ -116,9 +116,10 @@ def test_delete_scripts_removes_script_assets_and_metadata_only(monkeypatch, tmp
     result = _delete_scripts("omni", ScriptDeleteRequest(script_paths=[str(script)]))
 
     assert result["scripts_deleted"] == 1
-    assert result["files_deleted"] == 6
-    assert not script.exists()
+    assert result["files_deleted"] == 5
+    assert script.exists()
     assert all(not path.exists() for path in assets)
+    assert scan_scripts(settings) == []
     assert reference.exists()
     assert sibling.exists()
 
@@ -168,6 +169,32 @@ def test_export_rejects_selected_script_in_active_job(monkeypatch, tmp_path: Pat
 
     assert exc.value.status_code == 409
     assert "所选脚本正在运行或排队" in exc.value.detail
+
+
+def test_export_allows_script_already_done_in_running_batch(monkeypatch, tmp_path: Path) -> None:
+    settings = settings_for(tmp_path)
+    selected = settings.script_root / "P1" / "done.md"
+    manager = FakeManager(
+        [
+            {
+                "status": "running",
+                "script_paths": [str(selected)],
+                "script_statuses": {str(selected): {"status": "done"}},
+            }
+        ]
+    )
+    monkeypatch.setattr(app_module, "_settings_for", lambda _provider: settings)
+    monkeypatch.setattr(app_module, "_manager_for", lambda _provider: manager)
+    monkeypatch.setattr(app_module, "scan_scripts", lambda _settings: ["catalog"])
+    monkeypatch.setattr(
+        app_module,
+        "export_completed_scripts",
+        lambda _settings, scripts, paths: {"scripts": scripts, "paths": paths},
+    )
+
+    result = _export_completed("omni", ExportRequest(script_paths=[str(selected)]))
+
+    assert result == {"scripts": ["catalog"], "paths": [str(selected)]}
 
 
 def test_export_rejects_when_active_job_processes_all_scripts(monkeypatch, tmp_path: Path) -> None:

@@ -2,10 +2,16 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENV_FILE="${OPC_ENV_FILE:-${ROOT_DIR}/.env}"
+CONFIG_DIR="$HOME/Library/Application Support/OPC-Agent-Suite"
+ENV_FILE="${OPC_ENV_FILE:-$CONFIG_DIR/.env}"
 
+mkdir -p "$CONFIG_DIR"
 if [ ! -f "$ENV_FILE" ]; then
-  cp "$ROOT_DIR/.env.example" "$ENV_FILE"
+  if [ -f "$ROOT_DIR/.env" ]; then
+    cp "$ROOT_DIR/.env" "$ENV_FILE"
+  else
+    cp "$ROOT_DIR/.env.example" "$ENV_FILE"
+  fi
   echo "Created local configuration: $ENV_FILE"
 fi
 chmod 600 "$ENV_FILE"
@@ -16,7 +22,7 @@ source "$ENV_FILE"
 set +a
 
 if [ "${OPC_INITIALIZE_STORAGE_LAYOUT:-0}" = "1" ]; then
-  "$ROOT_DIR/scripts/create_storage_layout.sh" "${OPC_VAULT_ROOT:-$HOME/Documents/Obsidian Vault}"
+  "$ROOT_DIR/scripts/create_storage_layout.sh" "${OPC_VAULT_ROOT:?OPC_VAULT_ROOT must be configured}"
 fi
 
 find_python() {
@@ -108,5 +114,6 @@ else
 fi
 
 "$ROOT_DIR/scripts/verify_install.sh"
+"$ROOT_DIR/scripts/stage_service_runtime.sh" >/dev/null
 "$ROOT_DIR/scripts/install_agent_launchagents.sh"
 echo "Installation verified and Agent LaunchAgents installed. Start the console with: $ROOT_DIR/scripts/start_console.sh"

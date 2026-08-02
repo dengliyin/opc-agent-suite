@@ -9,7 +9,7 @@
 
 ```bash
 chmod +x scripts/install_mac.sh
-./scripts/install_mac.sh "$HOME/Documents/Obsidian Vault"
+./scripts/install_mac.sh "/path/to/Obsidian Vault"
 ```
 
 5. 打开 `http://127.0.0.1:9995`。

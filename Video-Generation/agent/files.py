@@ -22,6 +22,7 @@ from .product_lock import has_current_storyboard_product_lock
 
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp")
 EXPORT_MARKER_SUFFIX = ".exported.json"
+FRAGMENT_DELETE_MARKER_SUFFIX = ".fragment-deleted"
 
 
 @dataclass(frozen=True)
@@ -133,7 +134,8 @@ def _scan_script_root(settings: Settings, root: Path, exported: bool) -> List[Sc
         md_paths = [
             md_path
             for md_path in md_paths
-            if not _active_script_archived(settings, product_dir.name, md_path)
+            if not script_suppressed(md_path)
+            and not _active_script_archived(settings, product_dir.name, md_path)
         ]
         if not md_paths:
             continue
@@ -178,6 +180,26 @@ def _active_script_archived(settings: Settings, product_name: str, md_path: Path
         if archived_md.exists():
             return True
     return False
+
+
+def fragment_delete_marker_path(md_path: Path) -> Path:
+    return md_path.with_name(f"{md_path.name}{FRAGMENT_DELETE_MARKER_SUFFIX}")
+
+
+def suppress_script(md_path: Path) -> Path:
+    marker = fragment_delete_marker_path(md_path)
+    marker.write_text(str(md_path.stat().st_mtime_ns), encoding="utf-8")
+    return marker
+
+
+def script_suppressed(md_path: Path) -> bool:
+    marker = fragment_delete_marker_path(md_path)
+    if not marker.is_file():
+        return False
+    try:
+        return marker.read_text(encoding="utf-8").strip() == str(md_path.stat().st_mtime_ns)
+    except OSError:
+        return False
 
 
 def load_upstream_batch_map(settings: Settings) -> Dict[str, Dict[str, str]]:

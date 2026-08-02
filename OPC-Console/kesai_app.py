@@ -15,7 +15,12 @@ from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parent
 WORKSPACE_ROOT = ROOT.parent
-ENV_FILE = Path(os.environ.get("OPC_ENV_FILE", WORKSPACE_ROOT / ".env")).expanduser()
+ENV_FILE = Path(
+    os.environ.get(
+        "OPC_ENV_FILE",
+        Path.home() / "Library" / "Application Support" / "OPC-Agent-Suite" / ".env",
+    )
+).expanduser()
 HOST = os.environ.get("KESAI_APP_HOST", "127.0.0.1")
 PORT = int(os.environ.get("KESAI_APP_PORT", "8888"))
 
@@ -181,7 +186,7 @@ def build_services() -> dict[str, dict]:
 SERVICES = build_services()
 
 GLOBAL_PATH_FIELDS = (
-    ("OPC_VAULT_ROOT", "资料库根目录", "所有 Agent 共用的内容资料库根目录", "$HOME/Documents/Obsidian Vault"),
+    ("OPC_VAULT_ROOT", "资料库根目录", "所有 Agent 共用的内容资料库根目录", "/path/to/Obsidian Vault"),
     ("VIDEO_TEARDOWN_INPUT_ROOT", "来源素材", "9991 写入、9992 扫描的爆款视频目录", "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/01来源素材"),
     ("VIDEO_TEARDOWN_OUTPUT_ROOT", "参考脚本", "9992 与 9997 写入、9993 读取的参考脚本目录", "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/02参考脚本"),
     ("PRODUCT_SCRIPT_ROOT", "产品脚本", "9993 保存、9994 读取的正式产品脚本目录", "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/03产品脚本"),

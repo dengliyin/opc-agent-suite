@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlparse
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 VAULT_ROOT = Path(
-    os.environ.get("OPC_VAULT_ROOT", str(Path.home() / "Documents" / "Obsidian Vault"))
+    os.environ.get("OPC_VAULT_ROOT") or "/__OPC_VAULT_ROOT_NOT_CONFIGURED__"
 ).expanduser()
 WEB_ROOT = SKILL_ROOT / "web"
 CONFIG_DIR = SKILL_ROOT / "config"

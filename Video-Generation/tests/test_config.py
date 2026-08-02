@@ -71,6 +71,7 @@ def test_hybrid_omni_settings_use_independent_paths(tmp_path: Path, monkeypatch)
     output_root = tmp_path / "05AI片段" / "omni"
     monkeypatch.setenv("HYBRID_OMNI_SCRIPT_ROOT", str(script_root))
     monkeypatch.setenv("HYBRID_OMNI_VIDEO_OUTPUT_ROOT", str(output_root))
+    monkeypatch.setenv("HYBRID_MIX_WORK_ROOT", "/stale/other-computer/path")
 
     settings = config.load_hybrid_omni_settings()
 
@@ -79,3 +80,4 @@ def test_hybrid_omni_settings_use_independent_paths(tmp_path: Path, monkeypatch)
     assert settings.api_base_path == "/hybrid-omni/api"
     assert settings.script_root == script_root
     assert settings.video_output_root == output_root
+    assert settings.completed_script_root == tmp_path / "08混剪工作区" / "片段产出归档" / "omni"

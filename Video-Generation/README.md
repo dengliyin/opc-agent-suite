@@ -40,7 +40,7 @@ Docker Compose 会读取本地 `.env`，并把 `OPC_VAULT_ROOT` 挂载到容器�
 
 ```bash
 chmod +x scripts/install_mac.sh
-./scripts/install_mac.sh "$HOME/Documents/Obsidian Vault"
+./scripts/install_mac.sh "/path/to/Obsidian Vault"
 ```
 
 更详细说明见 `INSTALL_OTHER_MAC.md`，也可以把 `CODEX_INSTALL_PROMPT.md` 里的提示词发给另一台 Mac 上的 Codex。

@@ -8,6 +8,7 @@ from pathlib import Path
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
+DEFAULT_ENV_FILE = Path.home() / "Library" / "Application Support" / "OPC-Agent-Suite" / ".env"
 
 
 def load_env(path: Path) -> None:
@@ -44,7 +45,7 @@ def ensure_storage_layout() -> Path:
 
 
 def main() -> None:
-    env_file = Path(os.environ.get("OPC_ENV_FILE", ROOT_DIR / ".env"))
+    env_file = Path(os.environ.get("OPC_ENV_FILE", DEFAULT_ENV_FILE)).expanduser()
     load_env(env_file)
     ensure_storage_layout()
     os.environ["KESAI_APP_NO_OPEN"] = "1"

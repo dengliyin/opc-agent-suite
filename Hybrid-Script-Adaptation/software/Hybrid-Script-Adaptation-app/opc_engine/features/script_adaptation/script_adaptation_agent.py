@@ -24,10 +24,6 @@ AGENT_DIR = Path(__file__).resolve().parent
 AGENT_CONFIG_DIR = AGENT_DIR / "agent_config"
 AGENT_SETTINGS_PATH = AGENT_CONFIG_DIR / "agent_settings.json"
 AGENT_SECRETS_PATH = AGENT_CONFIG_DIR / "agent_secrets.local.json"
-VAULT_ROOT_CANDIDATES = (
-    Path("/Volumes/seafer/Obsidian Vault"),
-    Path.home() / "Documents/Obsidian Vault",
-)
 
 
 @dataclass(frozen=True)
@@ -196,12 +192,11 @@ def expand_environment(value: Any) -> Any:
 
 
 def ensure_vault_root_environment() -> None:
-    if os.environ.get("OPC_VAULT_ROOT"):
-        return
-    for candidate in VAULT_ROOT_CANDIDATES:
-        if (candidate / "wiki/视频/AI实拍混剪").is_dir():
-            os.environ["OPC_VAULT_ROOT"] = str(candidate)
-            return
+    configured = os.environ.get("OPC_VAULT_ROOT", "").strip()
+    if not configured:
+        raise RuntimeError("OPC_VAULT_ROOT 未配置，拒绝回退到旧资料库")
+    if not Path(configured).expanduser().is_dir():
+        raise RuntimeError(f"OPC_VAULT_ROOT 不存在或外接盘未挂载：{configured}")
 
 
 def resolve_agent_config_file(value: Any) -> Path:

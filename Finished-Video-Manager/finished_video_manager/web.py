@@ -36,7 +36,7 @@ PRODUCT_MAPPINGS_PATH = APP_ROOT / "config" / "product_mappings.json"
 PUBLISH_RECORDS_PATH = DATA_ROOT / "publish_records.json"
 PUBLISH_QUEUE_PATH = DATA_ROOT / "publish_queue.sqlite3"
 VAULT_ROOT = Path(
-    os.environ.get("OPC_VAULT_ROOT", str(Path.home() / "Documents" / "Obsidian Vault"))
+    os.environ.get("OPC_VAULT_ROOT") or "/__OPC_VAULT_ROOT_NOT_CONFIGURED__"
 ).expanduser()
 FINISHED_VIDEO_ROOT = Path(
     os.environ.get(
@@ -899,6 +899,25 @@ def replace_caption_text(page: Any, locator: Any, caption: str) -> bool:
 
 
 def select_tiktok_video(page: Any, video_path: Path) -> str:
+    def set_file_via_cdp(selector: str, index: int) -> None:
+        session = page.context.new_cdp_session(page)
+        try:
+            document = session.send("DOM.getDocument", {"depth": 0})
+            nodes = session.send(
+                "DOM.querySelectorAll",
+                {"nodeId": document["root"]["nodeId"], "selector": selector},
+            )["nodeIds"]
+            if index >= len(nodes):
+                raise RuntimeError(f"CDP 没有找到视频文件输入控件：{selector}:{index}")
+            session.send(
+                "DOM.setFileInputFiles",
+                {"nodeId": nodes[index], "files": [video_path.as_posix()]},
+            )
+        finally:
+            session.detach()
+
+    direct_error: Exception | None = None
+    button_error: Exception | None = None
     direct_selectors = [
         'input[type="file"][accept*="video"]',
         'input[type="file"][accept*=".mp4"]',
@@ -914,7 +933,14 @@ def select_tiktok_video(page: Any, video_path: Path) -> str:
             try:
                 inputs.nth(index).set_input_files(video_path.as_posix(), timeout=60000)
                 return f"input:{selector}:{index}"
-            except Exception:
+            except Exception as exc:
+                direct_error = exc
+                if "larger than 50mb" in str(exc).lower():
+                    try:
+                        set_file_via_cdp(selector, index)
+                        return f"cdp:{selector}:{index}"
+                    except Exception as cdp_exc:
+                        direct_error = cdp_exc
                 continue
 
     button_selectors = [
@@ -934,10 +960,53 @@ def select_tiktok_video(page: Any, video_path: Path) -> str:
                 button.click(timeout=5000)
             chooser_info.value.set_files(video_path.as_posix())
             return f"chooser:{selector}"
-        except Exception:
+        except Exception as exc:
+            button_error = exc
             continue
 
+    if direct_error:
+        detail = str(direct_error).strip().replace("\n", " ")[:500]
+        raise RuntimeError(f"TikTok 视频选择控件存在，但设置视频文件失败：{detail}")
+    if button_error:
+        detail = str(button_error).strip().replace("\n", " ")[:500]
+        raise RuntimeError(f"TikTok 视频选择控件存在，但设置视频文件失败：{detail}")
     raise RuntimeError("没有找到 TikTok 上传页的视频选择控件")
+
+
+def discard_tiktok_local_draft(page: Any) -> bool:
+    def confirm_discard() -> bool:
+        modals = page.locator('.TUXModal-overlay[data-transition-status="open"]')
+        for modal_index in range(modals.count()):
+            modal = modals.nth(modal_index)
+            if not modal.is_visible():
+                continue
+            primary_buttons = modal.locator("button.TUXButton--primary")
+            if primary_buttons.count() == 0:
+                continue
+            primary_buttons.last.click(timeout=5000)
+            return True
+        return False
+
+    containers = page.locator('[data-e2e="local_draft_container"]')
+    for index in range(containers.count()):
+        container = containers.nth(index)
+        if not container.is_visible():
+            continue
+        if confirm_discard():
+            container.wait_for(state="hidden", timeout=10000)
+            return True
+        buttons = container.locator("button")
+        if buttons.count() == 0:
+            raise RuntimeError("TikTok 显示未保存视频提示，但没有找到丢弃按钮")
+        buttons.first.click(timeout=5000)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and container.is_visible():
+            if confirm_discard():
+                break
+            page.wait_for_timeout(100)
+        container.wait_for(state="hidden", timeout=10000)
+        return True
+    return False
 
 
 def wait_for_tiktok_upload_state(page: Any) -> bool:
@@ -1546,6 +1615,9 @@ def prepare_tiktok_upload(
         except RuntimeError:
             page.goto(TIKTOK_UPLOAD_FALLBACK_URL, wait_until="domcontentloaded", timeout=60000)
         upload_page_ready = wait_for_tiktok_upload_ready(page)
+        local_draft_discarded = discard_tiktok_local_draft(page)
+        if local_draft_discarded:
+            upload_page_ready = wait_for_tiktok_upload_ready(page, timeout_ms=30000)
         upload_method = select_tiktok_video(page, video_path)
         upload_started = wait_for_tiktok_upload_state(page)
         caption_pre_filled = False
@@ -1574,6 +1646,7 @@ def prepare_tiktok_upload(
             "video_path": video_path.as_posix(),
             "upload_method": upload_method,
             "upload_page_ready": upload_page_ready,
+            "local_draft_discarded": local_draft_discarded,
             "upload_started": upload_started,
             "upload_complete": upload_complete,
             "caption_pre_filled": caption_pre_filled,

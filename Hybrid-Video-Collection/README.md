@@ -91,12 +91,12 @@ product/
   diagnostics/
 run_logs/
   <timestamp>_<mode>.md
-~/Documents/Obsidian Vault/wiki/视频/03爆款视频/<产品名称>/
+$OPC_VAULT_ROOT/wiki/视频/AI实拍混剪/01参考视频/<类型>/<产品名称>/
   <用户名-视频ID-标题>.mp4
   <用户名-视频ID-标题>.json
 ```
 
-网页里的产品名称来自 `~/Documents/Obsidian Vault/wiki/产品/产品信息/` 下的 Markdown 文件名，自动去掉 `-产品信息`。
+网页里的产品名称来自 `$OPC_VAULT_ROOT/wiki/产品/产品信息/` 下的 Markdown 文件名，自动去掉 `-产品信息`。
 
 网页里的“结果文件夹名”可以手动填写；默认使用 `results`。采集 CSV 写入产品项目目录，下载视频写入 Obsidian 爆款视频目录。
 

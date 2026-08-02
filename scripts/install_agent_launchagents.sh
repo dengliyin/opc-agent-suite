@@ -2,10 +2,13 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CONFIG_DIR="$HOME/Library/Application Support/OPC-Agent-Suite"
+ENV_FILE="${OPC_ENV_FILE:-$CONFIG_DIR/.env}"
+RUNTIME_ROOT="${OPC_SERVICE_RUNTIME_ROOT:-$CONFIG_DIR/Service-Runtime}"
 DOMAIN="gui/$(id -u)"
 PLIST_DIR="$HOME/Library/LaunchAgents"
 TEMPLATE_PATH="$ROOT_DIR/scripts/launchd/com.kesai.opc-agent.plist.template"
-LAUNCHER_PATH="$ROOT_DIR/scripts/run_agent_foreground.py"
+LAUNCHER_PATH="$RUNTIME_ROOT/scripts/run_agent_foreground.py"
 LOG_DIR="$HOME/Library/Logs/OPC-Agent-Suite"
 SERVICE_IDS=(collect analyze script adapt assemble finished rewrite compose hybrid_adapt hybrid_mix hybrid_collect hybrid_analyze hybrid_script hybrid_voice)
 
@@ -29,11 +32,17 @@ service_dir() {
   esac
 }
 
-if [ ! -f "$ROOT_DIR/.env" ]; then
-  echo "Missing $ROOT_DIR/.env. Run scripts/bootstrap_macos.sh first." >&2
+mkdir -p "$CONFIG_DIR"
+if [ ! -f "$ENV_FILE" ] && [ -f "$ROOT_DIR/.env" ]; then
+  cp "$ROOT_DIR/.env" "$ENV_FILE"
+  chmod 600 "$ENV_FILE"
+fi
+if [ ! -f "$ENV_FILE" ]; then
+  echo "Missing $ENV_FILE. Run scripts/bootstrap_macos.sh first." >&2
   exit 1
 fi
-if [ ! -x "$ROOT_DIR/OPC-Console/.venv/bin/python" ]; then
+"$ROOT_DIR/scripts/stage_service_runtime.sh" >/dev/null
+if [ ! -x "$RUNTIME_ROOT/OPC-Console/.venv/bin/python" ]; then
   echo "Missing OPC-Console virtual environment. Run scripts/bootstrap_macos.sh first." >&2
   exit 1
 fi
@@ -44,14 +53,24 @@ sed_escape() {
   printf '%s' "$1" | sed 's/[&|]/\\&/g'
 }
 
+bootstrap_agent() {
+  local plist_path="$1"
+  local attempt
+  for attempt in 1 2 3 4 5; do
+    if launchctl bootstrap "$DOMAIN" "$plist_path"; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  return 1
+}
+
 launcher_escaped="$(sed_escape "$LAUNCHER_PATH")"
+env_file_escaped="$(sed_escape "$ENV_FILE")"
 
 for service_id in "${SERVICE_IDS[@]}"; do
   agent_dir="$(service_dir "$service_id")"
-  python_path="$ROOT_DIR/$agent_dir/.venv/bin/python"
-  if [ "$service_id" = "finished" ] && [ -x "$HOME/Library/Application Support/OPC-Agent-Suite/finished-python/venv/bin/python" ]; then
-    python_path="$HOME/Library/Application Support/OPC-Agent-Suite/finished-python/venv/bin/python"
-  fi
+  python_path="$RUNTIME_ROOT/$agent_dir/.venv/bin/python"
   if [ ! -x "$python_path" ]; then
     echo "Missing Agent virtual environment: $agent_dir/.venv" >&2
     exit 1
@@ -66,6 +85,7 @@ for service_id in "${SERVICE_IDS[@]}"; do
     -e "s|__PYTHON__|$(sed_escape "$python_path")|g" \
     -e "s|__LAUNCHER__|$launcher_escaped|g" \
     -e "s|__SERVICE_ID__|$(sed_escape "$service_id")|g" \
+    -e "s|__ENV_FILE__|$env_file_escaped|g" \
     -e "s|__OUT_LOG__|$(sed_escape "$out_log_path")|g" \
     -e "s|__ERR_LOG__|$(sed_escape "$err_log_path")|g" \
     "$TEMPLATE_PATH" > "$temp_path"
@@ -75,16 +95,10 @@ for service_id in "${SERVICE_IDS[@]}"; do
     rm -f "$temp_path"
     continue
   fi
-  if launchctl print "$DOMAIN/$label" 2>/dev/null | grep -q 'state = running'; then
-    mv "$temp_path" "$plist_path"
-    chmod 600 "$plist_path"
-    echo "Updated plist without restarting running Agent: $service_id" >&2
-    continue
-  fi
   launchctl bootout "$DOMAIN/$label" >/dev/null 2>&1 || true
   mv "$temp_path" "$plist_path"
   chmod 600 "$plist_path"
-  launchctl bootstrap "$DOMAIN" "$plist_path"
+  bootstrap_agent "$plist_path"
 done
 
 echo "Installed 14 on-demand Agent LaunchAgents."
