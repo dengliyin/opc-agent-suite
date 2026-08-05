@@ -538,12 +538,15 @@ def segmented_markdown_output_validation_text(
     ]
     segments = omni_segment_blocks(content)
     has_full_structure = all(item in content for item in full_required)
-    has_simple_structure = "## 每段生成提示词" in content or (target_model == "grok" and bool(segments))
+    has_segment_prompt_heading = bool(
+        re.search(r"(?m)^#{1,2}\s*(?:3[.．、]\s*)?每段生成提示词\s*$", content)
+    )
+    has_simple_structure = has_segment_prompt_heading or (target_model == "grok" and bool(segments))
     if not has_full_structure and not has_simple_structure:
         return {
             "valid": False,
             "state": "markdown_invalid",
-            "message": f"缺少 {label_text} 主结构：需要完整结构或简化结构 ## 每段生成提示词",
+            "message": f"缺少 {label_text} 主结构：需要完整结构或简化结构 #/## 每段生成提示词",
         }
     if not segments:
         return {"valid": False, "state": "markdown_invalid", "message": "缺少 # Segment 段落"}

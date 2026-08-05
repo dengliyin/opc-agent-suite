@@ -20,6 +20,7 @@ from app.mixer import (
     choose_middle_timeline,
     deduplication_filter,
     ensure_audio_subtitles,
+    media_market,
     middle_route_signature,
     probe_media,
     random_deduplication_options,
@@ -437,6 +438,77 @@ class MixerTests(unittest.TestCase):
                     paths,
                 )
 
+    def test_build_plan_all_markets_keeps_each_hook_with_same_market_audio(self):
+        with tempfile.TemporaryDirectory() as temp:
+            paths = self.paths(Path(temp))
+            hooks = [
+                self.archived_clip(paths, "混剪-钩子", "hook-ES.mp4"),
+                self.archived_clip(paths, "混剪-钩子", "hook-IE.mp4"),
+            ]
+            audios = [
+                paths.audio_root / "测试产品/AI音频-ES-test.mp3",
+                paths.audio_root / "测试产品/AI音频-IE-test.mp3",
+            ]
+            display = paths.real_root / "测试产品/展示/display.mp4"
+            usage = paths.real_root / "测试产品/使用/use.mp4"
+            for path in (*hooks, *audios, display, usage):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+
+            def fake_video_record(path):
+                return {
+                    "path": str(path),
+                    "name": path.name,
+                    "duration": 3.0,
+                    "effective_duration": 3.0,
+                    "technical_tail_trimmed": False,
+                }
+
+            def fake_audio_record(path):
+                return {
+                    "path": str(path),
+                    "name": path.name,
+                    "duration": 6.0,
+                    "has_video": False,
+                    "has_audio": True,
+                }
+
+            def fake_pool(records):
+                return [
+                    {
+                        **records[0],
+                        "path": f"{records[0]['path']}-{index}",
+                        "name": f"{records[0]['name']}-{index}",
+                        "duration": 2.0,
+                        "has_video": True,
+                    }
+                    for index in range(4)
+                ]
+
+            with (
+                patch("app.mixer.effective_video_record", side_effect=fake_video_record),
+                patch("app.mixer.probe_media", side_effect=fake_audio_record),
+                patch("app.mixer.media_pool", side_effect=fake_pool),
+            ):
+                plan = build_plan(
+                    {
+                        "product": "测试产品",
+                        "market": "",
+                        "model": "",
+                        "deduplication_options": ["mirror"],
+                        "seed": 789,
+                    },
+                    paths,
+                )
+
+        self.assertEqual(plan["market"], "ALL")
+        self.assertEqual(plan["markets"], ["ES", "IE"])
+        self.assertEqual(plan["inputs"]["market_count"], 2)
+        self.assertEqual(len(plan["variants"]), 2)
+        for variant in plan["variants"]:
+            self.assertEqual(media_market(Path(variant["segments"][0]["path"])), variant["market"])
+            self.assertEqual(media_market(Path(variant["middle_audio"])), variant["market"])
+
     def test_middle_timeline_places_display_before_usage(self):
         display = [{"path": f"/d/{i}.mp4", "name": f"d{i}", "duration": 5.0} for i in range(3)]
         usage = [{"path": f"/u/{i}.mp4", "name": f"u{i}", "duration": 5.0} for i in range(3)]
@@ -705,7 +777,7 @@ class MixerTests(unittest.TestCase):
             plan = {
                 "plan_id": "caption-test",
                 "product": "测试产品",
-                "market": "ES",
+                "market": "ALL",
                 "model": "omni",
                 "settings": {
                     "use_subtitles": True,
@@ -715,6 +787,8 @@ class MixerTests(unittest.TestCase):
                     {
                         "index": 1,
                         "seed": 123,
+                        "market": "ES",
+                        "model": "omni",
                         "segments": [
                             {
                                 "role": "AI钩子",
@@ -779,6 +853,7 @@ class MixerTests(unittest.TestCase):
 
         self.assertEqual(rendered[0].name, "uncaptioned.mp4")
         self.assertEqual(generated, [(middle_audio, 2.0, "ES")])
+        self.assertIn("-ES-", outputs[0]["path"])
         self.assertEqual(shifted[0][2:], (1.0, 2.0))
         self.assertEqual(burned[0][0], rendered[0])
         self.assertEqual(len(outputs), 1)
@@ -817,6 +892,9 @@ class MixerTests(unittest.TestCase):
         self.assertIn("task.reserved_hook_paths", javascript)
         self.assertIn("当前渲染任务运行中", javascript)
         self.assertIn("function renderHookPreview()", javascript)
+        self.assertIn('markets.length ? "全部国家"', javascript)
+        self.assertIn("function activeMarkets()", javascript)
+        self.assertIn('model: els.market.value ? automaticModel() : ""', javascript)
         self.assertNotIn("function renderPlan(", javascript)
         self.assertIn("color-scheme: light", styles)
         self.assertIn("--bg: #f6f3ea", styles)

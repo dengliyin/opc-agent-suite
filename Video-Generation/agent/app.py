@@ -1112,6 +1112,11 @@ def delete_grok_scripts(request: ScriptDeleteRequest) -> Dict[str, Any]:
     return _delete_scripts("grok", request)
 
 
+@app.delete("/hybrid-omni/api/scripts")
+def delete_hybrid_omni_scripts(request: ScriptDeleteRequest) -> Dict[str, Any]:
+    return _delete_scripts("hybrid_omni", request)
+
+
 
 
 @app.post("/api/cancel")

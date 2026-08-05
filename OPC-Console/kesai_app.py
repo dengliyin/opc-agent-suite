@@ -6,11 +6,12 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 
 ROOT = Path(__file__).resolve().parent
@@ -23,6 +24,8 @@ ENV_FILE = Path(
 ).expanduser()
 HOST = os.environ.get("KESAI_APP_HOST", "127.0.0.1")
 PORT = int(os.environ.get("KESAI_APP_PORT", "8888"))
+HEALTH_STATUS_DIR = Path.home() / "Library" / "Application Support" / "OPC-Agent-Suite" / "service-health"
+HEALTH_STATUS_MAX_AGE_SECONDS = 45
 
 
 def service_url(env_name: str, default: str) -> str:
@@ -180,6 +183,25 @@ def build_services() -> dict[str, dict]:
     }
     for service_id, service in services.items():
         service["launch_agent_label"] = f"com.kesai.opc-agent.{service_id}"
+    health_paths = {
+        "collect": "/api/state",
+        "analyze": "/api/status",
+        "script": "/api/outputs",
+        "adapt": "/api/outputs?target_model=veo",
+        "assemble": "/api/catalog",
+        "finished": "/api/state",
+        "rewrite": "/api/state",
+        "compose": "/api/state",
+        "hybrid_adapt": "/api/scripts?target_model=omni",
+        "hybrid_mix": "/api/library",
+        "hybrid_collect": "/api/state",
+        "hybrid_analyze": "/api/status",
+        "hybrid_script": "/api/outputs",
+        "hybrid_voice": "/api/library",
+    }
+    for service_id, service in services.items():
+        service["health_path"] = health_paths[service_id]
+        service["health_status_path"] = HEALTH_STATUS_DIR / f"{service_id}.json"
     return services
 
 
@@ -436,10 +458,22 @@ def save_global_paths(updates: dict, env_file: Path = ENV_FILE) -> dict:
 
 
 def service_running(service: dict) -> bool:
+    status_path = Path(service["health_status_path"])
     try:
-        request = urllib.request.Request(service["url"], method="GET")
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+        checked_at = float(status.get("checked_at") or 0)
+        if time.time() - checked_at <= HEALTH_STATUS_MAX_AGE_SECONDS:
+            return bool(status.get("healthy"))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        pass
+
+    try:
+        request = urllib.request.Request(
+            urljoin(service["url"], service["health_path"].lstrip("/")),
+            method="GET",
+        )
         with urllib.request.urlopen(request, timeout=1.2) as response:
-            return 200 <= response.status < 500
+            return 200 <= response.status < 300
     except Exception:
         return False
 

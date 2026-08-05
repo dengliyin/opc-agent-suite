@@ -125,6 +125,50 @@ class PublishQueueTest(unittest.TestCase):
             queue.stop()
             self.assertEqual(calls, ["staged.mp4"])
 
+    def test_scheduled_queue_waits_until_due_and_uses_selected_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            calls = []
+            queue = PublishQueue(
+                Path(directory) / "queue.sqlite3",
+                lambda item: calls.append(item["execution_mode"]) or {},
+                interval_seconds=0,
+            )
+            queue.enqueue([task("scheduled")])
+            queue.start()
+            scheduled_at = time.time() + 0.4
+            queue.control("schedule", "headless", scheduled_at)
+            time.sleep(0.15)
+            self.assertEqual(calls, [])
+            self.assertAlmostEqual(queue.payload()["scheduled_at"], scheduled_at, places=2)
+
+            deadline = time.time() + 2
+            while time.time() < deadline and not calls:
+                time.sleep(0.05)
+            queue.stop()
+
+            self.assertEqual(calls, ["headless"])
+            self.assertEqual(queue.payload()["scheduled_at"], 0)
+
+    def test_cancel_schedule_keeps_queue_paused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            calls = []
+            queue = PublishQueue(
+                Path(directory) / "queue.sqlite3",
+                lambda item: calls.append(item["video_name"]) or {},
+                interval_seconds=0,
+            )
+            queue.enqueue([task("canceled-schedule")])
+            queue.start()
+            queue.control("schedule", "visible", time.time() + 0.2)
+            queue.control("cancel_schedule")
+            time.sleep(0.4)
+            payload = queue.payload()
+            queue.stop()
+
+            self.assertEqual(calls, [])
+            self.assertTrue(payload["paused"])
+            self.assertEqual(payload["scheduled_at"], 0)
+
     def test_selected_execution_mode_is_forwarded_to_executor(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             modes = []

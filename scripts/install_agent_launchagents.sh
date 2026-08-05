@@ -90,6 +90,13 @@ for service_id in "${SERVICE_IDS[@]}"; do
     -e "s|__ERR_LOG__|$(sed_escape "$err_log_path")|g" \
     "$TEMPLATE_PATH" > "$temp_path"
 
+  if [ "$service_id" = "finished" ]; then
+    /usr/libexec/PlistBuddy \
+      -c "Add :KeepAlive dict" \
+      -c "Add :KeepAlive:SuccessfulExit bool false" \
+      "$temp_path"
+  fi
+
   plutil -lint "$temp_path" >/dev/null
   if [ -f "$plist_path" ] && cmp -s "$temp_path" "$plist_path" && launchctl print "$DOMAIN/$label" >/dev/null 2>&1; then
     rm -f "$temp_path"

@@ -44,12 +44,30 @@ function currentMarket() {
   return currentProduct()?.markets[els.market.value];
 }
 
-function automaticModel() {
+function activeMarkets() {
+  const product = currentProduct();
+  if (!product) return [];
   const market = currentMarket();
+  return market ? [market] : Object.values(product.markets);
+}
+
+function automaticModelForMarket(market) {
   for (const [name, model] of Object.entries(market?.models ?? {})) {
     if (model.hooks.some(hook => !hook.used_count && !state.reservedHookPaths.has(hook.path))) return name;
   }
   return "";
+}
+
+function automaticModel() {
+  const models = [...new Set(activeMarkets().map(automaticModelForMarket).filter(Boolean))];
+  return models.length === 1 ? models[0] : "";
+}
+
+function availableHookCountForMarket(market) {
+  const model = automaticModelForMarket(market);
+  return (market?.models?.[model]?.hooks ?? []).filter(
+    hook => !hook.used_count && !state.reservedHookPaths.has(hook.path)
+  ).length;
 }
 
 function selectedDeduplicationOptions() {
@@ -58,12 +76,22 @@ function selectedDeduplicationOptions() {
 
 function hookItems(market) {
   return Object.entries(market?.models ?? {}).flatMap(([model, items]) => (
-    items.hooks.map(hook => ({...hook, model}))
+    items.hooks.map(hook => ({
+      ...hook,
+      model,
+      market: market.code,
+      marketLabel: market.label,
+    }))
   ));
 }
 
-function hookAvailability(market) {
-  const hooks = hookItems(market);
+function visibleHookItems() {
+  return activeMarkets().flatMap(hookItems);
+}
+
+function hookAvailability(markets = activeMarkets()) {
+  const items = Array.isArray(markets) ? markets : [markets];
+  const hooks = items.flatMap(hookItems);
   const used = hooks.filter(hook => hook.used_count).length;
   const reserved = hooks.filter(
     hook => !hook.used_count && state.reservedHookPaths.has(hook.path)
@@ -72,14 +100,14 @@ function hookAvailability(market) {
 }
 
 function updateHookAvailabilitySummary() {
-  const market = currentMarket();
-  if (!market) {
-    els.hookSummary.textContent = "选择国家后显示钩子素材数量";
+  if (!currentProduct()) {
+    els.hookSummary.textContent = "选择产品后显示全部国家钩子素材数量";
     return;
   }
-  const counts = hookAvailability(market);
+  const counts = hookAvailability();
+  const scope = currentMarket()?.label || `全部国家（${activeMarkets().length} 个）`;
   els.hookSummary.textContent = (
-    `AI 钩子素材池　可用 ${counts.available} 条`
+    `AI 钩子素材池　${scope}　·　可用 ${counts.available} 条`
     + ` / 任务占用 ${counts.reserved} 条`
     + ` / 总数 ${counts.hooks.length} 条　·　本次可编排 ${counts.available} 条`
   );
@@ -103,26 +131,26 @@ function renderHookPager(pageCount) {
 }
 
 function renderHookPreview() {
-  const market = currentMarket();
   els.hookPreviewSummary.className = "hook-preview-summary";
-  if (!els.product.value || !market) {
+  if (!els.product.value) {
     state.selectedHookPaths.clear();
-    els.hookPreviewSummary.textContent = "选择产品和国家后显示钩子视频";
+    els.hookPreviewSummary.textContent = "选择产品后显示全部国家钩子视频";
     els.hookResultCount.textContent = "0 个结果";
     els.selectAllHooksButton.disabled = true;
     els.deleteSelectedHooksButton.disabled = true;
     els.hookPager.innerHTML = "";
-    els.hookPreview.innerHTML = '<div class="empty">选择产品和国家后，可在这里预览对应的 AI 钩子素材。</div>';
+    els.hookPreview.innerHTML = '<div class="empty">选择产品后，可在这里预览该产品全部国家的 AI 钩子素材。</div>';
     return;
   }
-  const counts = hookAvailability(market);
+  const counts = hookAvailability();
   const hooks = counts.hooks;
   const knownPaths = new Set(hooks.map(hook => hook.path));
   for (const path of state.selectedHookPaths) {
     if (!knownPaths.has(path)) state.selectedHookPaths.delete(path);
   }
+  const scope = currentMarket()?.label || `全部国家（${activeMarkets().length} 个）`;
   els.hookPreviewSummary.textContent = (
-    `${market.label} · 钩子 ${hooks.length} 条`
+    `${scope} · 钩子 ${hooks.length} 条`
     + ` · 可用 ${counts.available} 条`
     + ` · 任务占用 ${counts.reserved} 条`
     + ` · 已使用 ${counts.used} 条`
@@ -135,7 +163,7 @@ function renderHookPreview() {
   els.deleteSelectedHooksButton.disabled = !selectedCount;
   if (!hooks.length) {
     els.hookPager.innerHTML = "";
-    els.hookPreview.innerHTML = `<div class="empty">${esc(market.label)} 暂无 AI 钩子素材。</div>`;
+    els.hookPreview.innerHTML = `<div class="empty">${esc(scope)} 暂无 AI 钩子素材。</div>`;
     return;
   }
   const start = (state.hookPage - 1) * HOOK_PAGE_SIZE;
@@ -160,7 +188,7 @@ function renderHookPreview() {
       <div class="hook-video-info">
         <strong title="${esc(hook.name)}">${esc(hook.name)}</strong>
         <div class="hook-chips">
-          <span>${esc(market.label)}</span>
+          <span>${esc(hook.marketLabel)}</span>
           <span class="model">${esc(hook.model)}</span>
           <span>${hook.used_count ? `已使用 ${hook.used_count} 次` : (reserved ? "当前任务已占用" : "尚未使用")}</span>
           <button class="hook-delete-button" type="button" data-hook-delete-path="${esc(hook.path)}">删除</button>
@@ -193,68 +221,72 @@ function updateProduct() {
   ) : [];
   els.market.innerHTML = optionList(
     markets,
-    markets.length ? "请选择国家" : "当前产品没有可识别国家的素材"
+    markets.length ? "全部国家" : "当前产品没有可识别国家的素材"
   );
-  els.hookSummary.textContent = "选择国家后显示钩子素材数量";
-  els.audioSummary.textContent = "选择国家后显示混剪音频数量";
-  els.ctaSummary.textContent = "选择国家后显示 CTA 素材数量";
-  els.subtitleSummary.textContent = "选择国家后检测本地字幕文件";
   els.includeCta.checked = false;
   els.includeCta.disabled = true;
-  renderHookPreview();
-  if (markets.length === 1) {
-    els.market.value = markets[0].path;
-    updateMarket();
-    return;
-  }
-  updateReady();
+  updateMarket();
 }
 
 function updateMarket() {
   resetHookBrowser();
-  const market = currentMarket();
-  const model = automaticModel();
-  const ctaCount = market?.models[model]?.ctas.length ?? 0;
+  const markets = activeMarkets();
+  const audioCount = markets.reduce((total, market) => total + market.audio.length, 0);
+  const subtitleCount = markets.reduce((total, market) => total + market.subtitle_count, 0);
+  const missingSubtitleCount = markets.reduce((total, market) => total + market.missing_subtitle_count, 0);
+  const productiveMarkets = markets.filter(market => (
+    availableHookCountForMarket(market) && market.audio.length
+  ));
+  const ctaCounts = productiveMarkets.map(market => {
+    const model = automaticModelForMarket(market);
+    return market.models[model]?.ctas.length ?? 0;
+  });
+  const ctaCount = ctaCounts.reduce((total, value) => total + value, 0);
+  const allProductiveMarketsHaveCta = productiveMarkets.length > 0 && ctaCounts.every(Boolean);
+  const scope = currentMarket()?.label || `全部国家（${markets.length} 个）`;
   updateHookAvailabilitySummary();
-  els.audioSummary.textContent = market
-    ? `混剪音频素材池　${market.audio.length} 条`
-    : "选择国家后显示混剪音频数量";
-  els.ctaSummary.textContent = market
-    ? `AI CTA 素材池　${ctaCount} 条`
-    : "选择国家后显示 CTA 素材数量";
-  els.subtitleSummary.textContent = market
-    ? `混剪音频 ${market.audio.length} 条　｜　本地字幕已匹配 ${market.subtitle_count} 条　｜　缺失 ${market.missing_subtitle_count} 条`
-    : "选择国家后检测本地字幕文件";
+  els.audioSummary.textContent = currentProduct()
+    ? `混剪音频素材池　${scope}　·　${audioCount} 条`
+    : "选择产品后显示混剪音频数量";
+  els.ctaSummary.textContent = currentProduct()
+    ? `AI CTA 素材池　${scope}　·　${ctaCount} 条`
+    : "选择产品后显示 CTA 素材数量";
+  els.subtitleSummary.textContent = currentProduct()
+    ? `混剪音频 ${audioCount} 条　｜　本地字幕已匹配 ${subtitleCount} 条　｜　缺失 ${missingSubtitleCount} 条`
+    : "选择产品后检测本地字幕文件";
   els.includeCta.checked = false;
-  els.includeCta.disabled = ctaCount === 0;
+  els.includeCta.disabled = !allProductiveMarketsHaveCta;
   renderHookPreview();
   updateReady();
 }
 
 function updateReady() {
   const product = currentProduct();
-  const market = currentMarket();
-  const model = automaticModel();
-  const counts = hookAvailability(market);
-  const availableHookCount = counts.available;
+  const markets = activeMarkets();
+  const productiveMarkets = markets.filter(market => (
+    availableHookCountForMarket(market) && market.audio.length
+  ));
+  const counts = hookAvailability();
+  const availableHookCount = productiveMarkets.reduce(
+    (total, market) => total + availableHookCountForMarket(market), 0
+  );
   const hasDeduplication = els.randomDeduplication.checked || selectedDeduplicationOptions().length;
   const selected = (
-    els.product.value && els.market.value && model && availableHookCount
-    && market?.audio.length && hasDeduplication
+    els.product.value && productiveMarkets.length && availableHookCount && hasDeduplication
   );
   els.planButton.disabled = !selected || state.taskStatus === "running";
   if (product) {
     els.message.className = "message";
-    const ctaCount = model ? market.models[model].ctas.length : 0;
-    els.message.textContent = market
-      ? (
-          state.taskStatus === "running"
-            ? `当前渲染任务运行中，${counts.reserved} 条钩子已标记为任务占用，任务完成后才能重新编排`
-            : hasDeduplication
-            ? `${market.label} · 本次自动生成 ${availableHookCount} 条成片 · CTA ${ctaCount} 条（可选）`
-            : "请至少选择一项去重处理，或选择随机去重"
-        )
-      : "请选择国家";
+    const scope = currentMarket()?.label || `全部国家（可编排 ${productiveMarkets.length} 个）`;
+    const ctaCount = productiveMarkets.reduce((total, market) => {
+      const model = automaticModelForMarket(market);
+      return total + (market.models[model]?.ctas.length ?? 0);
+    }, 0);
+    els.message.textContent = state.taskStatus === "running"
+      ? `当前渲染任务运行中，${counts.reserved} 条钩子已标记为任务占用，任务完成后才能重新编排`
+      : hasDeduplication
+      ? `${scope} · 本次自动生成 ${availableHookCount} 条成片 · CTA ${ctaCount} 条（可选）`
+      : "请至少选择一项去重处理，或选择随机去重";
   }
 }
 
@@ -293,7 +325,7 @@ async function loadLibrary(preserveSelection = false) {
 }
 
 async function deleteHookPaths(paths) {
-  const hooksByPath = new Map(hookItems(currentMarket()).map(hook => [hook.path, hook]));
+  const hooksByPath = new Map(visibleHookItems().map(hook => [hook.path, hook]));
   const targets = [...new Set(paths)].filter(path => hooksByPath.has(path));
   if (!targets.length) return;
   const preview = targets.slice(0, 8).map(path => `- ${hooksByPath.get(path).name}`).join("\n");
@@ -333,7 +365,9 @@ async function createPlan() {
   els.message.className = "message";
   els.message.textContent = "正在分析素材并生成时间线…";
   const payload = {
-    product: els.product.value, market: els.market.value, model: automaticModel(),
+    product: els.product.value,
+    market: els.market.value,
+    model: els.market.value ? automaticModel() : "",
     include_cta: els.includeCta.checked,
     use_subtitles: els.useSubtitles.checked,
     random_deduplication: els.randomDeduplication.checked,
@@ -416,7 +450,7 @@ els.deduplicationOptions.forEach(input => input.addEventListener("change", updat
 els.useSubtitles.addEventListener("change", updateReady);
 els.refreshButton.addEventListener("click", () => loadLibrary(true));
 els.selectAllHooksButton.addEventListener("click", () => {
-  hookItems(currentMarket()).forEach(hook => state.selectedHookPaths.add(hook.path));
+  visibleHookItems().forEach(hook => state.selectedHookPaths.add(hook.path));
   renderHookPreview();
 });
 els.deleteSelectedHooksButton.addEventListener("click", deleteSelectedHooks);
