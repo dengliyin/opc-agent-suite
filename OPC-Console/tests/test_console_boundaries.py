@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import tempfile
+import time
 from unittest import mock
 import unittest
 from pathlib import Path
@@ -42,6 +44,32 @@ class ConsoleBoundaryTests(unittest.TestCase):
     def test_every_service_has_an_independent_launch_agent(self):
         for service_id, service in self.app.SERVICES.items():
             self.assertEqual(service["launch_agent_label"], f"com.kesai.opc-agent.{service_id}")
+
+    def test_every_service_uses_a_non_root_business_health_probe(self):
+        for service_id, service in self.app.SERVICES.items():
+            with self.subTest(service=service_id):
+                self.assertTrue(service["health_path"].startswith("/api/"))
+
+    def test_service_health_uses_recent_supervisor_probe_result(self):
+        service = self.app.SERVICES["hybrid_adapt"].copy()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            status_path = Path(temp_dir) / "hybrid_adapt.json"
+            status_path.write_text(
+                json.dumps({"healthy": True, "checked_at": time.time()}),
+                encoding="utf-8",
+            )
+            service["health_status_path"] = status_path
+            with mock.patch.object(self.app.urllib.request, "urlopen") as urlopen:
+                self.assertTrue(self.app.service_running(service))
+
+        urlopen.assert_not_called()
+
+    def test_command_line_healthcheck_uses_business_probe_paths(self):
+        healthcheck = (WORKSPACE_ROOT / "scripts" / "healthcheck.sh").read_text(encoding="utf-8")
+
+        self.assertIn('"api/scripts?target_model=omni"', healthcheck)
+        self.assertIn('"api/catalog"', healthcheck)
+        self.assertIn('[[ "$status" =~ ^2 ]]', healthcheck)
 
     def test_start_service_uses_launchctl_kickstart(self):
         with (
@@ -237,6 +265,11 @@ class ConsoleBoundaryTests(unittest.TestCase):
         ):
             self.assertIn(f'"{directory}"', installer)
         self.assertIn('python_path="$RUNTIME_ROOT/$agent_dir/.venv/bin/python"', installer)
+
+    def test_finished_agent_restarts_after_external_storage_disconnects(self):
+        installer = (WORKSPACE_ROOT / "scripts" / "install_agent_launchagents.sh").read_text(encoding="utf-8")
+        self.assertIn('if [ "$service_id" = "finished" ]', installer)
+        self.assertIn("Add :KeepAlive:SuccessfulExit bool false", installer)
 
     def test_install_and_manual_start_register_agent_launchagents(self):
         installer_call = '"$ROOT_DIR/scripts/install_agent_launchagents.sh"'

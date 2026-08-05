@@ -59,6 +59,9 @@ _FINISHED_VIDEO_INDEX_ROOT: Path | None = None
 _FINISHED_VIDEO_INDEX_AT = 0.0
 _FINISHED_VIDEO_INDEX: dict[tuple[str, str], Path] = {}
 _FINISHED_VIDEO_INDEX_TTL_SECONDS = 2.0
+STORAGE_POLL_SECONDS = 5
+STORAGE_FAILURE_LIMIT = 3
+STORAGE_STARTUP_RETRY_SECONDS = 30
 COUNTRY_NAMES = {
     "US": "美国",
     "UK": "英国",
@@ -95,6 +98,62 @@ DEFAULT_PRODUCT_MAPPINGS = {
     "product_short_names": {},
     "product_links": {},
 }
+
+
+def finished_storage_ready() -> bool:
+    try:
+        if not FINISHED_VIDEO_ROOT.is_dir() or not TITLE_LIBRARY_ROOT.is_dir():
+            return False
+        return any(path.is_file() for path in TITLE_LIBRARY_ROOT.glob("*.md"))
+    except OSError:
+        return False
+
+
+def wait_for_finished_storage() -> None:
+    waiting = False
+    deadline = time.monotonic() + STORAGE_STARTUP_RETRY_SECONDS
+    while not finished_storage_ready():
+        if not waiting:
+            print(
+                f"等待成品视频外置存储就绪: {FINISHED_VIDEO_ROOT}",
+                file=sys.stderr,
+                flush=True,
+            )
+            waiting = True
+        if time.monotonic() >= deadline:
+            print("外置存储仍未就绪，将重新创建进程再试。", file=sys.stderr, flush=True)
+            raise SystemExit(75)
+        time.sleep(STORAGE_POLL_SECONDS)
+    if waiting:
+        print("成品视频外置存储已恢复，继续启动。", file=sys.stderr, flush=True)
+
+
+def publish_task_is_running() -> bool:
+    if not PUBLISH_QUEUE:
+        return False
+    try:
+        return any(task.get("status") == "running" for task in PUBLISH_QUEUE.payload()["tasks"])
+    except Exception:
+        return True
+
+
+def monitor_finished_storage(
+    server: ThreadingHTTPServer,
+    stop_event: threading.Event,
+    storage_lost_event: threading.Event,
+) -> None:
+    failures = 0
+    while not stop_event.wait(STORAGE_POLL_SECONDS):
+        if finished_storage_ready():
+            failures = 0
+            continue
+        failures += 1
+        if failures < STORAGE_FAILURE_LIMIT or publish_task_is_running():
+            continue
+        print("成品视频外置存储已断开，正在等待恢复。", file=sys.stderr, flush=True)
+        storage_lost_event.set()
+        server.shutdown()
+        return
 
 
 def read_json_file(path: Path, default: Any) -> Any:
@@ -3911,6 +3970,7 @@ QUEUE_HTML = r"""<!doctype html>
     .sub { margin-top:6px; color:var(--muted); font-size:12px; }
     nav { display:flex; gap:8px; flex-wrap:wrap; }
     button, a.button { border:1px solid var(--line); background:#fff; color:var(--ink); padding:8px 11px; font-weight:800; font-size:12px; text-decoration:none; cursor:pointer; box-shadow:3px 3px 0 rgba(16,16,16,.12); }
+    input, select { min-height:34px; border:1px solid var(--line); background:#fff; color:var(--ink); padding:6px 8px; font:inherit; }
     button:hover, a.button:hover { background:var(--accent); }
     button.primary { background:var(--ink); color:#fff; box-shadow:4px 4px 0 var(--accent); }
     button:disabled { background:#e3e0d8; color:#777; cursor:not-allowed; opacity:.65; box-shadow:none; }
@@ -3971,6 +4031,10 @@ QUEUE_HTML = r"""<!doctype html>
       <div class="toolbar">
         <div id="queueStatus" class="statusText">正在读取队列...</div>
         <div class="toolbarActions">
+          <input id="scheduleTime" type="datetime-local" aria-label="预约执行时间" />
+          <select id="scheduleMode" aria-label="预约执行方式"><option value="visible">可视执行</option><option value="headless">后台执行</option></select>
+          <button id="scheduleButton" onclick="scheduleQueue()">预约执行</button>
+          <button id="cancelScheduleButton" onclick="controlQueue('cancel_schedule')">取消预约</button>
           <button id="visibleButton" class="primary" onclick="startQueue('visible')">可视执行</button>
           <button id="headlessButton" onclick="startQueue('headless')">后台执行</button>
           <button id="pauseButton" onclick="controlQueue('pause')">暂停队列</button>
@@ -4008,8 +4072,9 @@ QUEUE_HTML = r"""<!doctype html>
       const counts = queue.counts || {};
       const running = Number(counts.running || 0);
       const pending = Number(counts.pending || 0);
+      const scheduledAt = Number(queue.scheduled_at || 0);
       const executionLabel = queue.execution_mode === 'headless' ? '后台执行' : '可视执行';
-      const workerState = running || (!queue.paused && pending) ? executionLabel : (queue.paused && pending ? '待执行' : (queue.paused ? '已暂停' : '空闲'));
+      const workerState = scheduledAt && queue.paused && pending ? '已预约' : (running || (!queue.paused && pending) ? executionLabel : (queue.paused && pending ? '待执行' : (queue.paused ? '已暂停' : '空闲')));
       document.getElementById('workerState').textContent = workerState;
       document.getElementById('queueBadge').textContent = `发布队列 ${pending + running}`;
       document.getElementById('runningCount').textContent = running;
@@ -4021,8 +4086,16 @@ QUEUE_HTML = r"""<!doctype html>
       document.getElementById('visibleButton').disabled = startDisabled;
       document.getElementById('headlessButton').disabled = startDisabled;
       document.getElementById('pauseButton').disabled = queue.paused || (!pending && !running);
+      document.getElementById('scheduleButton').disabled = !queue.paused || !pending || Boolean(running);
+      document.getElementById('cancelScheduleButton').disabled = !scheduledAt;
+      const scheduleMode = document.getElementById('scheduleMode');
+      if (!scheduleMode.dataset.initialized || scheduledAt) {
+        scheduleMode.value = queue.execution_mode === 'headless' ? 'headless' : 'visible';
+        scheduleMode.dataset.initialized = '1';
+      }
       renderTaskList();
       if (running) setStatus(`正在以${executionLabel}方式发布。`);
+      else if (scheduledAt && queue.paused && pending) setStatus(`已预约 ${formatDateTime(scheduledAt)} 以${executionLabel}方式执行 ${pending} 个等待任务。`);
       else if (queue.paused && pending) setStatus(`${pending} 个任务待执行，请选择“可视执行”或“后台执行”。`);
       else if (queue.paused) setStatus('队列已暂停，当前没有待执行任务。');
       else if (pending) setStatus(`队列正在以${executionLabel}方式按顺序串行执行。`);
@@ -4080,8 +4153,14 @@ QUEUE_HTML = r"""<!doctype html>
     async function startQueue(executionMode) {
       await controlQueue('resume', executionMode);
     }
-    async function controlQueue(action, executionMode='') {
-      await post('/api/queue/control',{action, execution_mode:executionMode});
+    async function scheduleQueue() {
+      const value = document.getElementById('scheduleTime').value;
+      const scheduledAt = new Date(value).getTime() / 1000;
+      if (!value || !Number.isFinite(scheduledAt)) return setStatus('请选择预约执行时间。', true);
+      await controlQueue('schedule', document.getElementById('scheduleMode').value, scheduledAt);
+    }
+    async function controlQueue(action, executionMode='', scheduledAt=0) {
+      await post('/api/queue/control',{action, execution_mode:executionMode, scheduled_at:scheduledAt});
     }
     async function clearPending() {
       if (!confirm('确认取消所有等待中任务？正在发布的任务不受影响。')) return;
@@ -4104,8 +4183,11 @@ QUEUE_HTML = r"""<!doctype html>
       if (!queue) return;
       const remaining = Math.max(0, Math.ceil(Number(queue.next_run_at || 0) - Date.now()/1000));
       const pending = Number((queue.counts || {}).pending || 0);
-      document.getElementById('countdown').textContent = queue.paused ? (pending ? '待执行' : '--') : (remaining ? `${remaining}s` : '就绪');
+      const scheduledRemaining = Math.max(0, Math.ceil(Number(queue.scheduled_at || 0) - Date.now()/1000));
+      document.getElementById('countdown').textContent = scheduledRemaining ? formatDuration(scheduledRemaining) : (queue.paused ? (pending ? '待执行' : '--') : (remaining ? `${remaining}s` : '就绪'));
     }
+    function formatDateTime(epoch) { return new Date(epoch * 1000).toLocaleString('zh-CN', {hour12:false}); }
+    function formatDuration(seconds) { const h=Math.floor(seconds/3600); const m=Math.floor(seconds%3600/60); const s=seconds%60; return [h,m,s].map(value=>String(value).padStart(2,'0')).join(':'); }
     function setStatus(text, error=false) { const el=document.getElementById('queueStatus'); el.textContent=text; el.style.color=error?'var(--red)':'var(--muted)'; }
     function escapeHtml(value) { return String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
     loadQueue().catch(err => setStatus(err.message,true));
@@ -4189,6 +4271,7 @@ class Handler(BaseHTTPRequestHandler):
                 result = get_publish_queue().control(
                     str(payload.get("action", "")),
                     str(payload.get("execution_mode", "")),
+                    float(payload.get("scheduled_at", 0) or 0),
                 )
                 json_response(self, 200, result)
             elif parsed.path == "/api/queue/task":
@@ -4254,6 +4337,7 @@ def main(argv: list[str] | None = None) -> None:
         )
         print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)
         return
+    wait_for_finished_storage()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     PUBLISH_QUEUE = PublishQueue(
         PUBLISH_QUEUE_PATH,
@@ -4263,12 +4347,24 @@ def main(argv: list[str] | None = None) -> None:
         video_path_resolver=resolve_finished_video_path,
     )
     PUBLISH_QUEUE.start()
+    monitor_stop_event = threading.Event()
+    storage_lost_event = threading.Event()
+    monitor_thread = threading.Thread(
+        target=monitor_finished_storage,
+        args=(server, monitor_stop_event, storage_lost_event),
+        name="finished-storage-monitor",
+        daemon=True,
+    )
+    monitor_thread.start()
     print(f"成品管理 Web 界面: http://{args.host}:{args.port}", flush=True)
     try:
         server.serve_forever()
     finally:
+        monitor_stop_event.set()
         PUBLISH_QUEUE.stop()
         server.server_close()
+    if storage_lost_event.is_set():
+        raise SystemExit(75)
 
 
 if __name__ == "__main__":

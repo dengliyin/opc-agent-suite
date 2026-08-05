@@ -25,9 +25,9 @@
         <label>产品<select id="product"></select></label>
         <div class="footage-summary" id="footageSummary">选择产品后显示实拍素材数量</div>
         <label>国家<select id="market"></select></label>
-        <div class="footage-summary" id="hookSummary">选择国家后显示钩子素材数量</div>
-        <div class="footage-summary" id="audioSummary">选择国家后显示混剪音频数量</div>
-        <div class="footage-summary" id="ctaSummary">选择国家后显示 CTA 素材数量</div>
+        <div class="footage-summary" id="hookSummary">选择产品后显示全部国家钩子素材数量</div>
+        <div class="footage-summary" id="audioSummary">选择产品后显示全部国家混剪音频数量</div>
+        <div class="footage-summary" id="ctaSummary">选择产品后显示全部国家 CTA 素材数量</div>
         <label class="toggle"><input id="includeCta" type="checkbox">成片加入 CTA（可选）</label>
 
         <div class="section-title spaced"><span>02</span><h2>编排设置</h2></div>
@@ -57,7 +57,7 @@
             <input id="useSubtitles" type="checkbox">
             <span><strong>使用字幕</strong><small>只包装混剪音频对应的实拍中段；钩子和 CTA 不加字幕</small></span>
           </label>
-          <div class="subtitle-summary" id="subtitleSummary">选择国家后检测本地字幕文件</div>
+          <div class="subtitle-summary" id="subtitleSummary">选择产品后检测全部国家本地字幕文件</div>
         </fieldset>
         <p class="hint">钩子每条只使用一次；混剪音频可无限复用；每个实拍片段最多进入 100 条成功成片，且不会重复“同一音频＋同一实拍顺序”。实拍镜头使用素材自身时长，仅最后一个镜头可能裁短。</p>
         <div class="actions">
@@ -77,9 +77,9 @@
             <span id="hookResultCount">0 个结果</span>
           </div>
         </div>
-        <div id="hookPreviewSummary" class="hook-preview-summary">选择产品和国家后显示钩子视频</div>
+        <div id="hookPreviewSummary" class="hook-preview-summary">选择产品后显示全部国家钩子视频</div>
         <div id="hookPreview" class="hook-video-grid">
-          <div class="empty">选择产品和国家后，可在这里预览对应的 AI 钩子素材。</div>
+          <div class="empty">选择产品后，可在这里预览该产品全部国家的 AI 钩子素材。</div>
         </div>
         <div id="hookPager" class="hook-pager"></div>
       </section>
@@ -100,6 +100,6 @@
 
     <section class="paths" id="paths"></section>
   </main>
-  <script src="/static/app.js?v=20260730-archive-only"></script>
+  <script src="/static/app.js?v=20260803-all-markets"></script>
 </body>
 </html>

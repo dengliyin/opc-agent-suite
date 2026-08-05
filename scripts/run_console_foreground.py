@@ -4,11 +4,44 @@ from __future__ import annotations
 import os
 import shlex
 import sys
+import tempfile
 from pathlib import Path
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_ENV_FILE = Path.home() / "Library" / "Application Support" / "OPC-Agent-Suite" / ".env"
+
+
+def storage_identity(vault_root: Path) -> tuple[int, int, int | None]:
+    stat = vault_root.stat()
+    statvfs = os.statvfs(vault_root)
+    return stat.st_dev, stat.st_ino, getattr(statvfs, "f_fsid", None)
+
+
+def verify_vault_access(vault_root: Path) -> tuple[int, int, int | None]:
+    try:
+        with os.scandir(vault_root) as entries:
+            next(entries, None)
+    except OSError as exc:
+        raise RuntimeError(f"OPC_VAULT_ROOT 不可读：{vault_root}: {exc}") from exc
+
+    temporary_path: Path | None = None
+    try:
+        descriptor, raw_path = tempfile.mkstemp(prefix=".opc-storage-check-", dir=vault_root)
+        temporary_path = Path(raw_path)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(b"opc-storage-check")
+            handle.flush()
+            os.fsync(handle.fileno())
+    except OSError as exc:
+        raise RuntimeError(f"OPC_VAULT_ROOT 不可写：{vault_root}: {exc}") from exc
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+    return storage_identity(vault_root)
 
 
 def load_env(path: Path) -> None:
@@ -33,8 +66,7 @@ def ensure_storage_layout() -> Path:
     vault_root = Path(configured).expanduser()
     if not vault_root.is_dir():
         raise RuntimeError(f"OPC_VAULT_ROOT 不存在或外接盘未挂载：{vault_root}")
-    if not os.access(vault_root, os.W_OK):
-        raise RuntimeError(f"OPC_VAULT_ROOT 不可写：{vault_root}")
+    verify_vault_access(vault_root)
 
     template_root = ROOT_DIR / "storage-template"
     if not template_root.is_dir():

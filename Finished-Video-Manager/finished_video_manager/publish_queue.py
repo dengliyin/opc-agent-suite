@@ -94,6 +94,7 @@ class PublishQueue:
             connection.execute("INSERT OR IGNORE INTO queue_meta(key, value) VALUES('paused', '1')")
             connection.execute("INSERT OR IGNORE INTO queue_meta(key, value) VALUES('next_run_at', '0')")
             connection.execute("INSERT OR IGNORE INTO queue_meta(key, value) VALUES('execution_mode', 'visible')")
+            connection.execute("INSERT OR IGNORE INTO queue_meta(key, value) VALUES('scheduled_at', '0')")
             interrupted = connection.execute(
                 "UPDATE queue_tasks SET status='needs_review', completed_at=?, error=? WHERE status='running'",
                 (now_text(), "服务在发布过程中重启，请先确认 TikTok 是否已经发布，再决定是否重试。"),
@@ -189,6 +190,7 @@ class PublishQueue:
             paused = self._get_meta(connection, "paused", "0") == "1"
             next_run_at = float(self._get_meta(connection, "next_run_at", "0") or 0)
             execution_mode = self._get_meta(connection, "execution_mode", "visible")
+            scheduled_at = float(self._get_meta(connection, "scheduled_at", "0") or 0)
         counts: dict[str, int] = {}
         for row in rows:
             row["video_path"] = self._resolve_video_path(str(row.get("video_path", "")))
@@ -202,24 +204,50 @@ class PublishQueue:
             "execution_mode": execution_mode,
             "interval_seconds": self.interval_seconds,
             "next_run_at": next_run_at,
+            "scheduled_at": scheduled_at,
             "server_time": time.time(),
         }
 
-    def control(self, action: str, execution_mode: str = "") -> dict[str, Any]:
+    def control(self, action: str, execution_mode: str = "", scheduled_at: float = 0) -> dict[str, Any]:
         with self._connect() as connection:
             if action == "pause":
                 self._set_meta(connection, "paused", "1")
+                self._set_meta(connection, "scheduled_at", "0")
             elif action == "resume":
                 execution_mode = execution_mode.strip() or "visible"
                 if execution_mode not in ("visible", "headless"):
                     raise ValueError("不支持的执行方式")
                 self._set_meta(connection, "execution_mode", execution_mode)
                 self._set_meta(connection, "paused", "0")
+                self._set_meta(connection, "scheduled_at", "0")
+            elif action == "schedule":
+                execution_mode = execution_mode.strip() or "visible"
+                if execution_mode not in ("visible", "headless"):
+                    raise ValueError("不支持的执行方式")
+                if scheduled_at <= time.time():
+                    raise ValueError("预约时间必须晚于当前时间")
+                pending = int(
+                    connection.execute("SELECT COUNT(*) FROM queue_tasks WHERE status='pending'").fetchone()[0]
+                )
+                running = int(
+                    connection.execute("SELECT COUNT(*) FROM queue_tasks WHERE status='running'").fetchone()[0]
+                )
+                if not pending:
+                    raise ValueError("当前没有等待执行的任务")
+                if running:
+                    raise ValueError("已有任务正在执行，不能设置预约")
+                self._set_meta(connection, "execution_mode", execution_mode)
+                self._set_meta(connection, "paused", "1")
+                self._set_meta(connection, "scheduled_at", str(scheduled_at))
+            elif action == "cancel_schedule":
+                self._set_meta(connection, "scheduled_at", "0")
+                self._set_meta(connection, "paused", "1")
             elif action == "clear_pending":
                 connection.execute(
                     "UPDATE queue_tasks SET status='canceled', completed_at=?, error='' WHERE status='pending'",
                     (now_text(),),
                 )
+                self._set_meta(connection, "scheduled_at", "0")
             else:
                 raise ValueError("不支持的队列操作")
         self._wake_event.set()
@@ -274,13 +302,21 @@ class PublishQueue:
 
     def _execute_next(self) -> None:
         with self._connect() as connection:
+            transaction_started = False
             if self._get_meta(connection, "paused", "0") == "1":
-                return
+                scheduled_at = float(self._get_meta(connection, "scheduled_at", "0") or 0)
+                if not scheduled_at or scheduled_at > time.time():
+                    return
+                connection.execute("BEGIN IMMEDIATE")
+                transaction_started = True
+                self._set_meta(connection, "paused", "0")
+                self._set_meta(connection, "scheduled_at", "0")
             next_run_at = float(self._get_meta(connection, "next_run_at", "0") or 0)
             if next_run_at > time.time():
                 return
             execution_mode = self._get_meta(connection, "execution_mode", "visible")
-            connection.execute("BEGIN IMMEDIATE")
+            if not transaction_started:
+                connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 "SELECT * FROM queue_tasks WHERE status='pending' ORDER BY position, id LIMIT 1"
             ).fetchone()

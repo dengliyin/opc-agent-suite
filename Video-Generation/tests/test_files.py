@@ -102,6 +102,40 @@ def test_suppressed_script_stays_for_upstream_but_disappears_until_rewritten(tmp
     assert [script.md_path for script in scan_scripts(settings)] == [md_path]
 
 
+def test_suppressed_hybrid_script_disappears_until_rewritten(tmp_path: Path) -> None:
+    base = settings_for(tmp_path)
+    settings = Settings(
+        **{
+            **base.__dict__,
+            "api_base_path": "/hybrid-omni/api",
+            "workflow": "hybrid_omni",
+        }
+    )
+    settings.reference_root.mkdir(parents=True)
+    md_path = settings.script_root / "混剪-钩子" / "P1" / "source" / "demo.md"
+    md_path.parent.mkdir(parents=True)
+    md_path.write_text(
+        "# Segment 1：00:00 - 00:01\n"
+        "## A. 人物造型参考板提示词\nA\n"
+        "## B. 故事板图片提示词\nB\n",
+        encoding="utf-8",
+    )
+
+    suppress_script(md_path)
+
+    assert md_path.exists()
+    assert scan_scripts(settings) == []
+
+    md_path.write_text(
+        "# Segment 1：00:00 - 00:02\n"
+        "## A. 人物造型参考板提示词\nA2\n"
+        "## B. 故事板图片提示词\nB2\n",
+        encoding="utf-8",
+    )
+
+    assert [script.md_path for script in scan_scripts(settings)] == [md_path]
+
+
 def test_reference_matching_returns_all_product_skus(tmp_path: Path) -> None:
     reference_root = tmp_path / "refs"
     reference_root.mkdir()

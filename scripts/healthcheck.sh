@@ -14,6 +14,7 @@ fi
 
 LABELS=("控制台")
 URLS=("http://${KESAI_APP_HOST:-127.0.0.1}:${KESAI_APP_PORT:-8888}/")
+PATHS=("health")
 
 if [ "$MODE" != "--console-only" ]; then
   LABELS+=("视频采集" "脚本解析" "脚本产出" "脚本适配" "片段产出" "成品管理" "产品脚本改写" "片段合成" "钩子与CTA脚本适配" "AI＋实拍混剪" "混剪参考视频采集" "混剪参考视频解析" "钩子与CTA脚本复刻裂变" "配音")
@@ -33,12 +34,28 @@ if [ "$MODE" != "--console-only" ]; then
     "${OPC_HYBRID_SCRIPT_GENERATION_AGENT_URL:-http://127.0.0.1:10003/}"
     "${OPC_HYBRID_AUDIO_GENERATION_AGENT_URL:-http://127.0.0.1:10004/}"
   )
+  PATHS+=(
+    "api/state"
+    "api/status"
+    "api/outputs"
+    "api/outputs?target_model=veo"
+    "api/catalog"
+    "api/state"
+    "api/state"
+    "api/state"
+    "api/scripts?target_model=omni"
+    "api/library"
+    "api/state"
+    "api/status"
+    "api/outputs"
+    "api/library"
+  )
 fi
 
 FAILED=0
 for index in "${!URLS[@]}"; do
-  url="${URLS[$index]}"
-  if status="$(curl -L -sS -o /dev/null -w '%{http_code}' --max-time 4 "$url")" && [[ "$status" =~ ^[234] ]]; then
+  url="${URLS[$index]%/}/${PATHS[$index]}"
+  if status="$(curl -L -sS -o /dev/null -w '%{http_code}' --max-time 30 "$url")" && [[ "$status" =~ ^2 ]]; then
     printf 'OK    %-16s %s (%s)\n' "${LABELS[$index]}" "$url" "$status"
   else
     printf 'FAIL  %-16s %s\n' "${LABELS[$index]}" "$url"

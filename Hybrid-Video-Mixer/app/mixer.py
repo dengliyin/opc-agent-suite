@@ -892,13 +892,11 @@ def middle_route_signature(audio: Path | str, segments: list[dict]) -> str:
 def build_plan(payload: dict, paths: MixerPaths | None = None) -> dict:
     paths = paths or mixer_paths()
     product = str(payload.get("product") or "").strip()
-    market = str(payload.get("market") or "").strip()
-    model = str(payload.get("model") or "").strip()
+    requested_market = str(payload.get("market") or "").strip()
+    requested_model = str(payload.get("model") or "").strip()
     if not product:
         raise ValueError("请选择产品")
-    if not market:
-        raise ValueError("请选择国家")
-    if not model:
+    if requested_market and not requested_model:
         raise ValueError("请选择AI片段模型")
 
     include_cta = bool(payload.get("include_cta"))
@@ -906,50 +904,87 @@ def build_plan(payload: dict, paths: MixerPaths | None = None) -> dict:
     product_record = next((item for item in library["products"] if item["name"] == product), None)
     if not product_record:
         raise ValueError("未找到产品素材目录")
-    market_record = product_record["markets"].get(market)
-    model_record = market_record["models"].get(model) if market_record else None
-    available_hook_items = [
-        item
-        for item in (model_record["hooks"] if model_record else [])
-        if not item.get("used_count")
-    ]
-    if not available_hook_items:
-        raise ValueError("所选国家没有尚未使用的钩子素材")
-
+    selected_markets = (
+        [(requested_market, product_record["markets"].get(requested_market))]
+        if requested_market
+        else sorted(product_record["markets"].items())
+    )
+    if requested_market and selected_markets[0][1] is None:
+        raise ValueError("未找到所选国家的素材")
     expected_hook_root = delivery_archive_root(paths)
-    hook_paths = []
-    for item in available_hook_items:
-        hook = assert_inside(Path(item["path"]), expected_hook_root)
-        if media_market(hook) != market:
-            raise ValueError("钩子视频国家与所选国家不一致")
-        hook_paths.append(hook)
-    if not market_record["audio"]:
-        raise ValueError("所选国家没有可用的混剪音频")
-    audio_paths = []
-    for item in market_record["audio"]:
-        audio = assert_inside(Path(item["path"]), paths.audio_root / product)
-        if media_market(audio) != market:
-            raise ValueError("混剪音频国家与所选国家不一致")
-        audio_paths.append(audio)
-    cta_paths = []
-    if include_cta:
-        if not model_record["ctas"]:
-            raise ValueError("所选国家没有可用的 CTA 素材")
-        expected_cta_root = delivery_archive_root(paths)
-        for item in model_record["ctas"]:
-            cta = assert_inside(Path(item["path"]), expected_cta_root)
-            if media_market(cta) != market:
-                raise ValueError("CTA视频国家与所选国家不一致")
-            cta_paths.append(cta)
+    market_contexts: dict[str, dict] = {}
+    for market_code, market_record in selected_markets:
+        if market_record is None:
+            continue
+        model_name = requested_model or next(
+            (
+                name
+                for name, record in sorted(market_record["models"].items())
+                if any(not item.get("used_count") for item in record["hooks"])
+            ),
+            "",
+        )
+        model_record = market_record["models"].get(model_name) if model_name else None
+        available_hook_items = [
+            item
+            for item in (model_record["hooks"] if model_record else [])
+            if not item.get("used_count")
+        ]
+        if not available_hook_items:
+            if requested_market:
+                raise ValueError("所选国家没有尚未使用的钩子素材")
+            continue
+        if not market_record["audio"]:
+            if requested_market:
+                raise ValueError("所选国家没有可用的混剪音频")
+            continue
+
+        hook_paths = []
+        for item in available_hook_items:
+            hook = assert_inside(Path(item["path"]), expected_hook_root)
+            if media_market(hook) != market_code:
+                raise ValueError("钩子视频国家与所属国家不一致")
+            hook_paths.append(hook)
+        audio_paths = []
+        for item in market_record["audio"]:
+            audio = assert_inside(Path(item["path"]), paths.audio_root / product)
+            if media_market(audio) != market_code:
+                raise ValueError("混剪音频国家与所属国家不一致")
+            audio_paths.append(audio)
+        cta_paths = []
+        if include_cta:
+            if not model_record["ctas"]:
+                raise ValueError(f"{market_record['label']} 没有可用的 CTA 素材")
+            for item in model_record["ctas"]:
+                cta = assert_inside(Path(item["path"]), expected_hook_root)
+                if media_market(cta) != market_code:
+                    raise ValueError("CTA视频国家与所属国家不一致")
+                cta_paths.append(cta)
+        market_contexts[market_code] = {
+            "record": market_record,
+            "model": model_name,
+            "model_record": model_record,
+            "hook_paths": hook_paths,
+            "audio_paths": audio_paths,
+            "cta_paths": cta_paths,
+        }
+    if not market_contexts:
+        if requested_market:
+            raise ValueError("所选国家暂时无法编排")
+        raise ValueError("该产品所有国家都没有可同时使用的钩子和混剪音频")
 
     display_pool = media_pool(product_record["display"])
     usage_pool = media_pool(product_record["usage"])
 
-    count = len(hook_paths)
+    count = sum(len(context["hook_paths"]) for context in market_contexts.values())
     use_subtitles = bool(payload.get("use_subtitles"))
     if (
         use_subtitles
-        and any(not item.get("subtitle_ready") for item in market_record["audio"])
+        and any(
+            not item.get("subtitle_ready")
+            for context in market_contexts.values()
+            for item in context["record"]["audio"]
+        )
         and not caption_runtime_ready()
     ):
         raise ValueError("TikTok 卡拉 OK 字幕运行依赖不完整")
@@ -977,9 +1012,16 @@ def build_plan(payload: dict, paths: MixerPaths | None = None) -> dict:
     planned_cta_counts: dict[str, int] = {}
     planned_real_counts: dict[str, int] = {}
     variants = []
-    hook_order = list(hook_paths)
+    hook_order = [
+        (market_code, context["model"], hook)
+        for market_code, context in market_contexts.items()
+        for hook in context["hook_paths"]
+    ]
     random.Random(seed).shuffle(hook_order)
-    for index, hook in enumerate(hook_order):
+    for index, (variant_market, variant_model, hook) in enumerate(hook_order):
+        context = market_contexts[variant_market]
+        audio_paths = context["audio_paths"]
+        cta_paths = context["cta_paths"]
         variant_seed = seed + index * 1009
         variant_deduplication = (
             random_deduplication_options(variant_seed)
@@ -1073,6 +1115,8 @@ def build_plan(payload: dict, paths: MixerPaths | None = None) -> dict:
             {
                 "index": index + 1,
                 "seed": variant_seed,
+                "market": variant_market,
+                "model": variant_model,
                 "segments": full_segments,
                 "middle_audio": str(audio),
                 "middle_duration": audio_record["duration"],
@@ -1089,17 +1133,21 @@ def build_plan(payload: dict, paths: MixerPaths | None = None) -> dict:
         )
 
     created_at = dt.datetime.now().isoformat(timespec="seconds")
+    plan_market = requested_market or "ALL"
+    plan_models = sorted({context["model"] for context in market_contexts.values()})
+    plan_model = requested_model or (plan_models[0] if len(plan_models) == 1 else "auto")
     plan_id = (
         f"{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}_"
-        f"{safe_name(product, 60)}_{safe_name(market, 10)}_{seed}"
+        f"{safe_name(product, 60)}_{safe_name(plan_market, 10)}_{seed}"
     )
     plan = {
         "version": 1,
         "plan_id": plan_id,
         "created_at": created_at,
         "product": product,
-        "market": market,
-        "model": model,
+        "market": plan_market,
+        "markets": list(market_contexts),
+        "model": plan_model,
         "settings": {
             "count": count,
             "random_deduplication": random_deduplication,
@@ -1113,14 +1161,44 @@ def build_plan(payload: dict, paths: MixerPaths | None = None) -> dict:
             "use_subtitles": use_subtitles,
         },
         "inputs": {
-            "hook_count": len(hook_paths),
-            "hook_pool": [relative_record(path, delivery_archive_root(paths)) for path in hook_paths],
-            "audio_count": len(audio_paths),
-            "audio_pool": [audio_library_record(path, paths.audio_root) for path in audio_paths],
-            "subtitle_count": market_record["subtitle_count"],
-            "missing_subtitle_count": market_record["missing_subtitle_count"],
-            "cta_count": len(model_record["ctas"]),
-            "cta_pool": model_record["ctas"],
+            "market_count": len(market_contexts),
+            "markets": [
+                {
+                    "code": market_code,
+                    "label": context["record"]["label"],
+                    "model": context["model"],
+                    "hook_count": len(context["hook_paths"]),
+                    "audio_count": len(context["audio_paths"]),
+                    "cta_count": len(context["model_record"]["ctas"]),
+                }
+                for market_code, context in market_contexts.items()
+            ],
+            "hook_count": count,
+            "hook_pool": [
+                relative_record(path, delivery_archive_root(paths))
+                for context in market_contexts.values()
+                for path in context["hook_paths"]
+            ],
+            "audio_count": sum(len(context["audio_paths"]) for context in market_contexts.values()),
+            "audio_pool": [
+                audio_library_record(path, paths.audio_root)
+                for context in market_contexts.values()
+                for path in context["audio_paths"]
+            ],
+            "subtitle_count": sum(
+                context["record"]["subtitle_count"] for context in market_contexts.values()
+            ),
+            "missing_subtitle_count": sum(
+                context["record"]["missing_subtitle_count"] for context in market_contexts.values()
+            ),
+            "cta_count": sum(
+                len(context["model_record"]["ctas"]) for context in market_contexts.values()
+            ),
+            "cta_pool": [
+                item
+                for context in market_contexts.values()
+                for item in context["model_record"]["ctas"]
+            ],
             "include_cta": include_cta,
             "display_count": len(display_pool),
             "usage_count": len(usage_pool),
@@ -1501,6 +1579,8 @@ def render_plan(
     outputs = []
     for variant in plan.get("variants") or []:
         index = int(variant["index"])
+        variant_market = str(variant.get("market") or plan["market"])
+        variant_model = str(variant.get("model") or plan["model"])
         variant_id = f"{plan['plan_id']}_V{index:02d}"
         work_dir = paths.work_root / plan["product"] / "renders" / variant_id
         if work_dir.exists():
@@ -1546,7 +1626,7 @@ def render_plan(
             float(variant["total_duration"]),
         )
         output_name = (
-            f"AI实拍混剪-{safe_name(plan['product'], 70)}-{safe_name(plan['market'], 10)}-"
+            f"AI实拍混剪-{safe_name(plan['product'], 70)}-{safe_name(variant_market, 10)}-"
             f"{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}-V{index:02d}.mp4"
         )
         output_path = paths.output_root / plan["product"] / output_name
@@ -1564,7 +1644,7 @@ def render_plan(
             sidecars = ensure_audio_subtitles(
                 middle_audio_path,
                 float(variant["middle_duration"]),
-                plan["market"],
+                variant_market,
                 work_dir,
             )
             shifted_ass = work_dir / "captions" / "middle-offset.ass"
@@ -1581,8 +1661,8 @@ def render_plan(
             "agent": "Hybrid-Video-Mixer",
             "plan_id": plan["plan_id"],
             "product": plan["product"],
-            "market": plan["market"],
-            "model": plan["model"],
+            "market": variant_market,
+            "model": variant_model,
             "settings": plan["settings"],
             "variant": variant,
             "verified": verified,

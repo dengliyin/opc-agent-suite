@@ -60,6 +60,8 @@ def _scan_hybrid_script_root(settings: Settings) -> List[ScriptFile]:
     scripts: List[ScriptFile] = []
     references_by_product: Dict[str, List[Path]] = {}
     for md_path in sorted(root.rglob("*.md")):
+        if script_suppressed(md_path):
+            continue
         relative = md_path.relative_to(root)
         if len(relative.parts) < 3:
             continue
