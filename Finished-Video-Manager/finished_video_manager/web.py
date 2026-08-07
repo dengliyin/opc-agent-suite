@@ -1100,6 +1100,83 @@ def wait_for_tiktok_upload_ready(page: Any, timeout_ms: int = 180000) -> str:
     )
 
 
+def dismiss_tiktok_upload_preview_dialog(page: Any) -> bool:
+    """Dismiss the first-use upload preview dialog by clicking its backdrop."""
+    try:
+        target = page.evaluate(
+            """() => {
+                const visible = element => {
+                    if (!element) return false;
+                    const rect = element.getBoundingClientRect();
+                    const style = getComputedStyle(element);
+                    return rect.width > 0 && rect.height > 0
+                        && style.display !== 'none' && style.visibility !== 'hidden';
+                };
+                const overlays = Array.from(document.querySelectorAll(
+                    '.TUXModal-overlay[data-transition-status="open"]'
+                )).filter(visible);
+                const overlay = overlays[overlays.length - 1];
+                if (!overlay) return null;
+                const dialogs = Array.from(overlay.querySelectorAll(
+                    '[role="dialog"], .TUXModal-content'
+                )).filter(visible);
+                const dialog = dialogs[dialogs.length - 1];
+                if (!dialog) return null;
+                const rect = dialog.getBoundingClientRect();
+                const points = [
+                    [8, 8],
+                    [window.innerWidth - 8, 8],
+                    [8, window.innerHeight - 8],
+                    [window.innerWidth - 8, window.innerHeight - 8]
+                ];
+                const point = points.find(([x, y]) =>
+                    x < rect.left || x > rect.right || y < rect.top || y > rect.bottom
+                );
+                return point ? { x: point[0], y: point[1] } : null;
+            }"""
+        )
+        if not target:
+            return False
+        page.mouse.click(float(target["x"]), float(target["y"]))
+        page.wait_for_timeout(500)
+        return True
+    except Exception:
+        return False
+
+
+def confirm_tiktok_ai_disclosure_dialog(page: Any) -> bool:
+    """Confirm TikTok's one-time AI-content disclosure dialog when present."""
+    try:
+        clicked = page.evaluate(
+            """() => {
+                const visible = element => {
+                    const rect = element.getBoundingClientRect();
+                    const style = getComputedStyle(element);
+                    return rect.width > 0 && rect.height > 0
+                        && style.display !== 'none' && style.visibility !== 'hidden';
+                };
+                const overlays = Array.from(document.querySelectorAll(
+                    '.TUXModal-overlay[data-transition-status="open"]'
+                )).filter(visible);
+                const overlay = overlays[overlays.length - 1];
+                if (!overlay) return false;
+                const buttons = Array.from(overlay.querySelectorAll(
+                    'button.TUXButton--primary, button[data-type="primary"]'
+                )).filter(button => visible(button)
+                    && !button.disabled && button.getAttribute('aria-disabled') !== 'true')
+                  .sort((a, b) => b.getBoundingClientRect().y - a.getBoundingClientRect().y);
+                if (!buttons.length) return false;
+                buttons[0].click();
+                return true;
+            }"""
+        )
+        if clicked:
+            page.wait_for_timeout(800)
+        return bool(clicked)
+    except Exception:
+        return False
+
+
 def set_tiktok_ai_label(page: Any, enabled: bool) -> bool:
     if not enabled:
         return False
@@ -1136,6 +1213,8 @@ def set_tiktok_ai_label(page: Any, enabled: bool) -> bool:
         )
         if not clicked:
             return False
+        page.wait_for_timeout(500)
+        confirm_tiktok_ai_disclosure_dialog(page)
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             if page.locator('[data-e2e="aigc_container"] input[role="switch"]').is_checked():
@@ -1146,8 +1225,7 @@ def set_tiktok_ai_label(page: Any, enabled: bool) -> bool:
         return False
 
 
-def disable_tiktok_content_quick_check(page: Any) -> bool:
-    labels = ("内容快速检查", "Quick content check", "Content check lite")
+def disable_tiktok_switch(page: Any, labels: tuple[str, ...]) -> bool:
     found_label = False
     try:
         for text in labels:
@@ -1192,6 +1270,20 @@ def disable_tiktok_content_quick_check(page: Any) -> bool:
         return not found_label
     except Exception:
         return False
+
+
+def disable_tiktok_music_copyright_check(page: Any) -> bool:
+    return disable_tiktok_switch(
+        page,
+        ("Music copyright check", "音乐版权检查", "Music copyright"),
+    )
+
+
+def disable_tiktok_content_quick_check(page: Any) -> bool:
+    return disable_tiktok_switch(
+        page,
+        ("内容快速检查", "Quick content check", "Content check lite"),
+    )
 
 
 def tiktok_body_text(page: Any) -> str:
@@ -1587,6 +1679,7 @@ def publish_tiktok_video(
         context = browser.contexts[0] if browser.contexts else browser.new_context()
         page = find_tiktok_upload_page(context) or context.new_page()
         page.bring_to_front()
+        dismiss_tiktok_upload_preview_dialog(page)
         caption_input = visible_tiktok_caption_input(page)
         current_caption = caption_text(caption_input) if caption_input else ""
         if caption and not captions_match(current_caption, caption):
@@ -1603,6 +1696,8 @@ def publish_tiktok_video(
             raise RuntimeError("AI 标识未确认开启，停止发布")
         if not ensure_tiktok_public_visibility(page):
             raise RuntimeError("可见性不是所有人，停止发布")
+        if not disable_tiktok_music_copyright_check(page):
+            raise RuntimeError("Music copyright check 未能关闭，停止发布")
         if not disable_tiktok_content_quick_check(page):
             raise RuntimeError("内容快速检查未能关闭，停止发布")
         if not wait_for_tiktok_upload_complete(page):
@@ -1688,6 +1783,7 @@ def prepare_tiktok_upload(
         upload_complete = wait_for_tiktok_upload_complete(page) if caption else False
         if upload_complete:
             page.wait_for_timeout(1500)
+            dismiss_tiktok_upload_preview_dialog(page)
         caption_filled = fill_tiktok_caption(page, caption) if upload_complete else False
         if caption and upload_complete and not caption_filled:
             page.wait_for_timeout(1000)
