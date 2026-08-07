@@ -68,12 +68,14 @@ class ProductLinkOptionTest(unittest.TestCase):
             patch.object(web, "prepare_tiktok_upload", return_value={"caption_filled": True}),
             patch.object(web, "bitbrowser_post", return_value={"data": {"http": "127.0.0.1:1234"}}),
             patch.object(web, "find_tiktok_upload_page", return_value=page),
+            patch.object(web, "dismiss_tiktok_upload_preview_dialog", return_value=False),
             patch.object(web, "visible_tiktok_caption_input", return_value=locator),
             patch.object(web, "caption_text", return_value=caption),
             patch.object(web, "tiktok_hashtags_are_mentions", return_value=True),
             patch.object(web, "add_tiktok_product_link") as add_product,
             patch.object(web, "set_tiktok_ai_label", return_value=True),
             patch.object(web, "ensure_tiktok_public_visibility", return_value=True),
+            patch.object(web, "disable_tiktok_music_copyright_check", return_value=True) as disable_music,
             patch.object(web, "disable_tiktok_content_quick_check", return_value=True) as disable_check,
             patch.object(web, "wait_for_tiktok_upload_complete", return_value=True),
             patch.object(web, "click_tiktok_publish_button", return_value={"url": "/content"}),
@@ -92,6 +94,7 @@ class ProductLinkOptionTest(unittest.TestCase):
             )
 
         add_product.assert_not_called()
+        disable_music.assert_called_once_with(page)
         disable_check.assert_called_once_with(page)
         self.assertFalse(result["product_linked"])
         self.assertFalse(append_record.call_args.args[-1])
