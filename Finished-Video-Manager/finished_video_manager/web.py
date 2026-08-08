@@ -1271,8 +1271,11 @@ def disable_tiktok_switch(page: Any, labels: tuple[str, ...]) -> bool:
                 controls = container.locator(".Switch__content")
                 control = controls.first if controls.count() > 0 else thumb.locator("xpath=..")
                 control.scroll_into_view_if_needed()
-                control.click()
-
+                try:
+                    control.click()
+                except Exception:
+                    pass
+                page.wait_for_timeout(500)
                 deadline = time.monotonic() + 5
                 while time.monotonic() < deadline:
                     state = str(thumb.get_attribute("data-state") or "").lower()
@@ -1281,7 +1284,14 @@ def disable_tiktok_switch(page: Any, labels: tuple[str, ...]) -> bool:
                     )
                     if state != "checked" and not checked_class:
                         return True
-                    page.wait_for_timeout(200)
+                    # Content Check Lite can finish and re-render at the exact
+                    # moment we click. Retry while it is still checked so a
+                    # transient TikTok state change cannot swallow the click.
+                    try:
+                        control.click()
+                    except Exception:
+                        pass
+                    page.wait_for_timeout(500)
                 return False
         return not found_label
     except Exception:
@@ -1291,14 +1301,37 @@ def disable_tiktok_switch(page: Any, labels: tuple[str, ...]) -> bool:
 def disable_tiktok_music_copyright_check(page: Any) -> bool:
     return disable_tiktok_switch(
         page,
-        ("Music copyright check", "音乐版权检查", "Music copyright"),
+        (
+            "Music copyright check",
+            "音乐版权检查",
+            "Music copyright",
+            "Pag-check sa copyright ng musika",
+            "Pemeriksaan hak cipta musik",
+            "Semakan hak cipta muzik",
+            "Kiểm tra bản quyền nhạc",
+        ),
     )
 
 
 def disable_tiktok_content_quick_check(page: Any) -> bool:
     return disable_tiktok_switch(
         page,
-        ("内容快速检查", "Quick content check", "Content check lite"),
+        (
+            "内容快速检查",
+            "Quick content check",
+            "Content check lite",
+            "Content Check Lite",
+            "Pag-check ng content lite",
+            "Pemeriksaan konten Lite",
+            "Pemeriksaan konten ringan",
+            "Semakan kandungan Lite",
+            "Semakan Kandungan Lite",
+            "Semakan kandungan ringkas",
+            "Kiểm tra Nội dung Lite",
+            "Kiểm tra nội dung Lite",
+            "Kiểm tra nội dung nhanh",
+            "Kiểm tra nhanh nội dung",
+        ),
     )
 
 
@@ -1790,6 +1823,11 @@ def prepare_tiktok_upload(
             upload_page_ready = wait_for_tiktok_upload_ready(page, timeout_ms=30000)
         upload_method = select_tiktok_video(page, video_path)
         upload_started = wait_for_tiktok_upload_state(page)
+        # Disable the pre-publish recommendation check as soon as its switch
+        # appears. Waiting until product/caption setup is complete gives fast
+        # checks time to finish and can make TikTok ignore the first click.
+        content_quick_check_disabled = disable_tiktok_content_quick_check(page)
+        music_copyright_check_disabled = disable_tiktok_music_copyright_check(page)
         caption_pre_filled = False
         caption_input = visible_tiktok_caption_input(page)
         if caption and caption_input:
@@ -1819,6 +1857,8 @@ def prepare_tiktok_upload(
             "upload_page_ready": upload_page_ready,
             "local_draft_discarded": local_draft_discarded,
             "upload_started": upload_started,
+            "content_quick_check_disabled": content_quick_check_disabled,
+            "music_copyright_check_disabled": music_copyright_check_disabled,
             "upload_complete": upload_complete,
             "caption_pre_filled": caption_pre_filled,
             "caption_filled": caption_filled,
