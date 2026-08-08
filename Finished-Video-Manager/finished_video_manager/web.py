@@ -6,6 +6,7 @@ import json
 import mimetypes
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -29,7 +30,6 @@ TIKTOK_UPLOAD_FALLBACK_URL = "https://www.tiktok.com/tiktokstudio/upload?lang=en
 APP_ROOT = Path(__file__).resolve().parents[1]
 DATA_ROOT = APP_ROOT / "data"
 THUMBNAIL_ROOT = DATA_ROOT / "thumbnails"
-FFMPEG_PATH = APP_ROOT.parent / "Video-Assembly-hd" / "runtime" / "bin" / "ffmpeg"
 THUMBNAIL_VERSION = "first-frame-v1"
 PUBLISH_CONFIG_PATH = DATA_ROOT / "publish_config.json"
 PRODUCT_MAPPINGS_PATH = APP_ROOT / "config" / "product_mappings.json"
@@ -62,6 +62,22 @@ _FINISHED_VIDEO_INDEX_TTL_SECONDS = 2.0
 STORAGE_POLL_SECONDS = 5
 STORAGE_FAILURE_LIMIT = 3
 STORAGE_STARTUP_RETRY_SECONDS = 30
+
+
+def ffmpeg_path() -> Path:
+    configured = os.environ.get("FFMPEG_BIN", "").strip()
+    if configured and Path(configured).is_file():
+        return Path(configured)
+    executable = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    bundled = APP_ROOT.parent / "Video-Assembly-hd" / "runtime" / "bin" / executable
+    if bundled.is_file():
+        return bundled
+    direct = shutil.which("ffmpeg")
+    if direct:
+        return Path(direct)
+    raise RuntimeError(f"未找到 FFmpeg：{bundled}")
+
+
 COUNTRY_NAMES = {
     "US": "美国",
     "UK": "英国",
@@ -1863,7 +1879,7 @@ def video_thumbnail_path(path: Path) -> Path:
     cache_dir.mkdir(parents=True, exist_ok=True)
     result = subprocess.run(
         [
-            str(FFMPEG_PATH),
+            str(ffmpeg_path()),
             "-y",
             "-i",
             str(path),

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import math
 import os
@@ -306,18 +307,52 @@ def locate_bin(name: str, extra_paths: Iterable[Path] = ()) -> str | None:
     return found
 
 
+def runtime_binary(name: str) -> str | None:
+    executable = f"{name}.exe" if os.name == "nt" else name
+    return locate_bin(executable, (RUNTIME_ROOT / "bin",)) or shutil.which(name)
+
+
+def browser_path() -> str | None:
+    configured = os.environ.get("HYPERFRAMES_BROWSER_PATH", "").strip()
+    if configured and Path(configured).is_file():
+        return configured
+    local_name = "chrome-headless-shell.exe" if os.name == "nt" else "chrome-headless-shell"
+    local = RUNTIME_ROOT / "chrome" / local_name
+    if local.is_file():
+        return str(local)
+    if os.name == "nt":
+        local_app_data = Path(os.environ.get("LOCALAPPDATA", ""))
+        for candidate in sorted(
+            local_app_data.glob(
+                "ms-playwright/chromium_headless_shell-*/chrome-headless-shell-win64/chrome-headless-shell.exe"
+            ),
+            reverse=True,
+        ):
+            if candidate.is_file():
+                return str(candidate)
+        for variable, relative in (
+            ("PROGRAMFILES", "Google/Chrome/Application/chrome.exe"),
+            ("PROGRAMFILES(X86)", "Microsoft/Edge/Application/msedge.exe"),
+            ("LOCALAPPDATA", "Google/Chrome/Application/chrome.exe"),
+        ):
+            root = os.environ.get(variable, "").strip()
+            if root and (Path(root) / relative).is_file():
+                return str(Path(root) / relative)
+    return None
+
+
 def runtime_env() -> dict[str, str]:
     env = os.environ.copy()
-    env["PATH"] = ":".join([str(RUNTIME_ROOT / "bin"), env.get("PATH", "")])
-    ffmpeg = RUNTIME_ROOT / "bin" / "ffmpeg"
-    ffprobe = RUNTIME_ROOT / "bin" / "ffprobe"
-    browser = RUNTIME_ROOT / "chrome" / "chrome-headless-shell"
-    if ffmpeg.exists():
-        env["HYPERFRAMES_FFMPEG_PATH"] = str(ffmpeg)
-    if ffprobe.exists():
-        env["HYPERFRAMES_FFPROBE_PATH"] = str(ffprobe)
-    if browser.exists():
-        env["HYPERFRAMES_BROWSER_PATH"] = str(browser)
+    env["PATH"] = os.pathsep.join([str(RUNTIME_ROOT / "bin"), env.get("PATH", "")])
+    ffmpeg = runtime_binary("ffmpeg")
+    ffprobe = runtime_binary("ffprobe")
+    browser = browser_path()
+    if ffmpeg:
+        env["HYPERFRAMES_FFMPEG_PATH"] = ffmpeg
+    if ffprobe:
+        env["HYPERFRAMES_FFPROBE_PATH"] = ffprobe
+    if browser:
+        env["HYPERFRAMES_BROWSER_PATH"] = browser
     env["HYPERFRAMES_NO_UPDATE_CHECK"] = "1"
     env["HYPERFRAMES_NO_AUTO_INSTALL"] = "1"
     env["HYPERFRAMES_NO_TELEMETRY"] = "1"
@@ -358,10 +393,15 @@ def caption_language(md_path: Path) -> str:
 
 
 def caption_runtime_ready() -> bool:
+    transcription_ready = (
+        importlib.util.find_spec("faster_whisper") is not None
+        if os.name == "nt"
+        else (RUNTIME_ROOT / "bin" / "uvx").is_file()
+    )
     return (
         CAPTION_TOOL_PATH.is_file()
         and (CAPTION_TOOL_ROOT / "fonts" / "Roboto-Black.ttf").is_file()
-        and (RUNTIME_ROOT / "bin" / "uvx").is_file()
+        and transcription_ready
     )
 
 
@@ -392,11 +432,12 @@ def run_karaoke_captioner(input_path: Path, output_path: Path, md_path: Path, pr
         output_path.name,
     ]
     env = runtime_env()
-    env.pop("DEEPGRAM_API_KEY", None)
     env["UV_CACHE_DIR"] = str(RUNTIME_ROOT / "cache" / "uv")
     env["HF_HOME"] = str(RUNTIME_ROOT / "cache" / "huggingface")
-    env["UV_OFFLINE"] = "1"
-    env["HF_HUB_OFFLINE"] = "1"
+    if os.name != "nt":
+        env.pop("DEEPGRAM_API_KEY", None)
+        env["UV_OFFLINE"] = "1"
+        env["HF_HUB_OFFLINE"] = "1"
     proc = run(command, cwd=CAPTION_TOOL_ROOT, env=env)
     if proc.returncode != 0:
         raise RuntimeError(f"TikTok 卡拉 OK 字幕生成失败\n{proc.stdout}")
@@ -772,19 +813,27 @@ def hyperframes_cmd() -> list[str]:
     if configured and Path(configured).is_file():
         configured_path = Path(configured)
         if configured_path.suffix == ".js":
-            node = RUNTIME_ROOT / "bin" / "node"
-            if not node.exists():
-                die(f"Offline Node.js not found: {node}")
-            return [str(node), str(configured_path)]
+            node = runtime_binary("node")
+            if not node:
+                die("Node.js not found")
+            return [node, str(configured_path)]
+        if configured_path.suffix.lower() in {".cmd", ".bat"}:
+            return ["cmd.exe", "/d", "/s", "/c", str(configured_path)]
         return [str(configured_path)]
-    local_node = RUNTIME_ROOT / "bin" / "node"
-    local_cli = RUNTIME_ROOT / "hyperframes" / "package" / "dist" / "cli.js"
-    if local_node.exists() and local_cli.exists():
-        return [str(local_node), str(local_cli)]
+    local_node = runtime_binary("node")
+    local_cli_candidates = (
+        RUNTIME_ROOT / "hyperframes" / "package" / "dist" / "cli.js",
+        RUNTIME_ROOT / "hyperframes" / "node_modules" / "hyperframes" / "dist" / "cli.js",
+    )
+    local_cli = next((path for path in local_cli_candidates if path.is_file()), None)
+    if local_node and local_cli:
+        return [local_node, str(local_cli)]
     direct = shutil.which("hyperframes", path=env["PATH"])
     if direct:
+        if Path(direct).suffix.lower() in {".cmd", ".bat"}:
+            return ["cmd.exe", "/d", "/s", "/c", direct]
         return [direct]
-    die(f"Offline HyperFrames CLI not found: {local_cli}")
+    die(f"HyperFrames CLI not found: {local_cli_candidates[-1]}")
 
 
 def run_hyperframes(project_dir: Path, output_path: Path, skip_inspect: bool = False) -> None:

@@ -110,13 +110,56 @@ LaunchAgent 直接通过各自运行副本中的 Python 环境启动，不依赖
 
 停止脚本只终止命令行中包含当前副本绝对路径的进程，不会终止其他目录运行的同端口程序。
 
+## Windows 安装
+
+Windows 与 macOS 共用同一套 Agent 业务代码，但各自使用独立的本机配置、Python 环境和服务管理方式。当前 Windows 安装目标为 Windows 10/11 x64、PowerShell 5.1 或更高版本；暂不支持 Windows ARM64。
+
+在 Windows 上通过 Git 克隆或更新代码，不要从 Mac 复制 `.venv`、`.env`、`Video-Assembly-hd/runtime` 或浏览器目录。首次安装请打开普通用户 PowerShell，在仓库根目录执行：
+
+```powershell
+PowerShell -ExecutionPolicy Bypass -File .\scripts\bootstrap_windows.ps1 -VaultRoot "D:\Obsidian Vault"
+```
+
+安装器会在需要时通过 `winget` 安装 Python 3.12，并完成以下工作：
+
+- 将服务运行副本放到 `%LOCALAPPDATA%\OPC-Agent-Suite\Service-Runtime`。
+- 为控制台和 14 个 Agent 创建 15 个互相隔离的 Python 环境。
+- 安装 Playwright Chromium，以及 9998 使用的 Windows x64 Node.js、FFmpeg、FFprobe、HyperFrames、浏览器和 `faster-whisper` 字幕环境。
+- 在 Windows 任务计划程序的 `\OPC-Agent-Suite\` 目录注册 15 个任务。
+- 让 `console-8888` 登录后自动启动，异常退出后自动恢复；9991–10004 不设置登录触发器，只能由 8888 或任务计划程序按需启动。
+
+Windows 的真实配置文件是 `%LOCALAPPDATA%\OPC-Agent-Suite\.env`，日志目录是 `%LOCALAPPDATA%\OPC-Agent-Suite\Logs`。外置盘盘符或资料库位置变化后，只修改这份 `.env` 或进入 8888 的“全局路径设置”，不要修改代码中的默认值。控制台和 Agent 启动前都会验证 `OPC_VAULT_ROOT` 可读写；外置盘暂时断开时会等待恢复，不会回退到旧路径创建资料。
+
+安装完成后可使用：
+
+```powershell
+# 启动或恢复 8888，并打开控制台
+PowerShell -ExecutionPolicy Bypass -File .\scripts\start_console_windows.ps1
+
+# 只检查 8888
+PowerShell -ExecutionPolicy Bypass -File .\scripts\healthcheck_windows.ps1 -ConsoleOnly
+
+# 检查 8888 和当前应当已启动的所有 Agent
+PowerShell -ExecutionPolicy Bypass -File .\scripts\healthcheck_windows.ps1
+
+# 移除 15 个计划任务，默认保留配置、日志和运行副本
+PowerShell -ExecutionPolicy Bypass -File .\scripts\uninstall_windows.ps1
+
+# 连同运行副本和本机配置一起删除
+PowerShell -ExecutionPolicy Bypass -File .\scripts\uninstall_windows.ps1 -RemoveRuntime -RemoveConfiguration
+```
+
+如果只想安装基础程序、稍后再下载体积较大的浏览器或 Whisper 模型，可在首次安装时使用 `-SkipPlaywrightBrowserInstall`、`-SkipHyperFramesBrowserInstall` 或 `-SkipWhisperModelDownload`；相应功能在补装运行环境前不可用。
+
+更新 Windows 程序时先拉取 Git 代码，再重新运行同一条 `bootstrap_windows.ps1` 命令。它会更新服务运行副本和依赖，同时保留 `%LOCALAPPDATA%\OPC-Agent-Suite\.env`、日志以及各 Agent 的本机状态。Mac 继续使用 LaunchAgent，Windows 使用计划任务，两套系统互不覆盖本机配置和业务资料。
+
 ## 依赖策略
 
 - 控制台和所有 Agent 统一使用 Python 3.12。
 - `OPC-Console` 和每个 Agent 均保留独立 `.venv`，避免控制台、Playwright、FastAPI 和视频工具相互污染。
 - 每个目录的 `requirements.lock.txt` 固定直接依赖和传递依赖版本。
 - `requirements.txt` 只转发到对应锁文件，旧安装命令也会得到相同版本。
-- `bootstrap_macos.sh` 负责一次性创建并验证全部环境。
+- `bootstrap_macos.sh` 和 `bootstrap_windows.ps1` 分别负责一次性创建并验证本机环境。
 
 Playwright 默认安装与锁定版本匹配的 Chromium。网络较慢、且本机确定有可用浏览器时，可临时跳过：
 
@@ -140,7 +183,7 @@ OPC_SKIP_PLAYWRIGHT_BROWSER_INSTALL=1 ./scripts/bootstrap_macos.sh
 - 各 Agent 的 `.venv`。
 - `Video-Assembly-hd/runtime`。该目录约 832 MB，并包含超过 GitHub 单文件限制的二进制。
 
-Vault 根目录统一由 `~/Library/Application Support/OPC-Agent-Suite/.env` 中的 `OPC_VAULT_ROOT` 提供。代码中不再依赖固定用户名路径，也不会在配置缺失时猜测旧目录。
+Vault 根目录统一由本机配置中的 `OPC_VAULT_ROOT` 提供：macOS 位于 `~/Library/Application Support/OPC-Agent-Suite/.env`，Windows 位于 `%LOCALAPPDATA%\OPC-Agent-Suite\.env`。代码中不再依赖固定用户名或盘符，也不会在配置缺失时猜测旧目录。
 
 模型配置统一规则：视频拆解使用 `Script-Analysis/config/settings.json`，脚本产出使用 `Script-Generation/opc_engine/features/script_generation/config/model_defaults.json`，脚本适配和产品脚本改写使用各自的 `agent_settings.json`，视频生成使用 `Video-Generation/agent_settings.env`。这些文件随 Git 同步；另一台电脑只需填写各 Agent 的 API Key 和本机路径。
 

@@ -3,19 +3,28 @@ from __future__ import annotations
 
 import os
 import shlex
+import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
-DEFAULT_ENV_FILE = Path.home() / "Library" / "Application Support" / "OPC-Agent-Suite" / ".env"
+LOCAL_CONFIG_ROOT = (
+    Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "OPC-Agent-Suite"
+    if os.name == "nt"
+    else Path.home() / "Library" / "Application Support" / "OPC-Agent-Suite"
+)
+DEFAULT_ENV_FILE = LOCAL_CONFIG_ROOT / ".env"
 
 
 def storage_identity(vault_root: Path) -> tuple[int, int, int | None]:
     stat = vault_root.stat()
-    statvfs = os.statvfs(vault_root)
-    return stat.st_dev, stat.st_ino, getattr(statvfs, "f_fsid", None)
+    if hasattr(os, "statvfs"):
+        statvfs = os.statvfs(vault_root)
+        return stat.st_dev, stat.st_ino, getattr(statvfs, "f_fsid", None)
+    return stat.st_dev, stat.st_ino, None
 
 
 def verify_vault_access(vault_root: Path) -> tuple[int, int, int | None]:
@@ -54,8 +63,20 @@ def load_env(path: Path) -> None:
         key, separator, raw_value = line.partition("=")
         if not separator or not key.strip().isidentifier():
             continue
-        values = shlex.split(raw_value, comments=True, posix=True)
-        value = " ".join(values) if values else ""
+        if os.name == "nt":
+            value = raw_value.strip()
+            if len(value) >= 2 and value[0] == value[-1] == '"':
+                try:
+                    import json
+
+                    value = json.loads(value)
+                except (TypeError, ValueError):
+                    value = value[1:-1]
+            elif len(value) >= 2 and value[0] == value[-1] == "'":
+                value = value[1:-1]
+        else:
+            values = shlex.split(raw_value, comments=True, posix=True)
+            value = " ".join(values) if values else ""
         os.environ[key.strip()] = os.path.expandvars(value)
 
 
@@ -76,16 +97,28 @@ def ensure_storage_layout() -> Path:
     return vault_root
 
 
+def wait_for_storage_layout() -> Path:
+    while True:
+        try:
+            return ensure_storage_layout()
+        except RuntimeError as exc:
+            print(f"控制台等待资料库恢复：{exc}", file=sys.stderr, flush=True)
+            time.sleep(5)
+
+
 def main() -> None:
     env_file = Path(os.environ.get("OPC_ENV_FILE", DEFAULT_ENV_FILE)).expanduser()
     load_env(env_file)
-    ensure_storage_layout()
+    wait_for_storage_layout()
     os.environ["KESAI_APP_NO_OPEN"] = "1"
     os.environ["PYTHONUNBUFFERED"] = "1"
 
     console_dir = ROOT_DIR / "OPC-Console"
     os.chdir(console_dir)
-    os.execve(sys.executable, [sys.executable, str(console_dir / "kesai_app.py")], os.environ)
+    command = [sys.executable, str(console_dir / "kesai_app.py")]
+    if os.name == "nt":
+        raise SystemExit(subprocess.call(command, env=os.environ))
+    os.execve(sys.executable, command, os.environ)
 
 
 if __name__ == "__main__":

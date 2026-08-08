@@ -45,6 +45,10 @@ class ConsoleBoundaryTests(unittest.TestCase):
         for service_id, service in self.app.SERVICES.items():
             self.assertEqual(service["launch_agent_label"], f"com.kesai.opc-agent.{service_id}")
 
+    def test_every_service_has_an_independent_windows_task(self):
+        for service_id, service in self.app.SERVICES.items():
+            self.assertEqual(service["windows_task_name"], rf"\OPC-Agent-Suite\agent-{service_id}")
+
     def test_every_service_uses_a_non_root_business_health_probe(self):
         for service_id, service in self.app.SERVICES.items():
             with self.subTest(service=service_id):
@@ -91,12 +95,80 @@ class ConsoleBoundaryTests(unittest.TestCase):
         )
         self.assertTrue(result["started"])
 
+    def test_start_service_uses_windows_scheduled_task(self):
+        with (
+            mock.patch.object(self.app, "IS_WINDOWS", True),
+            mock.patch.object(self.app, "service_running", return_value=False),
+            mock.patch.object(self.app.subprocess, "run") as run,
+        ):
+            run.side_effect = [
+                mock.Mock(returncode=0, stdout="", stderr=""),
+                mock.Mock(returncode=0, stdout="SUCCESS", stderr=""),
+            ]
+            result = self.app.start_service("collect")
+
+        task_name = r"\OPC-Agent-Suite\agent-collect"
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [
+                ["schtasks.exe", "/Query", "/TN", task_name],
+                ["schtasks.exe", "/Run", "/TN", task_name],
+            ],
+        )
+        self.assertTrue(result["started"])
+
+    def test_stop_service_boots_out_launch_agent_to_prevent_keepalive_restart(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = self.app.SERVICES["collect"]
+            original_status_path = service["health_status_path"]
+            service["health_status_path"] = Path(temp_dir) / "collect.json"
+            try:
+                with (
+                    mock.patch.object(self.app, "service_running", return_value=True),
+                    mock.patch.object(self.app.subprocess, "run") as run,
+                ):
+                    run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+                    result = self.app.stop_service("collect")
+            finally:
+                service["health_status_path"] = original_status_path
+
+        self.assertEqual(
+            run.call_args.args[0],
+            ["launchctl", "bootout", f"gui/{self.app.os.getuid()}/com.kesai.opc-agent.collect"],
+        )
+        self.assertTrue(result["stopped"])
+
+    def test_stop_service_uses_windows_scheduled_task(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = self.app.SERVICES["collect"]
+            original_status_path = service["health_status_path"]
+            service["health_status_path"] = Path(temp_dir) / "collect.json"
+            try:
+                with (
+                    mock.patch.object(self.app, "IS_WINDOWS", True),
+                    mock.patch.object(self.app, "service_running", return_value=True),
+                    mock.patch.object(self.app.subprocess, "run") as run,
+                ):
+                    run.return_value = mock.Mock(returncode=0, stdout="SUCCESS", stderr="")
+                    result = self.app.stop_service("collect")
+                status = json.loads(service["health_status_path"].read_text(encoding="utf-8"))
+            finally:
+                service["health_status_path"] = original_status_path
+
+        self.assertEqual(
+            run.call_args.args[0],
+            ["schtasks.exe", "/End", "/TN", r"\OPC-Agent-Suite\agent-collect"],
+        )
+        self.assertTrue(result["stopped"])
+        self.assertFalse(status["healthy"])
+
     def test_console_waits_for_agent_health_after_start(self):
         html = self.app.INDEX_HTML
 
-        self.assertIn("const startingServices=new Set()", html)
-        self.assertIn("await waitForService(id)", html)
-        self.assertIn("Agent 启动超时", html)
+        self.assertIn("const busyServices=new Set()", html)
+        self.assertIn("await waitForService(id,!running)", html)
+        self.assertIn("/api/agent-services/${action}", html)
+        self.assertIn("停止", html)
 
     def test_console_groups_agents_into_three_workflow_lines(self):
         html = self.app.INDEX_HTML
@@ -280,6 +352,39 @@ class ConsoleBoundaryTests(unittest.TestCase):
         self.assertLess(bootstrap.index('"$ROOT_DIR/scripts/verify_install.sh"'), bootstrap.index(installer_call))
         self.assertIn(installer_call, start)
         self.assertLess(start.index(installer_call), start.index("if curl"))
+
+    def test_windows_distribution_scripts_cover_install_start_health_and_uninstall(self):
+        expected = {
+            "bootstrap_windows.ps1",
+            "start_console_windows.ps1",
+            "install_windows_tasks.ps1",
+            "run_windows_task.ps1",
+            "healthcheck_windows.ps1",
+            "uninstall_windows.ps1",
+            "stage_service_runtime_windows.ps1",
+            "install_video_assembly_runtime_windows.ps1",
+        }
+        scripts_dir = WORKSPACE_ROOT / "scripts"
+        self.assertTrue(all((scripts_dir / name).is_file() for name in expected))
+
+        installer = (scripts_dir / "install_windows_tasks.ps1").read_text(encoding="utf-8")
+        self.assertIn('New-Object -ComObject "Schedule.Service"', installer)
+        self.assertIn("CreateFolder", installer)
+        self.assertIn("New-ScheduledTaskTrigger -AtLogOn", installer)
+        self.assertIn("RestartCount 100", installer)
+        self.assertIn('Register-OpcTask -TaskName "agent-$serviceId"', installer)
+
+        bootstrap = (scripts_dir / "bootstrap_windows.ps1").read_text(encoding="utf-8")
+        self.assertIn("Python.Python.3.12", bootstrap)
+        self.assertIn("playwright install chromium", bootstrap)
+        self.assertIn("install_video_assembly_runtime_windows.ps1", bootstrap)
+
+        runner = (scripts_dir / "run_windows_task.ps1").read_text(encoding="utf-8")
+        self.assertIn('"ffmpeg.exe"', runner)
+        self.assertIn('"node.exe"', runner)
+        self.assertIn("HYPERFRAMES_CLI_PATH", runner)
+
+        self.assertTrue((WORKSPACE_ROOT / ".env.windows.example").is_file())
 
     def test_console_no_longer_exposes_legacy_business_routes(self):
         self.assertTrue({"/product", "/publish", "/metrics", "/optimize"}.isdisjoint(self.app.ROUTE_TO_SERVICE))

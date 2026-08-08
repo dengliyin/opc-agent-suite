@@ -76,24 +76,25 @@ def scan_now() -> dict[str, Any]:
 
 
 def runtime_checks() -> list[dict[str, Any]]:
+    node = core.runtime_binary("node")
+    ffmpeg = core.runtime_binary("ffmpeg")
+    ffprobe = core.runtime_binary("ffprobe")
+    browser = core.browser_path()
+    hyperframes_ok = True
+    try:
+        hyperframes = core.hyperframes_cmd()
+        hyperframes_path = Path(hyperframes[-1])
+    except SystemExit:
+        hyperframes_ok = False
+        hyperframes_path = core.RUNTIME_ROOT / "hyperframes"
     checks = [
         ("pending", "待拼接目录", core.PENDING_ROOT, core.PENDING_ROOT.is_dir()),
         ("output", "成品目录", core.OUTPUT_ROOT, core.OUTPUT_ROOT.is_dir()),
-        ("node", "Node.js", core.RUNTIME_ROOT / "bin" / "node", (core.RUNTIME_ROOT / "bin" / "node").is_file()),
-        ("ffmpeg", "FFmpeg", core.RUNTIME_ROOT / "bin" / "ffmpeg", (core.RUNTIME_ROOT / "bin" / "ffmpeg").is_file()),
-        ("ffprobe", "FFprobe", core.RUNTIME_ROOT / "bin" / "ffprobe", (core.RUNTIME_ROOT / "bin" / "ffprobe").is_file()),
-        (
-            "hyperframes",
-            "HyperFrames",
-            core.RUNTIME_ROOT / "hyperframes" / "package" / "dist" / "cli.js",
-            (core.RUNTIME_ROOT / "hyperframes" / "package" / "dist" / "cli.js").is_file(),
-        ),
-        (
-            "chrome",
-            "离线 Chrome",
-            core.RUNTIME_ROOT / "chrome" / "chrome-headless-shell",
-            (core.RUNTIME_ROOT / "chrome" / "chrome-headless-shell").is_file(),
-        ),
+        ("node", "Node.js", Path(node or core.RUNTIME_ROOT / "bin" / "node"), bool(node)),
+        ("ffmpeg", "FFmpeg", Path(ffmpeg or core.RUNTIME_ROOT / "bin" / "ffmpeg"), bool(ffmpeg)),
+        ("ffprobe", "FFprobe", Path(ffprobe or core.RUNTIME_ROOT / "bin" / "ffprobe"), bool(ffprobe)),
+        ("hyperframes", "HyperFrames", hyperframes_path, hyperframes_ok),
+        ("chrome", "Chrome", Path(browser or core.RUNTIME_ROOT / "chrome"), bool(browser)),
         ("gsap", "本地 GSAP", core.VENDOR_ROOT / "gsap.min.js", (core.VENDOR_ROOT / "gsap.min.js").is_file()),
     ]
     return [

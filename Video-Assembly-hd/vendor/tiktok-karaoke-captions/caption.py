@@ -162,7 +162,54 @@ def extract_audio(video: Path, out_wav: Path) -> None:
 def transcribe_json(audio: Path, out_dir: Path, out_stem: str,
                     model_key: str, language: str,
                     bias_prompt: str | None) -> dict:
-    """Run mlx-whisper, return parsed JSON (with word-level timestamps)."""
+    """Run the platform-local Whisper backend with word timestamps."""
+    if sys.platform == "win32":
+        from faster_whisper import WhisperModel
+
+        model_name = "large-v3" if model_key == "large" else model_key
+        device = os.environ.get("VIDEO_ASSEMBLY_WHISPER_DEVICE", "cpu")
+        compute_type = os.environ.get(
+            "VIDEO_ASSEMBLY_WHISPER_COMPUTE_TYPE",
+            "float16" if device == "cuda" else "int8",
+        )
+        print(f"   model: {model_name} (faster-whisper) | language: {language}")
+        model = WhisperModel(
+            model_name,
+            device=device,
+            compute_type=compute_type,
+            download_root=os.environ.get("HF_HOME") or None,
+        )
+        segments, _info = model.transcribe(
+            str(audio),
+            language=language,
+            initial_prompt=bias_prompt,
+            word_timestamps=True,
+            vad_filter=True,
+        )
+        payload = {
+            "segments": [
+                {
+                    "start": float(segment.start),
+                    "end": float(segment.end),
+                    "text": segment.text,
+                    "words": [
+                        {
+                            "word": word.word,
+                            "start": float(word.start),
+                            "end": float(word.end),
+                        }
+                        for word in (segment.words or [])
+                    ],
+                }
+                for segment in segments
+            ]
+        }
+        (out_dir / f"{out_stem}.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return payload
+
     model = MODEL_MAP[model_key]
     cmd = [
         "uvx", "--from", "mlx-whisper", "mlx_whisper",

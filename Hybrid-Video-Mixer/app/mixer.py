@@ -110,7 +110,7 @@ def ffmpeg_path() -> str:
     direct = shutil.which("ffmpeg")
     if direct:
         return direct
-    bundled = ASSEMBLY_RUNTIME / "bin" / "ffmpeg"
+    bundled = ASSEMBLY_RUNTIME / "bin" / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
     if bundled.is_file():
         return str(bundled)
     raise RuntimeError("未找到 FFmpeg")
@@ -123,7 +123,7 @@ def ffprobe_path() -> str:
     direct = shutil.which("ffprobe")
     if direct:
         return direct
-    bundled = ASSEMBLY_RUNTIME / "bin" / "ffprobe"
+    bundled = ASSEMBLY_RUNTIME / "bin" / ("ffprobe.exe" if os.name == "nt" else "ffprobe")
     if bundled.is_file():
         return str(bundled)
     raise RuntimeError("未找到 FFprobe")
@@ -133,7 +133,11 @@ def hyperframes_cmd() -> list[str]:
     configured = os.environ.get("HYBRID_MIX_HYPERFRAMES", "").strip()
     if configured and Path(configured).is_file():
         return [configured]
-    node = ASSEMBLY_RUNTIME / "bin" / "node"
+    node = Path(os.environ.get("HYPERFRAMES_NODE_BIN", "")).expanduser()
+    cli = Path(os.environ.get("HYPERFRAMES_CLI_PATH", "")).expanduser()
+    if node.is_file() and cli.is_file():
+        return [str(node), str(cli)]
+    node = ASSEMBLY_RUNTIME / "bin" / ("node.exe" if os.name == "nt" else "node")
     cli = ASSEMBLY_RUNTIME / "hyperframes" / "package" / "dist" / "cli.js"
     if node.is_file() and cli.is_file():
         return [str(node), str(cli)]

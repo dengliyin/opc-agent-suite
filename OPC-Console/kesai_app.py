@@ -16,15 +16,21 @@ from urllib.parse import urljoin, urlparse
 
 ROOT = Path(__file__).resolve().parent
 WORKSPACE_ROOT = ROOT.parent
+IS_WINDOWS = os.name == "nt"
+LOCAL_CONFIG_ROOT = (
+    Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "OPC-Agent-Suite"
+    if IS_WINDOWS
+    else Path.home() / "Library" / "Application Support" / "OPC-Agent-Suite"
+)
 ENV_FILE = Path(
     os.environ.get(
         "OPC_ENV_FILE",
-        Path.home() / "Library" / "Application Support" / "OPC-Agent-Suite" / ".env",
+        LOCAL_CONFIG_ROOT / ".env",
     )
 ).expanduser()
 HOST = os.environ.get("KESAI_APP_HOST", "127.0.0.1")
 PORT = int(os.environ.get("KESAI_APP_PORT", "8888"))
-HEALTH_STATUS_DIR = Path.home() / "Library" / "Application Support" / "OPC-Agent-Suite" / "service-health"
+HEALTH_STATUS_DIR = LOCAL_CONFIG_ROOT / "service-health"
 HEALTH_STATUS_MAX_AGE_SECONDS = 45
 
 
@@ -40,8 +46,8 @@ def service_port(url: str, fallback: int) -> int:
 
 
 def agent_python(agent_dir: Path) -> str:
-    candidate = agent_dir / ".venv" / "bin" / "python"
-    return str(candidate) if candidate.exists() else "python3"
+    candidate = agent_dir / ".venv" / ("Scripts/python.exe" if IS_WINDOWS else "bin/python")
+    return str(candidate) if candidate.exists() else ("python" if IS_WINDOWS else "python3")
 
 
 VIDEO_COLLECTION_DIR = WORKSPACE_ROOT / "Video-Collection"
@@ -183,6 +189,7 @@ def build_services() -> dict[str, dict]:
     }
     for service_id, service in services.items():
         service["launch_agent_label"] = f"com.kesai.opc-agent.{service_id}"
+        service["windows_task_name"] = rf"\OPC-Agent-Suite\agent-{service_id}"
     health_paths = {
         "collect": "/api/state",
         "analyze": "/api/status",
@@ -495,13 +502,7 @@ def services_payload() -> dict:
     return {"services": [service_status(service_id) for service_id in SERVICES]}
 
 
-def start_service(service_id: str) -> dict:
-    if service_id not in SERVICES:
-        raise ValueError("未知 Agent 服务")
-    service = SERVICES[service_id]
-    if service_running(service):
-        return service_status(service_id) | {"started": False, "message": "服务已运行"}
-
+def start_service_macos(service: dict) -> None:
     domain = f"gui/{os.getuid()}"
     target = f"{domain}/{service['launch_agent_label']}"
     registration = subprocess.run(
@@ -533,7 +534,90 @@ def start_service(service_id: str) -> dict:
     if result.returncode:
         detail = result.stderr.strip() or result.stdout.strip() or "launchctl kickstart 失败"
         raise RuntimeError(f"Agent LaunchAgent 未安装或无法启动：{detail}")
+
+
+def start_service_windows(service: dict) -> None:
+    task_name = service["windows_task_name"]
+    query = subprocess.run(
+        ["schtasks.exe", "/Query", "/TN", task_name],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if query.returncode:
+        raise RuntimeError(
+            "Agent Windows 计划任务不存在，请先运行 scripts\\bootstrap_windows.ps1："
+            f"{task_name}"
+        )
+    result = subprocess.run(
+        ["schtasks.exe", "/Run", "/TN", task_name],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode:
+        detail = result.stderr.strip() or result.stdout.strip() or "schtasks /Run 失败"
+        raise RuntimeError(f"Agent Windows 计划任务无法启动：{detail}")
+
+
+def start_service(service_id: str) -> dict:
+    if service_id not in SERVICES:
+        raise ValueError("未知 Agent 服务")
+    service = SERVICES[service_id]
+    if service_running(service):
+        return service_status(service_id) | {"started": False, "message": "服务已运行"}
+
+    if IS_WINDOWS:
+        start_service_windows(service)
+    else:
+        start_service_macos(service)
     return service_status(service_id) | {"started": True, "message": "已发送启动命令"}
+
+
+def stop_service_macos(service: dict) -> None:
+    target = f"gui/{os.getuid()}/{service['launch_agent_label']}"
+    result = subprocess.run(
+        ["launchctl", "bootout", target],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode:
+        detail = result.stderr.strip() or result.stdout.strip() or "launchctl bootout 失败"
+        raise RuntimeError(f"Agent LaunchAgent 无法停止：{detail}")
+
+
+def stop_service_windows(service: dict) -> None:
+    task_name = service["windows_task_name"]
+    result = subprocess.run(
+        ["schtasks.exe", "/End", "/TN", task_name],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode:
+        detail = result.stderr.strip() or result.stdout.strip() or "schtasks /End 失败"
+        raise RuntimeError(f"Agent Windows 计划任务无法停止：{detail}")
+
+
+def stop_service(service_id: str) -> dict:
+    if service_id not in SERVICES:
+        raise ValueError("未知 Agent 服务")
+    service = SERVICES[service_id]
+    if not service_running(service):
+        return service_status(service_id) | {"stopped": False, "message": "服务未运行"}
+
+    if IS_WINDOWS:
+        stop_service_windows(service)
+    else:
+        stop_service_macos(service)
+    status_path = Path(service["health_status_path"])
+    status_path.parent.mkdir(parents=True, exist_ok=True)
+    status_path.write_text(
+        json.dumps({"healthy": False, "checked_at": time.time(), "detail": "stopped from console"}),
+        encoding="utf-8",
+    )
+    return service_status(service_id) | {"stopped": True, "message": "已发送停止命令"}
 
 
 INDEX_HTML = """<!doctype html>
@@ -560,13 +644,13 @@ const workflowLines=[
   {title:'线路 3 · AI＋实拍混剪',description:'独立采集、解析、复刻裂变钩子/CTA参考视频，并生成混剪配音、AI首尾片段与实拍成片。',steps:['hybrid_collect','hybrid_analyze','hybrid_script','hybrid_adapt',{id:'assemble',label:'钩子与 CTA 片段产出'},'hybrid_voice','hybrid_mix']}
 ];
 let services=[];
-const startingServices=new Set();
+const busyServices=new Set();
 function esc(value){return String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function cardHtml(step,index){const reference=typeof step==='string'?{id:step}:step;if(!reference.id){return `<article class="card planned"><div class="top"><span class="step">STEP ${String(index+1).padStart(2,'0')} · ${esc(reference.port)}</span><span class="status planned">待开发</span></div><h2>${esc(reference.label)}</h2><div class="actions"><button disabled>暂未接入</button></div></article>`}const service=services.find(item=>item.id===reference.id);if(!service)return '';const starting=startingServices.has(service.id)&&!service.running;return `<article class="card"><div class="top"><span class="step">STEP ${String(index+1).padStart(2,'0')} · ${esc(new URL(service.url).port)}</span><span class="status ${service.running?'on':''}">${service.running?'运行中':starting?'启动中…':'未启动'}</span></div><h2>${esc(reference.label||service.label)}</h2><div class="actions"><button class="primary" onclick="startService('${esc(service.id)}')" ${service.running||starting?'disabled':''}>${service.running?'已启动':starting?'启动中…':'启动'}</button><a class="button" href="${esc(service.url)}" target="_blank" rel="noreferrer">打开</a></div></article>`}
+function cardHtml(step,index){const reference=typeof step==='string'?{id:step}:step;if(!reference.id){return `<article class="card planned"><div class="top"><span class="step">STEP ${String(index+1).padStart(2,'0')} · ${esc(reference.port)}</span><span class="status planned">待开发</span></div><h2>${esc(reference.label)}</h2><div class="actions"><button disabled>暂未接入</button></div></article>`}const service=services.find(item=>item.id===reference.id);if(!service)return '';const busy=busyServices.has(service.id);return `<article class="card"><div class="top"><span class="step">STEP ${String(index+1).padStart(2,'0')} · ${esc(new URL(service.url).port)}</span><span class="status ${service.running?'on':''}">${busy?(service.running?'停止中…':'启动中…'):(service.running?'运行中':'未启动')}</span></div><h2>${esc(reference.label||service.label)}</h2><div class="actions"><button class="primary" onclick="toggleService('${esc(service.id)}',${service.running})" ${busy?'disabled':''}>${busy?'处理中…':service.running?'停止':'启动'}</button><a class="button" href="${esc(service.url)}" target="_blank" rel="noreferrer">打开</a></div></article>`}
 function render(){workflowsHost.innerHTML=workflowLines.map(line=>`<section class="workflow"><div class="workflowHead"><div class="workflowTitle">${esc(line.title)}</div><div class="workflowDescription">${esc(line.description)}</div></div><div class="flow">${line.steps.map(cardHtml).join('')}</div></section>`).join('');destination.innerHTML=cardHtml({id:'finished'},0);const count=services.filter(s=>s.running).length;summary.textContent=`${count} / ${services.length} 个 Agent 运行中`;}
 async function refresh(){try{const r=await fetch('/api/agent-services');const data=await r.json();services=data.services;render()}catch(e){summary.textContent='服务状态读取失败'}}
-async function waitForService(id){const deadline=Date.now()+30000;while(Date.now()<deadline){await new Promise(resolve=>setTimeout(resolve,1000));await refresh();if(services.some(s=>s.id===id&&s.running))return true}return false}
-async function startService(id){startingServices.add(id);render();try{const r=await fetch('/api/agent-services/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});const data=await r.json();if(!r.ok)throw new Error(data.error||'启动失败');if(!await waitForService(id))throw new Error('Agent 启动超时，请检查对应运行日志')}catch(e){alert(e.message)}finally{startingServices.delete(id);await refresh()}}
+async function waitForService(id,running){const deadline=Date.now()+30000;while(Date.now()<deadline){await new Promise(resolve=>setTimeout(resolve,1000));await refresh();if(services.some(s=>s.id===id&&s.running===running))return true}return false}
+async function toggleService(id,running){busyServices.add(id);render();const action=running?'stop':'start';try{const r=await fetch(`/api/agent-services/${action}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});const data=await r.json();if(!r.ok)throw new Error(data.error||`${running?'停止':'启动'}失败`);if(!await waitForService(id,!running))throw new Error(`Agent ${running?'停止':'启动'}超时，请检查对应运行日志`)}catch(e){alert(e.message)}finally{busyServices.delete(id);await refresh()}}
 refresh();setInterval(refresh,4000);
 </script></body></html>"""
 
@@ -584,7 +668,7 @@ main{max-width:980px;margin:auto;padding:48px 24px 80px}header{display:flex;just
 </style>
 </head>
 <body><main>
-<header><div><h1>全局路径设置</h1><p>这些值直接来自项目根目录的 <code>.env</code>，并作为已接入 Agent 的全局默认路径。变量写法会原样保留。</p></div><a class="button" href="/">返回控制台</a></header>
+<header><div><h1>全局路径设置</h1><p>这些值直接来自当前电脑的统一 <code>.env</code> 配置文件，并作为已接入 Agent 的全局默认路径。变量写法会原样保留。</p></div><a class="button" href="/">返回控制台</a></header>
 <div class="envFile" id="envFile"></div>
 <section class="groups" id="fields">正在读取路径…</section>
 <div class="actions"><span class="message" id="message">保存后，新启动的 Agent 会读取新路径；已运行 Agent 需要重启。</span><button class="primary" id="saveButton" onclick="savePaths()">保存全局路径</button></div>
@@ -670,6 +754,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/agent-services/start":
                 payload = self.read_json()
                 self.send_json(200, start_service(str(payload.get("id", ""))))
+            elif path == "/api/agent-services/stop":
+                payload = self.read_json()
+                self.send_json(200, stop_service(str(payload.get("id", ""))))
             elif path == "/api/global-paths":
                 payload = self.read_json()
                 self.send_json(200, save_global_paths(payload.get("paths")))

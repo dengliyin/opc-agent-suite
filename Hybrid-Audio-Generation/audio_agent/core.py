@@ -188,14 +188,16 @@ def find_document(document_id: str, paths: AudioPaths | None = None) -> dict:
 
 
 def runtime_paths() -> tuple[Path, Path, Path]:
-    node = Path(os.environ.get("HYPERFRAMES_NODE_BIN", ASSEMBLY_RUNTIME / "bin/node")).expanduser()
+    node_name = "node.exe" if os.name == "nt" else "node"
+    ffmpeg_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    node = Path(os.environ.get("HYPERFRAMES_NODE_BIN", ASSEMBLY_RUNTIME / "bin" / node_name)).expanduser()
     cli = Path(
         os.environ.get(
             "HYPERFRAMES_CLI_PATH",
             ASSEMBLY_RUNTIME / "hyperframes/package/dist/cli.js",
         )
     ).expanduser()
-    ffmpeg = Path(os.environ.get("FFMPEG_BIN", ASSEMBLY_RUNTIME / "bin/ffmpeg")).expanduser()
+    ffmpeg = Path(os.environ.get("FFMPEG_BIN", ASSEMBLY_RUNTIME / "bin" / ffmpeg_name)).expanduser()
     if not node.is_file():
         raise RuntimeError(f"未找到 Node.js：{node}")
     if not cli.is_file():
