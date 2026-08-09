@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import html
 import io
 import json
@@ -23,7 +24,6 @@ from opc_engine.core.project_assets import (
     product_project_ready,
     product_project_root,
     require_product_project,
-    source_stage_dir,
 )
 from opc_engine.features.script_adaptation import content_workflow_stage as workflow
 from opc_engine.features.script_adaptation.script_adaptation_agent import (
@@ -1171,6 +1171,30 @@ def adaptation_output_stem(config: dict[str, Any], script_filename: str, target_
     return f"{model_stem}-{script_stem}"
 
 
+def adaptation_runtime_id(script: dict[str, str], target_model: str) -> str:
+    """Return a stable, short identity for an internal adaptation workspace."""
+    identity = "\n".join(
+        (
+            str(script.get("adaptation_batch_key") or ""),
+            str(script.get("source_path") or ""),
+            str(script.get("filename") or ""),
+            normalize_target_model(target_model),
+        )
+    )
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+
+
+def adaptation_runtime_input_path(config: dict[str, Any], script: dict[str, str], target_model: str) -> Path:
+    runtime_dir = (
+        product_project_root(config)
+        / "runtime_state"
+        / "adaptation_jobs"
+        / adaptation_runtime_id(script, target_model)
+    )
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    return runtime_dir / "input.md"
+
+
 def format_file_size(size: int) -> str:
     if size < 1024:
         return f"{size} B"
@@ -1776,8 +1800,7 @@ class AgentWebJob:
         source_id = adaptation_output_stem(config, script_filename, target_model)
         source_anchor = script["source_path"] or script_filename
         product_folder = workflow.product_folder_from_script(config, source_anchor)
-        script_dir = source_stage_dir(source_id, "scripts", config)
-        script_path = script_dir / f"{source_id}.md"
+        script_path = adaptation_runtime_input_path(config, script, target_model)
         script_path.write_text(script_text.rstrip() + "\n", encoding="utf-8")
         overrides["script_adaptation_input_path"] = str(script_path)
         overrides["script_adaptation_output_stem"] = source_id
