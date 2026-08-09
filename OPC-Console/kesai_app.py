@@ -195,7 +195,7 @@ def build_services() -> dict[str, dict]:
         "analyze": "/api/status",
         "script": "/api/outputs",
         "adapt": "/api/outputs?target_model=veo",
-        "assemble": "/api/catalog",
+        "assemble": "/health",
         "finished": "/api/state",
         "rewrite": "/api/state",
         "compose": "/api/state",

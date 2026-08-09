@@ -415,6 +415,24 @@ def test_scan_archived_scripts_matches_references_once_per_product(tmp_path: Pat
     assert calls == ["P1"]
 
 
+def test_scan_scripts_skips_file_removed_after_enumeration(tmp_path: Path, monkeypatch) -> None:
+    settings = settings_for(tmp_path)
+    product_dir = settings.script_root / "P1"
+    product_dir.mkdir(parents=True)
+    md_path = product_dir / "removed.md"
+    md_path.write_text("# Segment 1", encoding="utf-8")
+    original_read_text = Path.read_text
+
+    def read_text_with_sync_race(path: Path, *args, **kwargs):
+        if path == md_path:
+            raise FileNotFoundError(path)
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text_with_sync_race)
+
+    assert scan_scripts(settings) == []
+
+
 def test_grok_image_outputs_must_match_configured_aspect(tmp_path: Path) -> None:
     settings = Settings(
         **{

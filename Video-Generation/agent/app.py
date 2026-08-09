@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -32,6 +34,9 @@ job_managers = {
 }
 job_manager = job_managers["omni"]
 static_dir = Path(__file__).resolve().parent.parent / "static"
+CATALOG_CACHE_TTL_SECONDS = max(0.0, float(os.getenv("CATALOG_CACHE_TTL_SECONDS", "5")))
+_catalog_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
+_catalog_cache_lock = threading.Lock()
 
 
 IMAGE_SIZE_CHOICES = [
@@ -79,6 +84,11 @@ OPTIONAL_API_PAYLOAD_KEYS = {
 }
 
 app = FastAPI(title="Fragment Output Agent")
+
+
+@app.get("/health")
+async def health() -> Dict[str, str]:
+    return {"status": "ok"}
 
 
 class RunRequest(BaseModel):
@@ -724,17 +734,31 @@ def _reload_runtime_settings() -> None:
         "hybrid_omni": JobManager(hybrid_omni_settings),
     }
     job_manager = job_managers["omni"]
+    _clear_catalog_cache()
 
 
 def _catalog_payload(current: Settings) -> Dict[str, Any]:
-    try:
-        scripts = scan_scripts(current, include_archived=current.workflow == "standard")
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=_safe(str(exc)))
-    return {
-        "summary": summarize_catalog(current, scripts),
-        "scripts": [script_to_dict(current, script) for script in scripts],
-    }
+    cache_key = current.api_base_path
+    with _catalog_cache_lock:
+        now = time.monotonic()
+        cached = _catalog_cache.get(cache_key)
+        if cached is not None and now - cached[0] < CATALOG_CACHE_TTL_SECONDS:
+            return cached[1]
+        try:
+            scripts = scan_scripts(current, include_archived=current.workflow == "standard")
+            payload = {
+                "summary": summarize_catalog(current, scripts),
+                "scripts": [script_to_dict(current, script) for script in scripts],
+            }
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=_safe(str(exc)))
+        _catalog_cache[cache_key] = (time.monotonic(), payload)
+        return payload
+
+
+def _clear_catalog_cache() -> None:
+    with _catalog_cache_lock:
+        _catalog_cache.clear()
 
 
 def _run_pipeline(provider: str, request: RunRequest) -> Dict[str, Any]:

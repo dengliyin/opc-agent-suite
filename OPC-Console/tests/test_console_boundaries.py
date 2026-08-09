@@ -52,7 +52,10 @@ class ConsoleBoundaryTests(unittest.TestCase):
     def test_every_service_uses_a_non_root_business_health_probe(self):
         for service_id, service in self.app.SERVICES.items():
             with self.subTest(service=service_id):
-                self.assertTrue(service["health_path"].startswith("/api/"))
+                self.assertTrue(service["health_path"].startswith("/"))
+                self.assertNotEqual(service["health_path"], "/")
+
+        self.assertEqual(self.app.SERVICES["assemble"]["health_path"], "/health")
 
     def test_service_health_uses_recent_supervisor_probe_result(self):
         service = self.app.SERVICES["hybrid_adapt"].copy()
@@ -72,7 +75,7 @@ class ConsoleBoundaryTests(unittest.TestCase):
         healthcheck = (WORKSPACE_ROOT / "scripts" / "healthcheck.sh").read_text(encoding="utf-8")
 
         self.assertIn('"api/scripts?target_model=omni"', healthcheck)
-        self.assertIn('"api/catalog"', healthcheck)
+        self.assertIn('"health"', healthcheck)
         self.assertIn('[[ "$status" =~ ^2 ]]', healthcheck)
 
     def test_start_service_uses_launchctl_kickstart(self):
