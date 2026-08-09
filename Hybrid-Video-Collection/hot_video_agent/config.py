@@ -83,6 +83,21 @@ def safe_name(value: str, default: str = "untitled", max_length: int = 120) -> s
     return (text[:max_length].strip(" ._") or default)
 
 
+VIDEO_FILENAME_STEM_MAX = 96
+VIDEO_USERNAME_MAX = 24
+
+
+def video_filename_stem(username: str, video_id: str, title: str) -> str:
+    safe_username = safe_name(username, "unknown_user", VIDEO_USERNAME_MAX)
+    title_budget = max(16, VIDEO_FILENAME_STEM_MAX - len(safe_username) - len(video_id) - 2)
+    safe_title = safe_name(title, "untitled", title_budget)
+    return safe_name(
+        f"{safe_username}-{video_id}-{safe_title}",
+        video_id,
+        VIDEO_FILENAME_STEM_MAX,
+    )
+
+
 def deep_merge(base: Dict[str, Any], overlay: Dict[str, Any]) -> Dict[str, Any]:
     merged: Dict[str, Any] = {}
     for key, value in base.items():

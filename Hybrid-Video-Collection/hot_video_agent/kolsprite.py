@@ -13,7 +13,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
-from .config import safe_name
+from .config import VIDEO_USERNAME_MAX, safe_name, video_filename_stem
 from .paths import ProjectPaths
 
 
@@ -125,7 +125,7 @@ class KolspriteDownloader:
                 username = "unknown_user"
         title = page_title.strip() or str(row.get("video_title") or row.get("title") or "").strip() or "untitled"
         title = re.sub(r"^\s*ads\s*", "", title, flags=re.I).strip() or "untitled"
-        return safe_name(f"{username}-{video_id}-{title}", video_id, 180)
+        return video_filename_stem(username, video_id, title)
 
     def row_download_info(self, row: Dict[str, str]) -> Tuple[str, str, Path, Path]:
         url = self.normalize_tiktok_download_url(row["tiktok_video_url"])
@@ -165,7 +165,7 @@ class KolspriteDownloader:
                         return candidate
                 except Exception:
                     pass
-            safe_username = safe_name(username, "unknown_user", 80).lower()
+            safe_username = safe_name(username, "unknown_user", VIDEO_USERNAME_MAX).lower()
             if candidate.stem.lower().startswith(f"{safe_username}-{video_id}-"):
                 return candidate
         return None

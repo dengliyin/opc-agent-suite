@@ -16,6 +16,13 @@ from hot_video_agent import config as core  # noqa: E402
 
 
 class ConfigTests(unittest.TestCase):
+    def test_video_filename_is_bounded_and_keeps_video_id(self) -> None:
+        video_id = "7666010963795102989"
+        stem = core.video_filename_stem("digimon634", video_id, "Mini drone " + "very high end " * 30)
+
+        self.assertLessEqual(len(stem), core.VIDEO_FILENAME_STEM_MAX)
+        self.assertIn(video_id, stem)
+
     def test_init_migrates_legacy_config_to_runtime_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

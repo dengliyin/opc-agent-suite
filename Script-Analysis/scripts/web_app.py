@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import cgi
+import hashlib
 import json
 import mimetypes
 import os
@@ -214,11 +215,11 @@ def resolve_skill_path_for_open(value):
     return resolved
 
 
-def safe_filename(value):
+def safe_filename(value, max_length=160):
     name = Path(value or "video.mp4").name
     cleaned = "".join(ch if ch.isalnum() or ch in (".", "-", "_") else "_" for ch in name)
     cleaned = cleaned.strip("._") or "video.mp4"
-    return cleaned[:160]
+    return cleaned[:max_length]
 
 
 def resolve_existing_path(value, default_path, label):
@@ -239,6 +240,24 @@ def extract_video_id(value):
         return ""
     long_matches = [item for item in matches if len(item) >= 10]
     return (long_matches or matches)[-1]
+
+
+def compact_stem(value, max_length=96):
+    cleaned = safe_filename(Path(str(value or "video")).stem, max_length=1000)
+    if len(cleaned) <= max_length:
+        return cleaned
+    digest = hashlib.sha256(cleaned.encode("utf-8")).hexdigest()[:8]
+    video_id = extract_video_id(cleaned)
+    identity = f"-{video_id}" if video_id else ""
+    prefix_length = max(8, max_length - len(identity) - len(digest) - 1)
+    return f"{cleaned[:prefix_length].rstrip('._-')}{identity}-{digest}"[:max_length]
+
+
+def queue_item_output_name(index, item):
+    source = str(item.get("path") or item.get("name") or "video")
+    video_id = str(item.get("video_id") or extract_video_id(source)).strip()
+    token = video_id or hashlib.sha256(source.encode("utf-8")).hexdigest()[:12]
+    return f"{index:03d}_{safe_filename(token, max_length=40)}"
 
 
 def extract_country_code(text):
@@ -332,14 +351,14 @@ def collect_script_ids(script_dir):
 def script_target_path(script_dir, item):
     product = str(item.get("product") or "").strip()
     target_dir = script_dir / product if product else script_dir
-    source_name = Path(str(item.get("path") or item.get("name") or "video.mp4")).with_suffix(".md").name
+    source_name = f"{compact_stem(item.get('path') or item.get('name') or 'video')}.md"
     return target_dir / source_name
 
 
 def country_script_target_path(script_dir, item, country_code):
     product = str(item.get("product") or "").strip()
     target_dir = script_dir / product if product else script_dir
-    source_name = Path(str(item.get("path") or item.get("name") or "video.mp4")).with_suffix(".md").name
+    source_name = f"{compact_stem(item.get('path') or item.get('name') or 'video')}.md"
     prefix = re.sub(r"[^A-Z0-9]", "", str(country_code or "UNK").upper()) or "UNK"
     return target_dir / f"{prefix}-{source_name}"
 
@@ -637,7 +656,7 @@ def run_queue_job(job_id, items, output_dir, script_dir):
     try:
         for index, item in enumerate(items, start=1):
             video_path = Path(item["path"])
-            item_output_dir = output_dir / f"{index:03d}_{safe_filename(video_path.stem)}"
+            item_output_dir = output_dir / queue_item_output_name(index, item)
             item_output_dir.mkdir(parents=True, exist_ok=True)
             target_path = Path(item.get("target_path") or script_target_path(script_dir, item))
             append_job_log(job_id, f"[{index}/{len(items)}] 开始拆解: {item.get('relative_path') or video_path.name}")
