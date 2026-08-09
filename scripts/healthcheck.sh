@@ -39,7 +39,7 @@ if [ "$MODE" != "--console-only" ]; then
     "api/status"
     "api/outputs"
     "api/outputs?target_model=veo"
-    "api/catalog"
+    "health"
     "api/state"
     "api/state"
     "api/state"

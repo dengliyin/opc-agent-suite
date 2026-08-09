@@ -52,6 +52,39 @@ def scan_scripts(settings: Settings, include_archived: bool = False) -> List[Scr
     return scripts
 
 
+def _recursive_markdown_files(root: Path) -> List[Path]:
+    """Return a stable snapshot while tolerating concurrently removed directories."""
+    paths: List[Path] = []
+    for directory, dirnames, filenames in os.walk(root, onerror=lambda _error: None):
+        dirnames.sort()
+        for filename in sorted(filenames):
+            if filename.lower().endswith(".md"):
+                paths.append(Path(directory) / filename)
+    return paths
+
+
+def _read_markdown(path: Path) -> Optional[str]:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        # Obsidian/sync clients can rename or remove a file after enumeration.
+        return None
+
+
+def _safe_iterdir(root: Path) -> List[Path]:
+    try:
+        return sorted(root.iterdir())
+    except OSError:
+        return []
+
+
+def _safe_glob(root: Path, pattern: str) -> List[Path]:
+    try:
+        return sorted(root.glob(pattern))
+    except OSError:
+        return []
+
+
 def _scan_hybrid_script_root(settings: Settings) -> List[ScriptFile]:
     root = settings.script_root
     if not root.exists():
@@ -59,7 +92,7 @@ def _scan_hybrid_script_root(settings: Settings) -> List[ScriptFile]:
 
     scripts: List[ScriptFile] = []
     references_by_product: Dict[str, List[Path]] = {}
-    for md_path in sorted(root.rglob("*.md")):
+    for md_path in _recursive_markdown_files(root):
         if script_suppressed(md_path):
             continue
         relative = md_path.relative_to(root)
@@ -76,7 +109,9 @@ def _scan_hybrid_script_root(settings: Settings) -> List[ScriptFile]:
             )
         reference_images = references_by_product[product_name]
         reference_image = reference_images[0] if len(reference_images) == 1 else None
-        markdown = md_path.read_text(encoding="utf-8")
+        markdown = _read_markdown(md_path)
+        if markdown is None:
+            continue
         source_script = relative.parts[2] if len(relative.parts) > 3 else md_path.stem
         scripts.append(
             ScriptFile(
@@ -103,7 +138,7 @@ def _scan_script_root(settings: Settings, root: Path, exported: bool) -> List[Sc
     scripts: List[ScriptFile] = []
     if exported:
         references_by_product: Dict[str, List[Path]] = {}
-        for md_path in sorted(root.rglob("*.md")):
+        for md_path in _recursive_markdown_files(root):
             if any(part.startswith("_") or part.startswith(".") for part in md_path.relative_to(root).parts[:-1]):
                 continue
             product_dir = _exported_product_dir(root, md_path)
@@ -114,7 +149,9 @@ def _scan_script_root(settings: Settings, root: Path, exported: bool) -> List[Sc
                 references_by_product[product_name] = find_product_references(settings.reference_root, product_name)
             reference_images = references_by_product[product_name]
             reference_image = reference_images[0] if len(reference_images) == 1 else None
-            markdown = md_path.read_text(encoding="utf-8")
+            markdown = _read_markdown(md_path)
+            if markdown is None:
+                continue
             segments = parse_segments(markdown)
             scripts.append(
                 ScriptFile(
@@ -129,10 +166,10 @@ def _scan_script_root(settings: Settings, root: Path, exported: bool) -> List[Sc
             )
         return scripts
 
-    for product_dir in sorted([p for p in root.iterdir() if p.is_dir()]):
+    for product_dir in [path for path in _safe_iterdir(root) if path.is_dir()]:
         if product_dir.name.startswith("_") or product_dir.name.startswith("."):
             continue
-        md_paths = sorted(product_dir.glob("*.md"))
+        md_paths = _safe_glob(product_dir, "*.md")
         md_paths = [
             md_path
             for md_path in md_paths
@@ -144,7 +181,9 @@ def _scan_script_root(settings: Settings, root: Path, exported: bool) -> List[Sc
         reference_images = find_product_references(settings.reference_root, product_dir.name)
         reference_image = reference_images[0] if len(reference_images) == 1 else None
         for md_path in md_paths:
-            markdown = md_path.read_text(encoding="utf-8")
+            markdown = _read_markdown(md_path)
+            if markdown is None:
+                continue
             segments = parse_segments(markdown)
             scripts.append(
                 ScriptFile(
@@ -175,7 +214,7 @@ def _active_script_archived(settings: Settings, product_name: str, md_path: Path
     completed_root = settings.completed_script_root
     if not completed_root.exists():
         return False
-    for date_dir in completed_root.iterdir():
+    for date_dir in _safe_iterdir(completed_root):
         if not date_dir.is_dir() or not _is_date_folder(date_dir.name):
             continue
         archived_md = date_dir / product_name / md_path.stem / md_path.name
@@ -306,18 +345,18 @@ def find_product_references(reference_root: Path, product_name: str) -> List[Pat
         if candidate.exists():
             add(candidate)
 
-    for candidate in sorted(reference_root.glob(f"{product_name}-*")):
+    for candidate in _safe_glob(reference_root, f"{product_name}-*"):
         add(candidate)
 
     product_folder = reference_root / product_name
     if product_folder.is_dir():
-        for candidate in sorted(product_folder.iterdir()):
+        for candidate in _safe_iterdir(product_folder):
             add(candidate)
 
     if matches:
         return matches
 
-    for candidate in sorted(reference_root.iterdir()):
+    for candidate in _safe_iterdir(reference_root):
         if candidate.stem.endswith(f"-{product_name}"):
             add(candidate)
     return matches

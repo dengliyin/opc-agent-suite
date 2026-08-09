@@ -135,6 +135,40 @@ def test_hybrid_omni_routes_and_page_exist():
     assert "删除所选" in response.text
 
 
+def test_health_is_lightweight(monkeypatch):
+    monkeypatch.setattr(
+        app_module,
+        "scan_scripts",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("health must not scan files")),
+    )
+    client = TestClient(app_module.app)
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_catalog_payload_is_cached(monkeypatch):
+    calls = []
+    app_module._clear_catalog_cache()
+    monkeypatch.setattr(app_module, "CATALOG_CACHE_TTL_SECONDS", 60)
+    monkeypatch.setattr(
+        app_module,
+        "scan_scripts",
+        lambda *_args, **_kwargs: calls.append("scan") or [],
+    )
+    client = TestClient(app_module.app)
+
+    first = client.get("/api/catalog")
+    second = client.get("/api/catalog")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert calls == ["scan"]
+    app_module._clear_catalog_cache()
+
+
 def test_media_cleanup_route_is_owned_by_assembly_agent():
     paths = {route.path for route in app_module.app.routes}
 

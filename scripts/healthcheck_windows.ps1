@@ -17,7 +17,7 @@ if (-not $ConsoleOnly) {
     $checks["9992"] = "/api/status"
     $checks["9993"] = "/api/outputs"
     $checks["9994"] = "/api/outputs?target_model=veo"
-    $checks["9995"] = "/api/catalog"
+    $checks["9995"] = "/health"
     $checks["9996"] = "/api/state"
     $checks["9997"] = "/api/state"
     $checks["9998"] = "/api/state"
