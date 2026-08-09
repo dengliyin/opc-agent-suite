@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 import argparse
 import base64
+import hashlib
 import json
 import mimetypes
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -86,7 +88,14 @@ def output_stem(value):
     parts = [part for part in stem.split("_") if part]
     if parts and parts[-1].isdigit() and len(parts[-1]) >= 10:
         return parts[-1]
-    return stem
+    if len(stem) <= 64:
+        return stem
+    matches = re.findall(r"\d{10,24}", stem)
+    video_id = matches[-1] if matches else ""
+    digest = hashlib.sha256(stem.encode("utf-8")).hexdigest()[:8]
+    identity = f"-{video_id}" if video_id else ""
+    prefix_length = max(8, 64 - len(identity) - len(digest) - 1)
+    return f"{stem[:prefix_length].rstrip('_-')}{identity}-{digest}"[:64]
 
 
 def find_videos(input_path):

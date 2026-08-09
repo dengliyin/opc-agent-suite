@@ -85,6 +85,17 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(video_dir, Path("/global/videos"))
         self.assertEqual(script_dir, Path("/global/scripts"))
 
+    def test_long_video_names_use_short_queue_and_output_names(self):
+        video_id = "7666010963795102989"
+        name = f"digimon634-{video_id}-" + "very_long_title_" * 20 + ".mp4"
+        item = {"path": name, "video_id": video_id}
+
+        self.assertEqual(self.web_app.queue_item_output_name(1, item), f"001_{video_id}")
+        self.assertLessEqual(len(self.web_app.compact_stem(name)), 96)
+        self.assertIn(video_id, self.web_app.compact_stem(name))
+        self.assertLessEqual(len(self.analyze_video.output_stem(name)), 64)
+        self.assertIn(video_id, self.analyze_video.output_stem(name))
+
     def test_queue_preserves_material_type_and_product_and_scopes_duplicates(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
