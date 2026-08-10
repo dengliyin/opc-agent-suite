@@ -18,6 +18,7 @@ COMPONENTS=(
   "Finished-Video-Manager"
   "Product-Script-Rewrite"
   "Video-Assembly-hd"
+  "Auto-Publish-Pipeline"
 )
 
 for component in "${COMPONENTS[@]}"; do
@@ -49,6 +50,7 @@ done
 "$ROOT_DIR/Finished-Video-Manager/.venv/bin/python" -m compileall -q "$ROOT_DIR/Finished-Video-Manager/finished_video_manager"
 "$ROOT_DIR/Product-Script-Rewrite/.venv/bin/python" -m compileall -q "$ROOT_DIR/Product-Script-Rewrite/product_script_rewrite"
 "$ROOT_DIR/Video-Assembly-hd/.venv/bin/python" -m compileall -q "$ROOT_DIR/Video-Assembly-hd/app"
+"$ROOT_DIR/Auto-Publish-Pipeline/.venv/bin/python" -m compileall -q "$ROOT_DIR/Auto-Publish-Pipeline/auto_publish_pipeline"
 
 (cd "$ROOT_DIR/OPC-Console" && .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -q)
 (cd "$ROOT_DIR/Script-Analysis" && .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -q)
@@ -61,6 +63,7 @@ done
 (cd "$ROOT_DIR/Hybrid-Audio-Generation" && .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -q)
 (cd "$ROOT_DIR/Finished-Video-Manager" && .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -q)
 (cd "$ROOT_DIR/Video-Generation" && .venv/bin/python -m pytest -q)
+(cd "$ROOT_DIR/Auto-Publish-Pipeline" && .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -q)
 bash "$ROOT_DIR/Video-Assembly-hd/scripts/validate_app.sh"
 
 echo "All locked environments, imports, and automated tests passed."

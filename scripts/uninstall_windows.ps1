@@ -35,6 +35,6 @@ if ($RemoveConfiguration) {
     Remove-Item -Recurse -Force $configRoot -ErrorAction SilentlyContinue
 }
 
-Write-Host "Removed the 15 OPC Windows scheduled tasks."
+Write-Host "Removed the 16 OPC Windows scheduled tasks."
 if (-not $RemoveRuntime) { Write-Host "Runtime preserved at $(Join-Path $configRoot 'Service-Runtime')" }
 if (-not $RemoveConfiguration) { Write-Host "Configuration and logs preserved at $configRoot" }

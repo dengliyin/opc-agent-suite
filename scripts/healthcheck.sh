@@ -17,7 +17,7 @@ URLS=("http://${KESAI_APP_HOST:-127.0.0.1}:${KESAI_APP_PORT:-8888}/")
 PATHS=("health")
 
 if [ "$MODE" != "--console-only" ]; then
-  LABELS+=("视频采集" "脚本解析" "脚本产出" "脚本适配" "片段产出" "成品管理" "产品脚本改写" "片段合成" "钩子与CTA脚本适配" "AI＋实拍混剪" "混剪参考视频采集" "混剪参考视频解析" "钩子与CTA脚本复刻裂变" "配音")
+  LABELS+=("视频采集" "脚本解析" "脚本产出" "脚本适配" "片段产出" "成品管理" "产品脚本改写" "片段合成" "钩子与CTA脚本适配" "AI＋实拍混剪" "混剪参考视频采集" "混剪参考视频解析" "钩子与CTA脚本复刻裂变" "配音" "自动发布流水线")
   URLS+=(
     "${OPC_HOT_VIDEO_AGENT_URL:-http://127.0.0.1:9991/}"
     "${OPC_VIDEO_TEARDOWN_AGENT_URL:-http://127.0.0.1:9992/}"
@@ -33,6 +33,7 @@ if [ "$MODE" != "--console-only" ]; then
     "${OPC_HYBRID_SCRIPT_ANALYSIS_AGENT_URL:-http://127.0.0.1:10002/}"
     "${OPC_HYBRID_SCRIPT_GENERATION_AGENT_URL:-http://127.0.0.1:10003/}"
     "${OPC_HYBRID_AUDIO_GENERATION_AGENT_URL:-http://127.0.0.1:10004/}"
+    "${OPC_AUTO_PUBLISH_PIPELINE_URL:-http://127.0.0.1:10005/}"
   )
   PATHS+=(
     "api/state"
@@ -45,6 +46,7 @@ if [ "$MODE" != "--console-only" ]; then
     "api/state"
     "api/scripts?target_model=omni"
     "api/library"
+    "api/state"
     "api/state"
     "api/status"
     "api/outputs"

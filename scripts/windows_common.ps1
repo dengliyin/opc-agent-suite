@@ -18,6 +18,7 @@ $script:OpcServices = [ordered]@{
     hybrid_analyze = "Hybrid-Script-Analysis"
     hybrid_script = "Hybrid-Script-Generation"
     hybrid_voice = "Hybrid-Audio-Generation"
+    auto_publish = "Auto-Publish-Pipeline"
 }
 
 function Get-OpcConfigRoot {

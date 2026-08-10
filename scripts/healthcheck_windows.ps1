@@ -27,6 +27,7 @@ if (-not $ConsoleOnly) {
     $checks["10002"] = "/api/status"
     $checks["10003"] = "/api/outputs"
     $checks["10004"] = "/api/library"
+    $checks["10005"] = "/api/state"
 }
 
 $deadline = [DateTime]::UtcNow.AddSeconds($WaitSeconds)

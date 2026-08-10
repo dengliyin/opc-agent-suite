@@ -10,7 +10,7 @@ PLIST_DIR="$HOME/Library/LaunchAgents"
 TEMPLATE_PATH="$ROOT_DIR/scripts/launchd/com.kesai.opc-agent.plist.template"
 LAUNCHER_PATH="$RUNTIME_ROOT/scripts/run_agent_foreground.py"
 LOG_DIR="$HOME/Library/Logs/OPC-Agent-Suite"
-SERVICE_IDS=(collect analyze script adapt assemble finished rewrite compose hybrid_adapt hybrid_mix hybrid_collect hybrid_analyze hybrid_script hybrid_voice)
+SERVICE_IDS=(collect analyze script adapt assemble finished rewrite compose hybrid_adapt hybrid_mix hybrid_collect hybrid_analyze hybrid_script hybrid_voice auto_publish)
 
 service_dir() {
   case "$1" in
@@ -28,6 +28,7 @@ service_dir() {
     hybrid_analyze) echo "Hybrid-Script-Analysis" ;;
     hybrid_script) echo "Hybrid-Script-Generation" ;;
     hybrid_voice) echo "Hybrid-Audio-Generation" ;;
+    auto_publish) echo "Auto-Publish-Pipeline" ;;
     *) return 1 ;;
   esac
 }
@@ -90,7 +91,7 @@ for service_id in "${SERVICE_IDS[@]}"; do
     -e "s|__ERR_LOG__|$(sed_escape "$err_log_path")|g" \
     "$TEMPLATE_PATH" > "$temp_path"
 
-  if [ "$service_id" = "finished" ]; then
+  if [ "$service_id" = "finished" ] || [ "$service_id" = "auto_publish" ]; then
     /usr/libexec/PlistBuddy \
       -c "Add :KeepAlive dict" \
       -c "Add :KeepAlive:SuccessfulExit bool false" \
@@ -108,4 +109,4 @@ for service_id in "${SERVICE_IDS[@]}"; do
   bootstrap_agent "$plist_path"
 done
 
-echo "Installed 14 on-demand Agent LaunchAgents."
+echo "Installed 15 on-demand Agent LaunchAgents."

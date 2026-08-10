@@ -2307,6 +2307,8 @@ def parse_args():
     parser.add_argument("--hook-duration", default="", help="已弃用：黄金钩子不再作为独立输入")
     parser.add_argument("--audio-emotion", default="", help="已弃用：情绪强度不再作为独立输入，直接参考竞品爆款")
     parser.add_argument("--enable-mutation", action="store_true", help="生成脚本后继续进行场景/人物/服饰道具裂变，并只保存裂变后的结果")
+    parser.add_argument("--mutation-source", default="", help="直接指定已存在的复刻-*.md作为裂变母稿；不会自动重新复刻")
+    parser.add_argument("--product-name", default="", help="直接裂变时用于输出文件名的产品名称")
     parser.add_argument("--mutation-variants", type=int, default=0, help=f"裂变变体数，默认 {DEFAULT_MUTATION_VARIANTS}")
     parser.add_argument("--mutation-batch-size", type=int, default=0, help=f"每批裂变条数，默认 {DEFAULT_MUTATION_BATCH_SIZE}，最大 5")
     parser.add_argument("--timeout", type=int, default=0, help=f"单次请求超时时间，秒，默认 {DEFAULT_TIMEOUT}")
@@ -2332,6 +2334,14 @@ def apply_cli_overrides(config, args):
         config["script_target_language"] = args.target_language
     if getattr(args, "enable_mutation", False):
         config["script_enable_mutation_rewrite"] = "true"
+    if getattr(args, "mutation_source", ""):
+        config["script_reference_script_path"] = args.mutation_source
+        config["script_reference_analysis_path"] = args.mutation_source
+        config["script_reference_kind"] = "已复刻脚本"
+    if getattr(args, "product_name", ""):
+        profile = dict(config.get("product_profile") or {})
+        profile["product_name"] = args.product_name
+        config["product_profile"] = profile
     config["script_mutation_mode"] = "standard"
     if getattr(args, "mutation_variants", 0):
         config["script_mutation_variants"] = str(args.mutation_variants)
@@ -2408,6 +2418,18 @@ def clone_output_path_for_reference(config, reference_path, output_dir=""):
 
 
 def require_clone_source_for_mutation(config, args):
+    explicit_source = str(getattr(args, "mutation_source", "") or "").strip()
+    if explicit_source:
+        clone_path = Path(explicit_source).expanduser().resolve()
+        if not clone_path.is_file():
+            raise RuntimeError(f"指定的复刻稿不存在: {clone_path}")
+        if not clone_path.name.startswith("复刻-") or clone_path.suffix.lower() != ".md":
+            raise RuntimeError(f"裂变母稿必须是复刻-*.md: {clone_path}")
+        text = clone_path.read_text(encoding="utf-8").strip()
+        if not text:
+            raise RuntimeError(f"复刻稿为空，不能作为裂变母稿: {clone_path}")
+        return clone_path, text
+
     reference_path = get_reference_path(config)
     clone_path = clone_output_path_for_reference(config, reference_path, getattr(args, "output_dir", ""))
     if not clone_path.exists():
@@ -2435,6 +2457,9 @@ def require_clone_source_for_mutation(config, args):
 
 
 def ensure_clone_source_for_mutation(config, args):
+    if str(getattr(args, "mutation_source", "") or "").strip():
+        return require_clone_source_for_mutation(config, args)
+
     reference_path = get_reference_path(config)
     expected_clone_path = clone_output_path_for_reference(config, reference_path, getattr(args, "output_dir", ""))
     if expected_clone_path.exists():
@@ -2460,7 +2485,8 @@ def mutation_source_choice(config):
 
 def mutation_input_source(config, args):
     clone_path, clone_text = ensure_clone_source_for_mutation(config, args)
-    return "复刻稿", clone_path, clone_text.strip(), ""
+    reference_context = "" if getattr(args, "mutation_source", "") else read_text_file(get_reference_path(config))
+    return "复刻稿", clone_path, clone_text.strip(), reference_context
 
 
 def script_output_stage_name(raw_response):
@@ -2696,7 +2722,7 @@ def main():
     direct_file_mode = has_direct_file_inputs(config)
     has_project_context = product_project_ready(config)
     unified_direct_mode = bool(os.environ.get("OPC_APP_CONFIG_PATH") and direct_file_mode)
-    explicit_product_output_mode = bool(args.product_doc and args.output_dir)
+    explicit_product_output_mode = bool((args.product_doc or args.mutation_source) and args.output_dir)
     if explicit_product_output_mode:
         Path(args.output_dir).expanduser().resolve().mkdir(parents=True, exist_ok=True)
     if not (unified_direct_mode or explicit_product_output_mode) and (

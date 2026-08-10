@@ -79,4 +79,4 @@ foreach ($serviceId in $script:OpcServices.Keys) {
     Register-OpcTask -TaskName "agent-$serviceId" -Mode "Agent" -ServiceId $serviceId
 }
 
-Write-Host "Installed 15 OPC scheduled tasks in $($script:OpcTaskPath)."
+Write-Host "Installed 16 OPC scheduled tasks in $($script:OpcTaskPath)."

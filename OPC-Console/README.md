@@ -38,7 +38,7 @@ OPC Agent Suite 的独立总控制台，默认运行在 `http://127.0.0.1:8888/`
 ./scripts/uninstall_console_launchagent.sh
 ```
 
-LaunchAgent 只常驻 `8888`。`9991–10003` 分别注册为独立但不自启动的 LaunchAgent。Agent 掉线后，控制台的“启动”按钮会执行 `launchctl kickstart -k` 并等待健康检查恢复；重启控制台不会终止已经运行的 Agent。
+LaunchAgent 只常驻 `8888`。`9991–10005` 分别注册为独立但不自启动的 LaunchAgent。Agent 掉线后，控制台的“启动”按钮会执行 `launchctl kickstart -k` 并等待健康检查恢复；重启控制台不会终止已经运行的 Agent。
 
 LaunchAgent 直接使用控制台的 Python 环境加载 `.env` 并启动服务，因此不需要为 `/bin/bash` 授予 Documents 访问权限。
 

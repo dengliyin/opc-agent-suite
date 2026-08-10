@@ -19,6 +19,7 @@ COMPONENTS=(
   Hybrid-Script-Analysis
   Hybrid-Script-Generation
   Hybrid-Audio-Generation
+  Auto-Publish-Pipeline
 )
 
 mkdir -p "$RUNTIME_ROOT"
