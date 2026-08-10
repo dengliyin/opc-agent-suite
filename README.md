@@ -1,6 +1,6 @@
 # OPC Agent Suite
 
-这是 OPC 独立本地控制台和 14 个独立 Agent 的可迁移副本。控制台运行在 `8888`，Agent 使用 `9991–10004`。
+这是 OPC 独立本地控制台和 15 个独立 Agent 的可迁移副本。控制台运行在 `8888`，Agent 使用 `9991–10005`。
 
 本目录是迁移改造区。原运行目录 `/Users/kesai1/Documents/带货视频产出` 没有被安装脚本修改，仍可继续提供当前服务。
 
@@ -23,6 +23,7 @@
 | 10002 | `Hybrid-Script-Analysis` | 混剪参考视频解析 |
 | 10003 | `Hybrid-Script-Generation` | 钩子与 CTA 脚本复刻裂变 |
 | 10004 | `Hybrid-Audio-Generation` | 配音 |
+| 10005 | `Auto-Publish-Pipeline` | 自动发布流水线 |
 
 ## 新 Mac 安装
 
@@ -65,7 +66,7 @@ export OPC_VIDEO_ASSEMBLY_RUNTIME_SOURCE="/path/to/Video-Assembly-hd/runtime"
 ./scripts/start_console.sh
 ```
 
-`bootstrap_macos.sh` 会创建全部 Python 环境，并自动安装 14 个按需运行的 Agent LaunchAgent 配置；`start_console.sh` 每次启动时也会检查并补齐这些配置。打开 `http://127.0.0.1:8888/` 后，其余 Agent 可由控制台上的“启动/检测”按钮按需启动。
+`bootstrap_macos.sh` 会创建全部 Python 环境，并自动安装 15 个按需运行的 Agent LaunchAgent 配置；`start_console.sh` 每次启动时也会检查并补齐这些配置。打开 `http://127.0.0.1:8888/` 后，其余 Agent 可由控制台上的“启动/检测”按钮按需启动。
 
 如果旧副本已经完成环境安装，但曾出现“Agent LaunchAgent 配置不存在”，可单独执行一次：
 
@@ -75,7 +76,7 @@ export OPC_VIDEO_ASSEMBLY_RUNTIME_SOURCE="/path/to/Video-Assembly-hd/runtime"
 
 ### 让控制台在 macOS 常驻
 
-控制台需要调用宿主机上的 14 个独立 Agent，因此不单独放入 Docker。安装后，`8888` 会在用户登录时自动启动并在异常退出后自动拉起；14个Agent各自注册为独立LaunchAgent，但保持按需启动：
+控制台需要调用宿主机上的 15 个独立 Agent，因此不单独放入 Docker。安装后，`8888` 会在用户登录时自动启动并在异常退出后自动拉起；15个Agent各自注册为独立LaunchAgent，但保持按需启动：
 
 ```bash
 ./scripts/install_console_launchagent.sh
@@ -123,10 +124,10 @@ PowerShell -ExecutionPolicy Bypass -File .\scripts\bootstrap_windows.ps1 -VaultR
 安装器会在需要时通过 `winget` 安装 Python 3.12，并完成以下工作：
 
 - 将服务运行副本放到 `%LOCALAPPDATA%\OPC-Agent-Suite\Service-Runtime`。
-- 为控制台和 14 个 Agent 创建 15 个互相隔离的 Python 环境。
+- 为控制台和 15 个 Agent 创建 16 个互相隔离的 Python 环境。
 - 安装 Playwright Chromium，以及 9998 使用的 Windows x64 Node.js、FFmpeg、FFprobe、HyperFrames、浏览器和 `faster-whisper` 字幕环境。
-- 在 Windows 任务计划程序的 `\OPC-Agent-Suite\` 目录注册 15 个任务。
-- 让 `console-8888` 登录后自动启动，异常退出后自动恢复；9991–10004 不设置登录触发器，只能由 8888 或任务计划程序按需启动。
+- 在 Windows 任务计划程序的 `\OPC-Agent-Suite\` 目录注册 16 个任务。
+- 让 `console-8888` 登录后自动启动，异常退出后自动恢复；9991–10005 不设置登录触发器，只能由 8888 或任务计划程序按需启动。
 
 Windows 的真实配置文件是 `%LOCALAPPDATA%\OPC-Agent-Suite\.env`，日志目录是 `%LOCALAPPDATA%\OPC-Agent-Suite\Logs`。外置盘盘符或资料库位置变化后，只修改这份 `.env` 或进入 8888 的“全局路径设置”，不要修改代码中的默认值。控制台和 Agent 启动前都会验证 `OPC_VAULT_ROOT` 可读写；外置盘暂时断开时会等待恢复，不会回退到旧路径创建资料。
 
@@ -142,7 +143,7 @@ PowerShell -ExecutionPolicy Bypass -File .\scripts\healthcheck_windows.ps1 -Cons
 # 检查 8888 和当前应当已启动的所有 Agent
 PowerShell -ExecutionPolicy Bypass -File .\scripts\healthcheck_windows.ps1
 
-# 移除 15 个计划任务，默认保留配置、日志和运行副本
+# 移除 16 个计划任务，默认保留配置、日志和运行副本
 PowerShell -ExecutionPolicy Bypass -File .\scripts\uninstall_windows.ps1
 
 # 连同运行副本和本机配置一起删除

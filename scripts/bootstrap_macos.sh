@@ -73,6 +73,7 @@ COMPONENTS=(
   "Hybrid-Script-Generation"
   "Hybrid-Video-Mixer"
   "Hybrid-Audio-Generation"
+  "Auto-Publish-Pipeline"
   "Video-Generation"
   "Finished-Video-Manager"
   "Product-Script-Rewrite"

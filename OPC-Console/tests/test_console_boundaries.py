@@ -31,8 +31,8 @@ class ConsoleBoundaryTests(unittest.TestCase):
         self.assertEqual(self.app.ROOT, CONSOLE_ROOT)
         self.assertEqual(self.app.WORKSPACE_ROOT, WORKSPACE_ROOT)
 
-    def test_console_orchestrates_exactly_fourteen_agents(self):
-        self.assertEqual(len(self.app.SERVICES), 14)
+    def test_console_orchestrates_exactly_fifteen_agents(self):
+        self.assertEqual(len(self.app.SERVICES), 15)
         self.assertEqual(set(self.app.ROUTE_TO_SERVICE.values()), set(self.app.SERVICES))
 
     def test_every_service_runs_from_its_agent_directory(self):
@@ -200,12 +200,13 @@ class ConsoleBoundaryTests(unittest.TestCase):
         self.assertIn("'hybrid_adapt'", html)
         self.assertIn("'hybrid_mix'", html)
         self.assertNotIn("10000 待开发", html)
-        self.assertEqual(len(self.app.SERVICES), 14)
+        self.assertEqual(len(self.app.SERVICES), 15)
         service_urls = [str(service.get("url", "")) for service in self.app.SERVICES.values()]
         self.assertTrue(any(":9999" in url for url in service_urls))
         self.assertTrue(any(":10000" in url for url in service_urls))
         self.assertTrue(any(":10003" in url for url in service_urls))
         self.assertTrue(any(":10004" in url for url in service_urls))
+        self.assertTrue(any(":10005" in url for url in service_urls))
 
     def test_console_exposes_global_path_settings_page(self):
         self.assertIn('href="/settings/paths"', self.app.INDEX_HTML)
@@ -337,6 +338,7 @@ class ConsoleBoundaryTests(unittest.TestCase):
             "Video-Assembly-hd",
             "Hybrid-Video-Mixer",
             "Hybrid-Audio-Generation",
+            "Auto-Publish-Pipeline",
         ):
             self.assertIn(f'"{directory}"', installer)
         self.assertIn('python_path="$RUNTIME_ROOT/$agent_dir/.venv/bin/python"', installer)
@@ -344,6 +346,7 @@ class ConsoleBoundaryTests(unittest.TestCase):
     def test_finished_agent_restarts_after_external_storage_disconnects(self):
         installer = (WORKSPACE_ROOT / "scripts" / "install_agent_launchagents.sh").read_text(encoding="utf-8")
         self.assertIn('if [ "$service_id" = "finished" ]', installer)
+        self.assertIn('[ "$service_id" = "auto_publish" ]', installer)
         self.assertIn("Add :KeepAlive:SuccessfulExit bool false", installer)
 
     def test_install_and_manual_start_register_agent_launchagents(self):
@@ -437,6 +440,15 @@ class ConsoleBoundaryTests(unittest.TestCase):
         )
         self.assertEqual(service["cwd"], WORKSPACE_ROOT / "Hybrid-Audio-Generation")
         self.assertEqual(service["url"], "http://127.0.0.1:10004/")
+
+    def test_auto_publish_pipeline_is_an_independent_service(self):
+        service = self.app.SERVICES["auto_publish"]
+        self.assertEqual(service["cwd"], WORKSPACE_ROOT / "Auto-Publish-Pipeline")
+        self.assertIn(Path(service["command"][0]).name, {"python", "python3"})
+        self.assertEqual(service["command"][1:3], ["-m", "auto_publish_pipeline.web"])
+        self.assertEqual(service["url"], "http://127.0.0.1:10005/")
+        self.assertEqual(service["health_path"], "/api/state")
+        self.assertIn("线路 4 · 自动发布", self.app.INDEX_HTML)
 
     def test_double_click_launcher_bootstraps_missing_environment(self):
         launcher = (WORKSPACE_ROOT / "启动OPC集合控制台.command").read_text(encoding="utf-8")

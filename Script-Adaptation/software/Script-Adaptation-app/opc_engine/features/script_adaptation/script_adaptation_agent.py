@@ -384,6 +384,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stage", choices=sorted(STAGES), help="明确指定要处理的 workflow 阶段")
     parser.add_argument("--execute", action="store_true", help="真正执行阶段；默认只巡检和生成计划")
     parser.add_argument("--script-file", help="本次直接使用的成品脚本文件路径，仅用于 adapt 阶段")
+    parser.add_argument("--target-model", choices=("omni", "grok"), help="本次脚本适配使用的视频模型")
+    parser.add_argument("--output-stem", help="本次适配输出的固定文件名，不含扩展名")
     parser.add_argument("--script-stdin", action="store_true", help="从 stdin 读取成品脚本文本并保存到当前产品项目后适配")
     parser.add_argument("--json", action="store_true", help="以 JSON 输出巡检结果")
     parser.add_argument("--list", action="store_true", help="列出可用阶段")
@@ -422,6 +424,10 @@ def main() -> int:
         if script_path:
             require_markdown_path(script_path)
         overrides["script_adaptation_input_path"] = str(script_path or args.script_file)
+    if args.target_model:
+        overrides["script_adaptation_target_model"] = args.target_model
+    if args.output_stem:
+        overrides["script_adaptation_output_stem"] = args.output_stem
     if args.script_stdin:
         if not args.execute:
             print("--script-stdin 会保存输入脚本；请同时加 --execute，或改用 --script-file 做无副作用巡检。")

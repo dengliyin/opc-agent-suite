@@ -56,6 +56,7 @@ HYBRID_VIDEO_COLLECTION_DIR = WORKSPACE_ROOT / "Hybrid-Video-Collection"
 HYBRID_SCRIPT_ANALYSIS_DIR = WORKSPACE_ROOT / "Hybrid-Script-Analysis"
 HYBRID_SCRIPT_GENERATION_DIR = WORKSPACE_ROOT / "Hybrid-Script-Generation"
 HYBRID_AUDIO_GENERATION_DIR = WORKSPACE_ROOT / "Hybrid-Audio-Generation"
+AUTO_PUBLISH_PIPELINE_DIR = WORKSPACE_ROOT / "Auto-Publish-Pipeline"
 SCRIPT_GENERATION_DIR = WORKSPACE_ROOT / "Script-Generation"
 SCRIPT_ADAPTATION_DIR = WORKSPACE_ROOT / "Script-Adaptation"
 SCRIPT_ADAPTATION_APP_DIR = SCRIPT_ADAPTATION_DIR / "software" / "Script-Adaptation-app"
@@ -84,6 +85,7 @@ def build_services() -> dict[str, dict]:
         "hybrid_analyze": service_url("OPC_HYBRID_SCRIPT_ANALYSIS_AGENT_URL", "http://127.0.0.1:10002/"),
         "hybrid_script": service_url("OPC_HYBRID_SCRIPT_GENERATION_AGENT_URL", "http://127.0.0.1:10003/"),
         "hybrid_voice": service_url("OPC_HYBRID_AUDIO_GENERATION_AGENT_URL", "http://127.0.0.1:10004/"),
+        "auto_publish": service_url("OPC_AUTO_PUBLISH_PIPELINE_URL", "http://127.0.0.1:10005/"),
     }
     services = {
         "collect": {
@@ -186,6 +188,13 @@ def build_services() -> dict[str, dict]:
             "cwd": HYBRID_AUDIO_GENERATION_DIR,
             "command": [agent_python(HYBRID_AUDIO_GENERATION_DIR), "-m", "audio_agent.web", "--host", "127.0.0.1", "--port", str(service_port(urls["hybrid_voice"], 10004))],
         },
+        "auto_publish": {
+            "label": "自动发布流水线",
+            "description": "从已复刻脚本独立完成裂变、适配、片段、合成和串行发布",
+            "url": urls["auto_publish"],
+            "cwd": AUTO_PUBLISH_PIPELINE_DIR,
+            "command": [agent_python(AUTO_PUBLISH_PIPELINE_DIR), "-m", "auto_publish_pipeline.web", "--host", "127.0.0.1", "--port", str(service_port(urls["auto_publish"], 10005))],
+        },
     }
     for service_id, service in services.items():
         service["launch_agent_label"] = f"com.kesai.opc-agent.{service_id}"
@@ -205,6 +214,7 @@ def build_services() -> dict[str, dict]:
         "hybrid_analyze": "/api/status",
         "hybrid_script": "/api/outputs",
         "hybrid_voice": "/api/library",
+        "auto_publish": "/api/state",
     }
     for service_id, service in services.items():
         service["health_path"] = health_paths[service_id]
@@ -324,6 +334,7 @@ OTHER_AGENT_PATH_NOTES = (
     {"port": "9997", "label": "产品脚本改写", "note": "输入输出复用 9992 的“参考脚本”路径"},
     {"port": "9999", "label": "混剪脚本适配", "note": "输入输出路径由独立 Agent 配置管理"},
     {"port": "10001", "label": "混剪参考视频采集", "note": "输出到AI实拍混剪/01参考视频/<类型>/<产品名>"},
+    {"port": "10005", "label": "自动发布流水线", "note": "继承9993–9998的业务路径，但使用独立任务数据库和执行进程"},
 )
 
 
@@ -635,13 +646,14 @@ main{max-width:1180px;margin:auto;padding:64px 24px 80px}header{display:flex;jus
 @media(max-width:700px){main{padding-top:38px}header{align-items:start;flex-direction:column}.summary{white-space:normal}.workflowHead{align-items:start;flex-direction:column}.workflowDescription{text-align:left}.flow{grid-template-columns:1fr}.destination .card{width:100%}}
 </style>
 </head>
-<body><main><header><div><h1>OPC 内容量化增长引擎</h1><p>按三条视频生产线路组织现有 Agent。相同 Agent 在不同线路中共用同一个运行服务，业务参数和产物仍由对应 Agent 管理。</p></div><div class="headerTools"><a class="button" href="/settings/paths">全局路径设置</a><div class="summary" id="summary">正在检测服务…</div></div></header><section class="workflows" id="workflows"></section><section class="destination"><div class="destinationHead"><div class="destinationTitle">统一归口 · 成品管理与发布</div><div class="destinationDescription">三条线路的最终成片统一进入成品目录，由同一个 Agent 扫描、管理和发布。</div></div><div class="flow" id="destination"></div></section><p class="note">控制台端口 8888 · 已接入 14 个 Agent</p></main>
+<body><main><header><div><h1>OPC 内容量化增长引擎</h1><p>按手动生产线路与自动发布流水线组织现有 Agent。手动 Agent 保持独立，自动流水线复用底层能力。</p></div><div class="headerTools"><a class="button" href="/settings/paths">全局路径设置</a><div class="summary" id="summary">正在检测服务…</div></div></header><section class="workflows" id="workflows"></section><section class="destination"><div class="destinationHead"><div class="destinationTitle">统一归口 · 成品管理与发布</div><div class="destinationDescription">三条线路的最终成片统一进入成品目录，由同一个 Agent 扫描、管理和发布。</div></div><div class="flow" id="destination"></div></section><p class="note">控制台端口 8888 · 已接入 15 个 Agent</p></main>
 <script>
 const workflowsHost=document.querySelector('#workflows'),destination=document.querySelector('#destination'),summary=document.querySelector('#summary');
 const workflowLines=[
   {title:'线路 1 · 爆款复刻',description:'从爆款视频采集开始，完成纯 AI 脚本、片段与成片生产。',steps:['collect','analyze','script','adapt','assemble','compose']},
   {title:'线路 2 · 产品脚本改写',description:'从产品脚本改写开始，继续进入纯 AI 片段生产与合成。',steps:['rewrite','script','adapt','assemble','compose']},
-  {title:'线路 3 · AI＋实拍混剪',description:'独立采集、解析、复刻裂变钩子/CTA参考视频，并生成混剪配音、AI首尾片段与实拍成片。',steps:['hybrid_collect','hybrid_analyze','hybrid_script','hybrid_adapt',{id:'assemble',label:'钩子与 CTA 片段产出'},'hybrid_voice','hybrid_mix']}
+  {title:'线路 3 · AI＋实拍混剪',description:'独立采集、解析、复刻裂变钩子/CTA参考视频，并生成混剪配音、AI首尾片段与实拍成片。',steps:['hybrid_collect','hybrid_analyze','hybrid_script','hybrid_adapt',{id:'assemble',label:'钩子与 CTA 片段产出'},'hybrid_voice','hybrid_mix']},
+  {title:'线路 4 · 自动发布',description:'从已认可的复刻脚本开始，独立完成裂变、适配、片段、合成与串行发布。',steps:['auto_publish']}
 ];
 let services=[];
 const busyServices=new Set();
@@ -701,6 +713,7 @@ ROUTE_TO_SERVICE = {
     "/hybrid-analyze": "hybrid_analyze",
     "/hybrid-script": "hybrid_script",
     "/hybrid-voice": "hybrid_voice",
+    "/auto-publish": "auto_publish",
 }
 
 

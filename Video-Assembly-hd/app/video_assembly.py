@@ -1013,6 +1013,8 @@ def cmd_assemble(args: argparse.Namespace) -> None:
         print("No items to assemble.")
         return
     for item in selected:
+        if args.caption_mode:
+            item.caption_mode = normalize_caption_mode(args.caption_mode)
         assemble_item(item, skip_existing=not args.overwrite, skip_inspect=args.skip_inspect, plan_only=args.plan_only)
 
 
@@ -1032,6 +1034,7 @@ def build_parser() -> argparse.ArgumentParser:
     assemble.add_argument("--overwrite", action="store_true", help="Overwrite existing output MP4s.")
     assemble.add_argument("--skip-inspect", action="store_true", help="Skip HyperFrames inspect; lint still runs.")
     assemble.add_argument("--plan-only", action="store_true", help="Prepare media and print timing decisions without rendering.")
+    assemble.add_argument("--caption-mode", choices=CAPTION_MODES, help="Override the saved caption mode for this run.")
     assemble.set_defaults(func=cmd_assemble)
     return parser
 
