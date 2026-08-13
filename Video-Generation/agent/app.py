@@ -40,13 +40,18 @@ _catalog_cache_lock = threading.Lock()
 
 
 IMAGE_SIZE_CHOICES = [
-    ("4096x3072", "4:3 · 4096x3072"),
-    ("3072x4096", "3:4 · 3072x4096"),
-    ("2304x4096", "9:16 · 2304x4096"),
-    ("4096x2304", "16:9 · 4096x2304"),
-    ("1024x1792", "9:16 · 1024x1792"),
-    ("1792x1024", "16:9 · 1792x1024"),
-    ("1024x1024", "1:1 · 1024x1024"),
+    ("2160x3840", "9:16 · 4K · 2160x3840"),
+    ("3840x2160", "16:9 · 4K · 3840x2160"),
+    ("3264x2448", "4:3 · 4K · 3264x2448"),
+    ("2448x3264", "3:4 · 4K · 2448x3264"),
+    ("2880x2880", "1:1 · 4K · 2880x2880"),
+]
+IMAGE2_1K_SIZE_CHOICES = [
+    ("720x1280", "9:16 · 1K · 720x1280"),
+    ("1280x720", "16:9 · 1K · 1280x720"),
+    ("1152x864", "4:3 · 1K · 1152x864"),
+    ("864x1152", "3:4 · 1K · 864x1152"),
+    ("1024x1024", "1:1 · 1K · 1024x1024"),
 ]
 OMNI_VIDEO_SIZE_CHOICES = [
     ("720x1280", "9:16 · 720p · 720x1280"),
@@ -373,8 +378,8 @@ def _provider_key(current: Settings) -> str:
 def _api_summary_payload() -> Dict[str, Any]:
     return {
         "api_provider_count": 2,
-        "endpoint_count": 7,
-        "model_count": 7,
+        "endpoint_count": 9,
+        "model_count": 8,
         "description": "当前有 2 个 API 提供方；下方 Agent 功能行决定每个功能使用哪个模型和参数。",
         "api_inventory": [
             {
@@ -387,6 +392,12 @@ def _api_summary_payload() -> Dict[str, Any]:
                         "role": "异步图片生成与图片编辑",
                         "endpoints": ["/v1/videos", "/v1/videos/{task_id}"],
                         "params": ["JSON 提交任务并轮询结果；参数在 Agent 功能行设置"],
+                    },
+                    {
+                        "name": "image2",
+                        "role": "同步图片生成与图片编辑（仅1K）",
+                        "endpoints": ["/v1/images/generations", "/v1/images/edits"],
+                        "params": ["同步返回结果；仅支持1K尺寸"],
                     },
                     {
                         "name": "omni_flash-10s",
@@ -468,6 +479,7 @@ def _function_api_model_options(stage: str, selected: str) -> List[Dict[str, str
             selected,
             [
                 "otu:gpt-image-2-4K",
+                "otu:image2",
                 "grok:G-2.0",
             ],
         )
@@ -515,7 +527,7 @@ def _function_param_controls(current: Settings, stage: str, value: str) -> List[
                 f"{provider}_{role}_image_size",
                 "图片比例/尺寸",
                 getattr(current, f"{role}_image_size"),
-                IMAGE_SIZE_CHOICES,
+                IMAGE2_1K_SIZE_CHOICES if model.lower() == "image2" else IMAGE_SIZE_CHOICES,
             )
         ]
 

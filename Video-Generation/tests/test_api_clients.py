@@ -73,9 +73,10 @@ def test_image2_client_saves_b64_response(monkeypatch: Any, tmp_path: Path) -> N
             return None
 
         def post(self, url: str, headers: Dict[str, str], json: Dict[str, Any]) -> FakeResponse:
-            assert url == "https://otuapi.com/v1/images/generations"
+            assert url == "https://otuapi.com/v1/images/edits"
             assert json["model"] == "image2"
             assert json["size"] == "4096x3072"
+            assert json["response_format"] == "b64_json"
             assert "4K" in json["prompt"]
             assert "8K" not in json["prompt"]
             assert json["image"][0].startswith("data:image/jpeg;base64,")
@@ -104,6 +105,7 @@ def test_image2_client_prompt_only_omits_image_field(monkeypatch: Any, tmp_path:
             assert url == "https://otuapi.com/v1/images/generations"
             assert json["model"] == "image2"
             assert json["size"] == "4096x3072"
+            assert json["response_format"] == "b64_json"
             assert "image" not in json
             encoded = base64.b64encode(expected).decode("ascii")
             return FakeResponse({"data": [{"b64_json": encoded}]})

@@ -151,18 +151,9 @@ class Image2Client:
                                     progress,
                                 )
                             else:
-                                try:
-                                    if progress:
-                                        progress("请求 /v1/images/generations")
-                                    body = self._post_generations_json(client, headers, model, normalized_prompt, upload_paths)
-                                except httpx.HTTPStatusError as exc:
-                                    if _is_model_unavailable_error(exc):
-                                        raise
-                                    if exc.response.status_code not in {400, 404, 405, 415, 422}:
-                                        raise
-                                    if progress:
-                                        progress(f"generations 不接受该请求({exc.response.status_code})，fallback 到 /v1/images/edits")
-                                    body = self._post_edits_multipart(client, headers, model, normalized_prompt, upload_paths)
+                                if progress:
+                                    progress("请求 /v1/images/edits（同步图生图）")
+                                body = self._post_edits_json(client, headers, model, normalized_prompt, upload_paths)
                                 image_bytes = _extract_image_bytes(client, body)
                         ensure_parent(output_path)
                         output_path.write_bytes(image_bytes)
@@ -296,10 +287,30 @@ class Image2Client:
             "model": model,
             "prompt": prompt,
             "size": self.settings.image_size,
+            "response_format": "b64_json",
         }
         if image_paths:
             payload["image"] = [_image_to_data_uri(path) for path in image_paths]
         response = client.post(self.settings.image_generations_url, headers=headers, json=payload)
+        response.raise_for_status()
+        return response.json()
+
+    def _post_edits_json(
+        self,
+        client: httpx.Client,
+        headers: Dict[str, str],
+        model: str,
+        prompt: str,
+        image_paths: List[Path],
+    ) -> Dict[str, Any]:
+        payload = {
+            "model": model,
+            "prompt": prompt,
+            "size": self.settings.image_size,
+            "response_format": "b64_json",
+            "image": [_image_to_data_uri(path) for path in image_paths],
+        }
+        response = client.post(self.settings.image_edits_url, headers=headers, json=payload)
         response.raise_for_status()
         return response.json()
 

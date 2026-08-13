@@ -250,15 +250,34 @@ def test_export_rejects_when_active_job_processes_all_scripts(monkeypatch, tmp_p
     assert "处理全部脚本" in exc.value.detail
 
 
-def test_otu_image_ui_only_exposes_async_gpt_image_2() -> None:
+def test_otu_image_ui_exposes_async_gpt_image_2_and_sync_image2() -> None:
     summary = _api_summary_payload()
     otu_models = next(item["models"] for item in summary["api_inventory"] if item["api"] == "OTU API")
     image_models = [item for item in otu_models if "图片" in item["role"]]
 
-    assert summary["endpoint_count"] == 7
-    assert [item["name"] for item in image_models] == ["gpt-image-2 / gpt-image-2-2K / gpt-image-2-4K"]
+    assert summary["endpoint_count"] == 9
+    assert [item["name"] for item in image_models] == [
+        "gpt-image-2 / gpt-image-2-2K / gpt-image-2-4K",
+        "image2",
+    ]
     assert image_models[0]["endpoints"] == ["/v1/videos", "/v1/videos/{task_id}"]
+    assert image_models[1]["endpoints"] == ["/v1/images/generations", "/v1/images/edits"]
 
     options = _function_api_model_options("characters", "otu:gpt-image-2-4K")
     otu_values = [item["value"] for item in options if item["value"].startswith("otu:")]
-    assert otu_values == ["otu:gpt-image-2-4K"]
+    assert otu_values == ["otu:gpt-image-2-4K", "otu:image2"]
+
+    image2 = next(item for item in options if item["value"] == "otu:image2")
+    assert image2["label"] == "OTU API / image2"
+    detail = next(
+        item for item in summary["agent_function_map"] if item["agent"] == "Omni 片段产出 Agent"
+    )["functions"][0]["option_details"]["otu:image2"]
+    assert detail["endpoint"] == "/v1/images/generations"
+    assert detail["controls"][0]["value"] == "720x1280"
+    assert {item["value"] for item in detail["controls"][0]["options"]} == {
+        "720x1280",
+        "1280x720",
+        "1152x864",
+        "864x1152",
+        "1024x1024",
+    }
