@@ -97,7 +97,7 @@ async def health() -> Dict[str, str]:
 
 
 class RunRequest(BaseModel):
-    stage: str = Field("smart", pattern="^(all|characters|storyboards|videos|direct_videos|repair|smart)$")
+    stage: str = Field("smart", pattern="^(all|characters|storyboards|videos|direct_videos|product_videos|repair|smart)$")
     overwrite: Optional[bool] = False
     script_paths: Optional[List[str]] = None
     script_concurrency: Optional[int] = Field(None, ge=1, le=20)

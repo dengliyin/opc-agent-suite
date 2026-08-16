@@ -219,6 +219,39 @@ def build_direct_video_prompt(segment: Segment) -> str:
     )
 
 
+def build_product_video_prompt(segment: Segment) -> str:
+    shot_match = re.search(r"^#{1,6}\s*镜头\s*\d+\b.*$", segment.raw_text, re.MULTILINE)
+    if shot_match is None:
+        raise ValueError(f"片段{segment.index}未找到镜头脚本，无法运行功能5极速模式")
+    shot_script = segment.raw_text[shot_match.start() :].strip()
+    technical_padding = _technical_padding_control(segment.raw_text)
+    technical_padding_prompt = ""
+    if technical_padding:
+        technical_padding_prompt = (
+            "\n固定时长技术占位要求（最高优先级）：\n"
+            f"{technical_padding}\n"
+            "只允许在“本段有效内容时长”内执行下面的镜头脚本；"
+            "从“技术占位开始”到“模型片段时长”必须切换为纯黑画面并保持完全静音，"
+            "不得出现人物、产品、字幕、贴纸、动作或转场内容。"
+            "禁止通过慢动作、延长停留、重复动作、补充台词、增加空镜或新增剧情延长有效内容。\n"
+        )
+    return (
+        "请根据唯一一张产品参考图和当前片段镜头脚本，直接生成一段真实商业带货短视频片段。"
+        "参考图仅用于强制锁定产品外观、颜色、结构、包装、Logo、标签和可见文字；"
+        "人物、场景和动作只按镜头脚本生成，不要把产品参考图中的背景、构图或展示方式当作首帧。"
+        "必须严格按脚本中每个镜头的时间段、画面内容、人物动作、产品露出方式和镜头语言执行；"
+        "不得省略任何镜头，不得重排镜头顺序，不得合并镜头，不得新增与脚本冲突的镜头。"
+        "音频文案只作为镜头节奏和语境参考，不要生成字幕、贴纸或画面文字。"
+        f"{VIDEO_AUDIO_LANGUAGE_GUARD}"
+        f"{CAMERA_VISIBILITY_GUARD}"
+        f"{DIRECT_VIDEO_LAYOUT_GUARD}"
+        "画面自然真实，适合竖屏短视频带货。"
+        f"{technical_padding_prompt}\n"
+        "当前片段镜头脚本如下：\n"
+        f"{shot_script}"
+    )
+
+
 def _technical_padding_control(raw_text: str) -> str:
     lines: List[str] = []
     field_labels = (

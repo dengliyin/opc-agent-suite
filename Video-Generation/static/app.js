@@ -554,7 +554,7 @@ function renderSegments() {
       const missingMediaLabel = script.exported ? "已清理" : "未生成";
       const activeCell = (stage) => {
         const runningStage = runningContext?.stage;
-        const matches = runningStage === stage || (stage === "videos" && runningStage === "direct_videos");
+        const matches = runningStage === stage || (stage === "videos" && ["direct_videos", "product_videos"].includes(runningStage));
         return runningSegment && matches ? ` class="running-cell"` : "";
       };
       return `
@@ -1329,8 +1329,9 @@ function stageLabel(stage) {
     storyboards: "功能2",
     videos: "功能3",
     direct_videos: "功能4 快速模式",
+    product_videos: "功能5 极速模式",
     repair: "补漏模式",
-    smart: "功能5 完整模式",
+    smart: "功能6 一键完整流程（1→2→3）",
     canceled: "已停止",
   }[stage] || stage;
 }

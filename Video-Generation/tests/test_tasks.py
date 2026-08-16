@@ -945,6 +945,80 @@ def test_direct_videos_stage_skips_video_when_character_fails(monkeypatch, tmp_p
     assert any("前置人物图未完成，跳过" in entry["message"] for entry in refreshed["logs"])
 
 
+def test_product_videos_stage_skips_character_and_storyboard(monkeypatch, tmp_path: Path) -> None:
+    settings = settings_for(tmp_path)
+    manager = JobManager(settings)
+    script = fake_script(tmp_path, settings, segment_count=2)
+    monkeypatch.setattr("agent.tasks.scan_scripts", lambda current_settings: [script])
+    manager._video_client_for = lambda: (object(), "otu", settings)
+    calls = []
+
+    def record_product_video(*args):
+        calls.append(args[3].index)
+        return "ok"
+
+    def fail_prerequisite(*_args):
+        raise AssertionError("极速模式不应生成人物图或故事版图")
+
+    manager._process_product_video = record_product_video
+    manager._process_character = fail_prerequisite
+    manager._process_storyboard = fail_prerequisite
+    seed_job(manager, "job_product_pipeline", "product_videos")
+
+    manager._run_pipeline("job_product_pipeline")
+    refreshed = manager.get("job_product_pipeline")
+
+    assert calls == [1, 2]
+    assert refreshed["total"] == 2
+    assert refreshed["done"] == 2
+
+
+def test_process_product_video_uploads_only_product_reference(tmp_path: Path) -> None:
+    settings = settings_for(tmp_path)
+    product_dir = settings.script_root / "P1"
+    product_dir.mkdir(parents=True)
+    md_path = product_dir / "script.md"
+    md_path.write_text("placeholder", encoding="utf-8")
+    reference = settings.reference_root / "P1.png"
+    reference.parent.mkdir(parents=True)
+    reference.write_bytes(b"ref")
+    segment = Segment(
+        index=1,
+        title="# Segment 1：00:00 - 00:01",
+        time_range="00:00 - 00:01",
+        raw_text="## A. 人物造型参考板提示词\n人物描述\n## B. 故事板图片提示词\n故事描述\n### 镜头 1\n产品出现在画面中",
+        character_prompt="人物描述",
+        storyboard_prompt="故事描述",
+    )
+    script = type(
+        "Script",
+        (),
+        {
+            "product_name": "P1",
+            "product_dir": product_dir,
+            "md_path": md_path,
+            "reference_image": reference,
+            "segments": [segment],
+        },
+    )()
+    manager = JobManager(settings)
+    job_id = "job_product_video"
+    seed_job(manager, job_id, "product_videos")
+    client = FakeOmniClient()
+
+    result = manager._process_product_video(job_id, client, script, segment, overwrite=True)
+
+    assert result == "已生成"
+    prompt, primary_reference, _output, extra_references, duration = client.calls[0]
+    assert primary_reference == reference
+    assert extra_references == []
+    assert duration is None
+    assert "### 镜头 1" in prompt
+    assert "人物描述" not in prompt
+    assert "故事描述" not in prompt
+    assert any("仅使用产品参考图 + 当前片段镜头脚本" in entry["message"] for entry in manager.get(job_id)["logs"])
+
+
 def test_all_stage_continues_after_segment_error(monkeypatch, tmp_path: Path) -> None:
     settings = settings_for(tmp_path)
     manager = JobManager(settings)
