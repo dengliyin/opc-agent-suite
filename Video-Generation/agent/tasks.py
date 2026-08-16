@@ -24,7 +24,7 @@ from .files import (
     summarize_catalog,
     video_output_path,
 )
-from .markdown_parser import Segment, build_direct_video_prompt, build_video_prompt, character_source_segment_index
+from .markdown_parser import Segment, build_direct_video_prompt, build_product_video_prompt, build_video_prompt, character_source_segment_index
 from .product_lock import (
     build_storyboard_product_lock_prompt,
     has_current_storyboard_product_lock,
@@ -32,7 +32,7 @@ from .product_lock import (
 )
 
 
-VALID_STAGES = {"all", "characters", "storyboards", "videos", "direct_videos", "repair", "smart"}
+VALID_STAGES = {"all", "characters", "storyboards", "videos", "direct_videos", "product_videos", "repair", "smart"}
 
 
 class JobCancelled(Exception):
@@ -255,7 +255,7 @@ class JobManager:
                 self._raise_if_cancelled(job_id)
                 local_failed = False
                 self._set_script_status(job_id, script, "running", f"{_stage_display_label(current_stage)}开始", current_stage)
-                if current_stage in {"storyboards", "videos", "direct_videos"} and script.reference_image is None:
+                if current_stage in {"storyboards", "videos", "direct_videos", "product_videos"} and script.reference_image is None:
                     self._error(job_id, f"{script.product_name} 缺少产品参考图，跳过{_stage_display_label(current_stage)}：{script.md_path.name}")
                     self._increment(job_id, len(script.segments))
                     self._set_script_status(job_id, script, "failed", f"缺少产品参考图，跳过{_stage_display_label(current_stage)}", current_stage)
@@ -324,6 +324,23 @@ class JobManager:
                                 job_id,
                                 f"片段{segment.index} 快速模式{self.settings.video_display_label}",
                                 self._process_direct_video,
+                                job_id,
+                                video_client,
+                                script,
+                                segment,
+                                overwrite,
+                                video_api,
+                                video_settings,
+                                script=script,
+                                stage=current_stage,
+                                segment=segment,
+                            )
+                        elif current_stage == "product_videos":
+                            video_client, video_api, video_settings = self._video_client_for()
+                            step_ok = self._run_step(
+                                job_id,
+                                f"片段{segment.index} 极速模式{self.settings.video_display_label}",
+                                self._process_product_video,
                                 job_id,
                                 video_client,
                                 script,
@@ -1281,6 +1298,46 @@ class JobManager:
         write_storyboard_product_lock_meta(output, script.product_name, script.reference_image, 1)
         return "已生成"
 
+    def _process_product_video(
+        self,
+        job_id: str,
+        omni_client: Any,
+        script: ScriptFile,
+        segment: Segment,
+        overwrite: bool,
+        video_api: Optional[str] = None,
+        video_settings: Optional[Settings] = None,
+    ) -> str:
+        video_settings = video_settings or self.settings
+        video_api = video_api or ("grok" if self.settings.provider == "grok" else "otu")
+        output = video_output_path(self.settings, script.product_name, script.md_path, segment.index)
+        output_matches_reference = len(getattr(script, "reference_images", (script.reference_image,))) <= 1 or has_current_storyboard_product_lock(
+            output, script.product_name, script.reference_image
+        )
+        if output.exists() and output_matches_reference and not overwrite:
+            return "已存在，跳过"
+        if output.exists() and not output_matches_reference and not overwrite:
+            self._log(job_id, "info", f"片段{segment.index} 极速模式{self.settings.video_display_label}：产品 SKU 已切换，自动重做")
+        if output.exists() and overwrite:
+            self._log(job_id, "info", f"片段{segment.index} 极速模式{self.settings.video_display_label}：强制重跑，旧视频会保留到新视频成功覆盖")
+        if script.reference_image is None or not script.reference_image.exists():
+            raise RuntimeError("缺少产品参考图，无法生成极速模式视频")
+
+        video_prompt = build_product_video_prompt(segment)
+        self._log(
+            job_id,
+            "info",
+            f"片段{segment.index} 极速模式{self.settings.video_display_label}：仅使用产品参考图 + 当前片段镜头脚本，prompt {len(video_prompt)} 字符",
+        )
+        generate_kwargs: Dict[str, Any] = {
+            "progress": lambda message: self._log(job_id, "info", f"片段{segment.index} 极速模式{self.settings.video_display_label}：{message}"),
+        }
+        if video_api == "grok":
+            generate_kwargs["duration"] = _segment_duration_seconds(segment, video_settings.grok_video_duration)
+        omni_client.generate_video(video_prompt, script.reference_image, output, **generate_kwargs)
+        write_storyboard_product_lock_meta(output, script.product_name, script.reference_image, 1)
+        return "已生成"
+
     def _image_client_for(self, stage: str) -> tuple[Any, str, Settings]:
         api, model = _split_api_model(_stage_api_model(self.settings, stage))
         if stage == "characters":
@@ -1385,11 +1442,12 @@ def _expand_stages(stage: str) -> List[str]:
 
 def _stage_display_label(stage: str) -> str:
     return {
-        "smart": "功能5 完整模式",
+        "smart": "功能6 一键完整流程（1→2→3）",
         "characters": "功能1",
         "storyboards": "功能2",
         "videos": "功能3",
         "direct_videos": "功能4 快速模式",
+        "product_videos": "功能5 极速模式",
     }.get(stage, stage)
 
 

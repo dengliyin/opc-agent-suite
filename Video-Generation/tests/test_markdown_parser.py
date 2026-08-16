@@ -2,6 +2,7 @@ import pytest
 
 from agent.markdown_parser import (
     build_direct_video_prompt,
+    build_product_video_prompt,
     build_video_prompt,
     character_source_segment_index,
     parse_segments,
@@ -227,6 +228,28 @@ def test_build_direct_video_prompt_requires_shot_script() -> None:
 
     with pytest.raises(ValueError, match="未找到镜头脚本"):
         build_direct_video_prompt(segment)
+
+
+def test_build_product_video_prompt_uses_only_product_reference_and_shot_script() -> None:
+    segment = parse_segments(SAMPLE)[0]
+    prompt = build_product_video_prompt(segment)
+
+    assert "唯一一张产品参考图" in prompt
+    assert "人物、场景和动作只按镜头脚本生成" in prompt
+    assert "### 镜头 1" in prompt
+    assert "人物提示词 1" not in prompt
+    assert "故事提示词 1" not in prompt
+    assert "第一张人物参考图" not in prompt
+    assert "始终使用单一全屏画面" in prompt
+    assert "禁止分屏、拼贴、网格、画中画" in prompt
+    assert "镜头只能按脚本时间顺序依次切换" in prompt
+
+
+def test_build_product_video_prompt_requires_shot_script() -> None:
+    segment = parse_segments(SAMPLE)[1]
+
+    with pytest.raises(ValueError, match="未找到镜头脚本"):
+        build_product_video_prompt(segment)
 
 
 def test_build_direct_video_prompt_includes_technical_padding_control() -> None:

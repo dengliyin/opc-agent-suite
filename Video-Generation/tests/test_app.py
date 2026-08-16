@@ -84,6 +84,31 @@ def test_same_agent_run_is_accepted_for_manager_queue(monkeypatch):
     assert omni.started == [("characters", False, ["/tmp/a.md"], None, None)]
 
 
+def test_product_video_stage_is_accepted(monkeypatch):
+    omni = FakeManager()
+    monkeypatch.setattr(app_module, "job_managers", {"omni": omni, "grok": FakeManager()})
+    client = TestClient(app_module.app)
+
+    response = client.post(
+        "/omni/api/run",
+        json={"stage": "product_videos", "overwrite": False, "script_paths": ["/tmp/a.md"]},
+    )
+
+    assert response.status_code == 200
+    assert omni.started == [("product_videos", False, ["/tmp/a.md"], None, None)]
+
+
+def test_omni_page_has_product_reference_fastest_mode():
+    response = TestClient(app_module.app).get("/omni")
+
+    assert response.status_code == 200
+    assert 'data-stage="product_videos"' in response.text
+    assert "功能3 故事版图 → 视频" in response.text
+    assert "功能4 人物图+产品图 → 视频" in response.text
+    assert "功能5 产品图+镜头脚本 → 视频" in response.text
+    assert "功能6 一键完整流程（1→2→3）" in response.text
+
+
 def test_update_concurrency_is_per_agent(monkeypatch):
     omni = FakeManager()
     grok = FakeManager()
