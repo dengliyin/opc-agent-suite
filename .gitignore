@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 !.env.windows.example
+!.env.docker.example
 .runtime/
 
 # Python environments and caches

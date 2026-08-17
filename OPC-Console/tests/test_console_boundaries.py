@@ -57,6 +57,26 @@ class ConsoleBoundaryTests(unittest.TestCase):
 
         self.assertEqual(self.app.SERVICES["assemble"]["health_path"], "/health")
 
+    def test_service_can_use_internal_health_url_and_public_browser_url(self):
+        with mock.patch.dict(
+            self.app.os.environ,
+            {
+                "OPC_HOT_VIDEO_AGENT_URL": "http://video-collection:9991/",
+                "OPC_HOT_VIDEO_AGENT_URL_PUBLIC": "http://localhost:9991/",
+            },
+        ):
+            service = self.app.build_services()["collect"]
+
+        self.assertEqual(service["health_url"], "http://video-collection:9991/")
+        self.assertEqual(service["url"], "http://localhost:9991/")
+
+    def test_docker_managed_services_are_not_controllable_from_console(self):
+        with (
+            mock.patch.object(self.app, "SERVICE_MANAGER", "docker"),
+            self.assertRaisesRegex(RuntimeError, "Docker Compose"),
+        ):
+            self.app.start_service("collect")
+
     def test_service_health_uses_recent_supervisor_probe_result(self):
         service = self.app.SERVICES["hybrid_adapt"].copy()
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -1,0 +1,64 @@
+services:
+  console:
+    ports: !override
+      - "127.0.0.1:18888:8888"
+
+  video-collection:
+    ports: !override
+      - "127.0.0.1:19991:9991"
+
+  script-analysis:
+    ports: !override
+      - "127.0.0.1:19992:9992"
+
+  script-generation:
+    ports: !override
+      - "127.0.0.1:19993:9993"
+
+  script-adaptation:
+    ports: !override
+      - "127.0.0.1:19994:9994"
+
+  video-generation:
+    ports: !override
+      - "127.0.0.1:19995:9995"
+
+  finished-video-manager:
+    ports: !override
+      - "127.0.0.1:19996:9996"
+
+  product-script-rewrite:
+    ports: !override
+      - "127.0.0.1:19997:9997"
+
+  video-assembly:
+    ports: !override
+      - "127.0.0.1:19998:9998"
+
+  hybrid-script-adaptation:
+    ports: !override
+      - "127.0.0.1:19999:9999"
+
+  hybrid-video-mixer:
+    ports: !override
+      - "127.0.0.1:20000:10000"
+
+  hybrid-video-collection:
+    ports: !override
+      - "127.0.0.1:20001:10001"
+
+  hybrid-script-analysis:
+    ports: !override
+      - "127.0.0.1:20002:10002"
+
+  hybrid-script-generation:
+    ports: !override
+      - "127.0.0.1:20003:10003"
+
+  hybrid-audio-generation:
+    ports: !override
+      - "127.0.0.1:20004:10004"
+
+  auto-publish-pipeline:
+    ports: !override
+      - "127.0.0.1:20005:10005"
