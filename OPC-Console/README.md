@@ -1,53 +1,24 @@
-# OPC Console
+# OPC 集合控制台（8888）
 
-OPC Agent Suite 的独立总控制台，默认运行在 `http://127.0.0.1:8888/`。
+8888 是 Docker Compose 部署的统一导航和路径设置页面。它读取 9991–10005 的业务健康接口显示运行状态，并提供各 Agent 的“打开”入口。
 
-控制台负责全局路径设置、服务调度、状态检测、导航和总览，不修改各 Agent 的独立业务配置和产物。
+控制台不负责启动或停止 Agent，也不包含 LaunchAgent、Windows 计划任务或本机进程控制代码。Agent 的常驻和自动恢复统一交给 Docker Compose 的 `restart: unless-stopped`。
 
-## 启动
+## 运行
 
-推荐从仓库根目录运行：
-
-```bash
-./scripts/start_console.sh
-```
-
-也可以直接运行：
+在仓库根目录执行：
 
 ```bash
-./run_console.sh
+./scripts/docker_up.sh
 ```
 
-## macOS 常驻运行
+然后打开 [http://127.0.0.1:8888/](http://127.0.0.1:8888/)。
 
-不建议只把控制台放入 Docker，因为控制台需要在宿主机启动 13 个独立 Agent。使用 macOS LaunchAgent 可以在用户登录后自动启动，并在控制台异常退出时自动拉起：
+全局路径设置保存在容器的 `/config/.env`，宿主机对应 `${OPC_DOCKER_DATA_ROOT}/config/.env`。业务文件仍存放在 `${OPC_VAULT_ROOT}`。
+
+## 健康检查
 
 ```bash
-./scripts/install_console_launchagent.sh
+./scripts/docker_health.sh
+docker compose logs --tail=200 console
 ```
-
-停止本次登录会话中的控制台和全部 Agent：
-
-```bash
-./scripts/stop_all.sh
-```
-
-彻底取消控制台常驻并删除 LaunchAgent：
-
-```bash
-./scripts/uninstall_console_launchagent.sh
-```
-
-LaunchAgent 只常驻 `8888`。`9991–10005` 分别注册为独立但不自启动的 LaunchAgent。Agent 掉线后，控制台的“启动”按钮会执行 `launchctl kickstart -k` 并等待健康检查恢复；重启控制台不会终止已经运行的 Agent。
-
-LaunchAgent 直接使用控制台的 Python 环境加载 `.env` 并启动服务，因此不需要为 `/bin/bash` 授予 Documents 访问权限。
-
-## 当前职责
-
-- 从项目根目录 `.env` 读取并维护 13 个 Agent 共用的全局默认路径。
-- 展示 OPC 工作流总览。
-- 启动并检测 13 个独立 Agent。
-- 跳转到各 Agent 页面。
-- 把所有业务操作交给对应 Agent 页面。
-
-迁移记录见 [MIGRATION.md](MIGRATION.md)。

@@ -46,7 +46,7 @@ class SharedAgentSettingsTests(unittest.TestCase):
         self.assertFalse(any(key.endswith("API_KEY") for key in video))
 
     def test_tracked_secret_templates_contain_no_credentials(self):
-        env_values = assignment_map(".env.example")
+        env_values = assignment_map(".env.docker.example")
         video_env_values = assignment_map("Video-Generation/.env.example")
         analysis_local = read_json("Script-Analysis/config/settings.local.example.json")
         adaptation_local = read_json(

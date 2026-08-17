@@ -4,9 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
-import subprocess
 import tempfile
-import time
 import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -15,24 +13,9 @@ from urllib.parse import urljoin, urlparse
 
 
 ROOT = Path(__file__).resolve().parent
-WORKSPACE_ROOT = ROOT.parent
-IS_WINDOWS = os.name == "nt"
-LOCAL_CONFIG_ROOT = (
-    Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "OPC-Agent-Suite"
-    if IS_WINDOWS
-    else Path.home() / "Library" / "Application Support" / "OPC-Agent-Suite"
-)
-ENV_FILE = Path(
-    os.environ.get(
-        "OPC_ENV_FILE",
-        LOCAL_CONFIG_ROOT / ".env",
-    )
-).expanduser()
+ENV_FILE = Path(os.environ.get("OPC_ENV_FILE", "/config/.env")).expanduser()
 HOST = os.environ.get("KESAI_APP_HOST", "127.0.0.1")
 PORT = int(os.environ.get("KESAI_APP_PORT", "8888"))
-HEALTH_STATUS_DIR = LOCAL_CONFIG_ROOT / "service-health"
-HEALTH_STATUS_MAX_AGE_SECONDS = 45
-SERVICE_MANAGER = os.environ.get("OPC_SERVICE_MANAGER", "native")
 
 
 def service_url(env_name: str, default: str) -> str:
@@ -41,37 +24,6 @@ def service_url(env_name: str, default: str) -> str:
 
 def public_service_url(env_name: str, default: str) -> str:
     return os.environ.get(f"{env_name}_PUBLIC", service_url(env_name, default))
-
-
-def service_port(url: str, fallback: int) -> int:
-    try:
-        return int(urlparse(url).port or fallback)
-    except (TypeError, ValueError):
-        return fallback
-
-
-def agent_python(agent_dir: Path) -> str:
-    candidate = agent_dir / ".venv" / ("Scripts/python.exe" if IS_WINDOWS else "bin/python")
-    return str(candidate) if candidate.exists() else ("python" if IS_WINDOWS else "python3")
-
-
-VIDEO_COLLECTION_DIR = WORKSPACE_ROOT / "Video-Collection"
-SCRIPT_ANALYSIS_DIR = WORKSPACE_ROOT / "Script-Analysis"
-HYBRID_VIDEO_COLLECTION_DIR = WORKSPACE_ROOT / "Hybrid-Video-Collection"
-HYBRID_SCRIPT_ANALYSIS_DIR = WORKSPACE_ROOT / "Hybrid-Script-Analysis"
-HYBRID_SCRIPT_GENERATION_DIR = WORKSPACE_ROOT / "Hybrid-Script-Generation"
-HYBRID_AUDIO_GENERATION_DIR = WORKSPACE_ROOT / "Hybrid-Audio-Generation"
-AUTO_PUBLISH_PIPELINE_DIR = WORKSPACE_ROOT / "Auto-Publish-Pipeline"
-SCRIPT_GENERATION_DIR = WORKSPACE_ROOT / "Script-Generation"
-SCRIPT_ADAPTATION_DIR = WORKSPACE_ROOT / "Script-Adaptation"
-SCRIPT_ADAPTATION_APP_DIR = SCRIPT_ADAPTATION_DIR / "software" / "Script-Adaptation-app"
-VIDEO_GENERATION_DIR = WORKSPACE_ROOT / "Video-Generation"
-FINISHED_VIDEO_MANAGER_DIR = WORKSPACE_ROOT / "Finished-Video-Manager"
-PRODUCT_SCRIPT_REWRITE_DIR = WORKSPACE_ROOT / "Product-Script-Rewrite"
-VIDEO_ASSEMBLY_DIR = WORKSPACE_ROOT / "Video-Assembly-hd"
-HYBRID_SCRIPT_ADAPTATION_DIR = WORKSPACE_ROOT / "Hybrid-Script-Adaptation"
-HYBRID_SCRIPT_ADAPTATION_APP_DIR = HYBRID_SCRIPT_ADAPTATION_DIR / "software" / "Hybrid-Script-Adaptation-app"
-HYBRID_VIDEO_MIXER_DIR = WORKSPACE_ROOT / "Hybrid-Video-Mixer"
 
 
 def build_services() -> dict[str, dict]:
@@ -105,115 +57,81 @@ def build_services() -> dict[str, dict]:
             "label": "视频采集",
             "description": "采集 FastMoss 商品关联视频并下载 TikTok 素材",
             "url": urls["collect"],
-            "cwd": VIDEO_COLLECTION_DIR,
-            "command": [agent_python(VIDEO_COLLECTION_DIR), "-m", "hot_video_agent", "web", "--host", "127.0.0.1", "--port", str(service_port(urls["collect"], 9991))],
         },
         "analyze": {
             "label": "脚本解析",
             "description": "把本地短视频拆解成结构化 Markdown",
             "url": urls["analyze"],
-            "cwd": SCRIPT_ANALYSIS_DIR,
-            "command": [agent_python(SCRIPT_ANALYSIS_DIR), str(SCRIPT_ANALYSIS_DIR / "scripts" / "web_app.py"), "--host", "127.0.0.1", "--port", str(service_port(urls["analyze"], 9992))],
         },
         "script": {
             "label": "脚本产出",
             "description": "根据产品资料和爆款参考生成带货脚本",
             "url": urls["script"],
-            "cwd": SCRIPT_GENERATION_DIR,
-            "command": [agent_python(SCRIPT_GENERATION_DIR), "-m", "opc_engine.features.script_generation.script_generation_agent_web", "--port", str(service_port(urls["script"], 9993))],
         },
         "adapt": {
             "label": "脚本适配",
             "description": "生成视频模型需要的分镜、图片提示词和任务表",
             "url": urls["adapt"],
-            "cwd": SCRIPT_ADAPTATION_DIR,
-            "launch_cwd": SCRIPT_ADAPTATION_APP_DIR,
-            "command": [agent_python(SCRIPT_ADAPTATION_DIR), "-m", "opc_engine.features.script_adaptation.script_adaptation_agent_web", "--port", str(service_port(urls["adapt"], 9994))],
         },
         "assemble": {
             "label": "片段产出",
             "description": "生成人物图、故事版和视频片段",
             "url": urls["assemble"],
-            "cwd": VIDEO_GENERATION_DIR,
-            "command": [agent_python(VIDEO_GENERATION_DIR), "-m", "uvicorn", "agent.app:app", "--host", "127.0.0.1", "--port", str(service_port(urls["assemble"], 9995))],
         },
         "finished": {
             "label": "成品管理",
             "description": "查看成品、维护发布记录并处理 TikTok 发布",
             "url": urls["finished"],
-            "cwd": FINISHED_VIDEO_MANAGER_DIR,
-            "command": [agent_python(FINISHED_VIDEO_MANAGER_DIR), "-m", "finished_video_manager.web", "web", "--host", "127.0.0.1", "--port", str(service_port(urls["finished"], 9996))],
         },
         "rewrite": {
             "label": "产品脚本改写",
             "description": "把爆款脚本改写成目标产品版本",
             "url": urls["rewrite"],
-            "cwd": PRODUCT_SCRIPT_REWRITE_DIR,
-            "command": [agent_python(PRODUCT_SCRIPT_REWRITE_DIR), "-m", "product_script_rewrite.web", "--port", str(service_port(urls["rewrite"], 9997))],
         },
         "compose": {
             "label": "片段合成",
             "description": "离线拼接片段、校验成品并清理已用素材",
             "url": urls["compose"],
-            "cwd": VIDEO_ASSEMBLY_DIR,
-            "command": [agent_python(VIDEO_ASSEMBLY_DIR), str(VIDEO_ASSEMBLY_DIR / "app" / "server.py"), "--host", "127.0.0.1", "--port", str(service_port(urls["compose"], 9998))],
         },
         "hybrid_adapt": {
             "label": "钩子与 CTA 脚本适配",
             "description": "把复刻裂变后的钩子与 CTA 脚本适配成视频模型片段指令",
             "url": urls["hybrid_adapt"],
-            "cwd": HYBRID_SCRIPT_ADAPTATION_DIR,
-            "launch_cwd": HYBRID_SCRIPT_ADAPTATION_APP_DIR,
-            "command": [agent_python(HYBRID_SCRIPT_ADAPTATION_DIR), "-m", "opc_engine.features.script_adaptation.script_adaptation_agent_web", "--port", str(service_port(urls["hybrid_adapt"], 9999))],
         },
         "hybrid_mix": {
             "label": "AI＋实拍混剪",
             "description": "按产品音频编排 AI 首尾片段与展示、使用实拍素材",
             "url": urls["hybrid_mix"],
-            "cwd": HYBRID_VIDEO_MIXER_DIR,
-            "command": [agent_python(HYBRID_VIDEO_MIXER_DIR), str(HYBRID_VIDEO_MIXER_DIR / "app" / "server.py"), "--host", "127.0.0.1", "--port", str(service_port(urls["hybrid_mix"], 10000))],
         },
         "hybrid_collect": {
             "label": "混剪参考视频采集",
             "description": "按类型和产品下载钩子或 CTA 参考视频",
             "url": urls["hybrid_collect"],
-            "cwd": HYBRID_VIDEO_COLLECTION_DIR,
-            "command": [agent_python(HYBRID_VIDEO_COLLECTION_DIR), "-m", "hot_video_agent", "web", "--host", "127.0.0.1", "--port", str(service_port(urls["hybrid_collect"], 10001))],
         },
         "hybrid_analyze": {
             "label": "混剪参考视频解析",
             "description": "按类型和产品把参考视频解析成 Markdown",
             "url": urls["hybrid_analyze"],
-            "cwd": HYBRID_SCRIPT_ANALYSIS_DIR,
-            "command": [agent_python(HYBRID_SCRIPT_ANALYSIS_DIR), str(HYBRID_SCRIPT_ANALYSIS_DIR / "scripts" / "web_app.py"), "--host", "127.0.0.1", "--port", str(service_port(urls["hybrid_analyze"], 10002))],
         },
         "hybrid_script": {
             "label": "钩子与 CTA 脚本复刻裂变",
             "description": "把解析脚本复刻为产品脚本并批量生成可独立使用的变体",
             "url": urls["hybrid_script"],
-            "cwd": HYBRID_SCRIPT_GENERATION_DIR,
-            "command": [agent_python(HYBRID_SCRIPT_GENERATION_DIR), "-m", "opc_engine.features.script_generation.script_generation_agent_web", "--port", str(service_port(urls["hybrid_script"], 10003))],
         },
         "hybrid_voice": {
             "label": "配音",
             "description": "把本地产品音频文案生成为混剪可直接读取的 1.2 倍语速 M4A",
             "url": urls["hybrid_voice"],
-            "cwd": HYBRID_AUDIO_GENERATION_DIR,
-            "command": [agent_python(HYBRID_AUDIO_GENERATION_DIR), "-m", "audio_agent.web", "--host", "127.0.0.1", "--port", str(service_port(urls["hybrid_voice"], 10004))],
         },
         "auto_publish": {
             "label": "自动发布流水线",
             "description": "从已复刻脚本独立完成裂变、适配、片段、合成和串行发布",
             "url": urls["auto_publish"],
-            "cwd": AUTO_PUBLISH_PIPELINE_DIR,
-            "command": [agent_python(AUTO_PUBLISH_PIPELINE_DIR), "-m", "auto_publish_pipeline.web", "--host", "127.0.0.1", "--port", str(service_port(urls["auto_publish"], 10005))],
         },
     }
     for service_id, service in services.items():
         service["url"] = public_urls[service_id]
         service["health_url"] = urls[service_id]
-        service["launch_agent_label"] = f"com.kesai.opc-agent.{service_id}"
-        service["windows_task_name"] = rf"\OPC-Agent-Suite\agent-{service_id}"
     health_paths = {
         "collect": "/api/state",
         "analyze": "/api/status",
@@ -233,7 +151,6 @@ def build_services() -> dict[str, dict]:
     }
     for service_id, service in services.items():
         service["health_path"] = health_paths[service_id]
-        service["health_status_path"] = HEALTH_STATUS_DIR / f"{service_id}.json"
     return services
 
 
@@ -491,15 +408,6 @@ def save_global_paths(updates: dict, env_file: Path = ENV_FILE) -> dict:
 
 
 def service_running(service: dict) -> bool:
-    status_path = Path(service["health_status_path"])
-    try:
-        status = json.loads(status_path.read_text(encoding="utf-8"))
-        checked_at = float(status.get("checked_at") or 0)
-        if time.time() - checked_at <= HEALTH_STATUS_MAX_AGE_SECONDS:
-            return bool(status.get("healthy"))
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        pass
-
     try:
         request = urllib.request.Request(
             urljoin(service["health_url"], service["health_path"].lstrip("/")),
@@ -521,134 +429,11 @@ def service_status(service_id: str) -> dict:
         "url": service["url"],
         "running": running,
         "process_running": running,
-        "controllable": SERVICE_MANAGER != "docker",
     }
 
 
 def services_payload() -> dict:
     return {"services": [service_status(service_id) for service_id in SERVICES]}
-
-
-def start_service_macos(service: dict) -> None:
-    domain = f"gui/{os.getuid()}"
-    target = f"{domain}/{service['launch_agent_label']}"
-    registration = subprocess.run(
-        ["launchctl", "print", target],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if registration.returncode:
-        plist_path = Path.home() / "Library" / "LaunchAgents" / f"{service['launch_agent_label']}.plist"
-        if not plist_path.is_file():
-            raise RuntimeError(f"Agent LaunchAgent 配置不存在：{plist_path}")
-        bootstrap = subprocess.run(
-            ["launchctl", "bootstrap", domain, str(plist_path)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if bootstrap.returncode:
-            detail = bootstrap.stderr.strip() or bootstrap.stdout.strip() or "launchctl bootstrap 失败"
-            raise RuntimeError(f"Agent LaunchAgent 注册失败：{detail}")
-
-    result = subprocess.run(
-        ["launchctl", "kickstart", "-k", target],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode:
-        detail = result.stderr.strip() or result.stdout.strip() or "launchctl kickstart 失败"
-        raise RuntimeError(f"Agent LaunchAgent 未安装或无法启动：{detail}")
-
-
-def start_service_windows(service: dict) -> None:
-    task_name = service["windows_task_name"]
-    query = subprocess.run(
-        ["schtasks.exe", "/Query", "/TN", task_name],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if query.returncode:
-        raise RuntimeError(
-            "Agent Windows 计划任务不存在，请先运行 scripts\\bootstrap_windows.ps1："
-            f"{task_name}"
-        )
-    result = subprocess.run(
-        ["schtasks.exe", "/Run", "/TN", task_name],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode:
-        detail = result.stderr.strip() or result.stdout.strip() or "schtasks /Run 失败"
-        raise RuntimeError(f"Agent Windows 计划任务无法启动：{detail}")
-
-
-def start_service(service_id: str) -> dict:
-    if service_id not in SERVICES:
-        raise ValueError("未知 Agent 服务")
-    service = SERVICES[service_id]
-    if SERVICE_MANAGER == "docker":
-        raise RuntimeError("Docker 部署中的 Agent 由 Docker Compose 管理")
-    if service_running(service):
-        return service_status(service_id) | {"started": False, "message": "服务已运行"}
-
-    if IS_WINDOWS:
-        start_service_windows(service)
-    else:
-        start_service_macos(service)
-    return service_status(service_id) | {"started": True, "message": "已发送启动命令"}
-
-
-def stop_service_macos(service: dict) -> None:
-    target = f"gui/{os.getuid()}/{service['launch_agent_label']}"
-    result = subprocess.run(
-        ["launchctl", "bootout", target],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode:
-        detail = result.stderr.strip() or result.stdout.strip() or "launchctl bootout 失败"
-        raise RuntimeError(f"Agent LaunchAgent 无法停止：{detail}")
-
-
-def stop_service_windows(service: dict) -> None:
-    task_name = service["windows_task_name"]
-    result = subprocess.run(
-        ["schtasks.exe", "/End", "/TN", task_name],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode:
-        detail = result.stderr.strip() or result.stdout.strip() or "schtasks /End 失败"
-        raise RuntimeError(f"Agent Windows 计划任务无法停止：{detail}")
-
-
-def stop_service(service_id: str) -> dict:
-    if service_id not in SERVICES:
-        raise ValueError("未知 Agent 服务")
-    service = SERVICES[service_id]
-    if SERVICE_MANAGER == "docker":
-        raise RuntimeError("Docker 部署中的 Agent 由 Docker Compose 管理")
-    if not service_running(service):
-        return service_status(service_id) | {"stopped": False, "message": "服务未运行"}
-
-    if IS_WINDOWS:
-        stop_service_windows(service)
-    else:
-        stop_service_macos(service)
-    status_path = Path(service["health_status_path"])
-    status_path.parent.mkdir(parents=True, exist_ok=True)
-    status_path.write_text(
-        json.dumps({"healthy": False, "checked_at": time.time(), "detail": "stopped from console"}),
-        encoding="utf-8",
-    )
-    return service_status(service_id) | {"stopped": True, "message": "已发送停止命令"}
 
 
 INDEX_HTML = """<!doctype html>
@@ -676,13 +461,10 @@ const workflowLines=[
   {title:'线路 4 · 自动发布',description:'从已认可的复刻脚本开始，独立完成裂变、适配、片段、合成与串行发布。',steps:['auto_publish']}
 ];
 let services=[];
-const busyServices=new Set();
 function esc(value){return String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function cardHtml(step,index){const reference=typeof step==='string'?{id:step}:step;if(!reference.id){return `<article class="card planned"><div class="top"><span class="step">STEP ${String(index+1).padStart(2,'0')} · ${esc(reference.port)}</span><span class="status planned">待开发</span></div><h2>${esc(reference.label)}</h2><div class="actions"><button disabled>暂未接入</button></div></article>`}const service=services.find(item=>item.id===reference.id);if(!service)return '';const busy=busyServices.has(service.id),canControl=service.controllable!==false;return `<article class="card"><div class="top"><span class="step">STEP ${String(index+1).padStart(2,'0')} · ${esc(new URL(service.url).port)}</span><span class="status ${service.running?'on':''}">${busy?(service.running?'停止中…':'启动中…'):(service.running?'运行中':'未启动')}</span></div><h2>${esc(reference.label||service.label)}</h2><div class="actions"><button class="primary" onclick="toggleService('${esc(service.id)}',${service.running})" ${busy||!canControl?'disabled':''}>${canControl?(busy?'处理中…':service.running?'停止':'启动'):'Compose 管理'}</button><a class="button" href="${esc(service.url)}" target="_blank" rel="noreferrer">打开</a></div></article>`}
+function cardHtml(step,index){const reference=typeof step==='string'?{id:step}:step;if(!reference.id){return `<article class="card planned"><div class="top"><span class="step">STEP ${String(index+1).padStart(2,'0')} · ${esc(reference.port)}</span><span class="status planned">待开发</span></div><h2>${esc(reference.label)}</h2><div class="actions"><button disabled>暂未接入</button></div></article>`}const service=services.find(item=>item.id===reference.id);if(!service)return '';return `<article class="card"><div class="top"><span class="step">STEP ${String(index+1).padStart(2,'0')} · ${esc(new URL(service.url).port)}</span><span class="status ${service.running?'on':''}">${service.running?'运行中':'未启动'}</span></div><h2>${esc(reference.label||service.label)}</h2><div class="actions"><a class="button" href="${esc(service.url)}" target="_blank" rel="noreferrer">打开</a></div></article>`}
 function render(){workflowsHost.innerHTML=workflowLines.map(line=>`<section class="workflow"><div class="workflowHead"><div class="workflowTitle">${esc(line.title)}</div><div class="workflowDescription">${esc(line.description)}</div></div><div class="flow">${line.steps.map(cardHtml).join('')}</div></section>`).join('');destination.innerHTML=cardHtml({id:'finished'},0);const count=services.filter(s=>s.running).length;summary.textContent=`${count} / ${services.length} 个 Agent 运行中`;}
 async function refresh(){try{const r=await fetch('/api/agent-services');const data=await r.json();services=data.services;render()}catch(e){summary.textContent='服务状态读取失败'}}
-async function waitForService(id,running){const deadline=Date.now()+30000;while(Date.now()<deadline){await new Promise(resolve=>setTimeout(resolve,1000));await refresh();if(services.some(s=>s.id===id&&s.running===running))return true}return false}
-async function toggleService(id,running){busyServices.add(id);render();const action=running?'stop':'start';try{const r=await fetch(`/api/agent-services/${action}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});const data=await r.json();if(!r.ok)throw new Error(data.error||`${running?'停止':'启动'}失败`);if(!await waitForService(id,!running))throw new Error(`Agent ${running?'停止':'启动'}超时，请检查对应运行日志`)}catch(e){alert(e.message)}finally{busyServices.delete(id);await refresh()}}
 refresh();setInterval(refresh,4000);
 </script></body></html>"""
 
@@ -784,13 +566,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path = urlparse(self.path).path
         try:
-            if path == "/api/agent-services/start":
-                payload = self.read_json()
-                self.send_json(200, start_service(str(payload.get("id", ""))))
-            elif path == "/api/agent-services/stop":
-                payload = self.read_json()
-                self.send_json(200, stop_service(str(payload.get("id", ""))))
-            elif path == "/api/global-paths":
+            if path == "/api/global-paths":
                 payload = self.read_json()
                 self.send_json(200, save_global_paths(payload.get("paths")))
             else:

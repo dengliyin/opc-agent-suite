@@ -66,7 +66,7 @@ x-common-service: &common-service
   environment: *common-environment
   volumes: &common-volumes
     - "${OPC_VAULT_ROOT:?Set OPC_VAULT_ROOT in .env}:/vault"
-    - opc-config:/config
+    - "${OPC_DOCKER_DATA_ROOT:?Set OPC_DOCKER_DATA_ROOT in .env}/config:/config"
   healthcheck: &common-healthcheck
     interval: 30s
     timeout: 5s
@@ -87,7 +87,6 @@ services:
       <<: *common-environment
       KESAI_APP_PORT: "8888"
       OPC_ENV_FILE: /config/.env
-      OPC_SERVICE_MANAGER: docker
       SERVICE_PORT: "8888"
       HEALTH_PATH: /health
     ports:
@@ -162,8 +161,8 @@ services:
     ports: ["${OPC_DOCKER_BIND:-127.0.0.1}:9996:9996"]
     volumes:
       - "${OPC_VAULT_ROOT:?Set OPC_VAULT_ROOT in .env}:/vault"
-      - opc-config:/config
-      - finished-video-data:/workspace/Finished-Video-Manager/data
+      - "${OPC_DOCKER_DATA_ROOT:?Set OPC_DOCKER_DATA_ROOT in .env}/config:/config"
+      - "${OPC_DOCKER_DATA_ROOT:?Set OPC_DOCKER_DATA_ROOT in .env}/finished-video-data:/workspace/Finished-Video-Manager/data"
       - ./Finished-Video-Manager/config/product_mappings.json:/workspace/Finished-Video-Manager/config/product_mappings.json
 
   product-script-rewrite:
@@ -186,12 +185,13 @@ services:
         SYSTEM_PACKAGES: ffmpeg
     working_dir: /workspace/Video-Assembly-hd
     command: ["python", "-u", "app/server.py", "--host", "0.0.0.0", "--port", "9998"]
-    environment: {<<: *common-environment, SERVICE_PORT: "9998", HEALTH_PATH: /api/state}
+    environment: {<<: *common-environment, SERVICE_PORT: "9998", HEALTH_PATH: /api/state, VIDEO_ASSEMBLY_WORK_ROOT: /assembly-work}
     ports: ["${OPC_DOCKER_BIND:-127.0.0.1}:9998:9998"]
     volumes:
       - "${OPC_VAULT_ROOT:?Set OPC_VAULT_ROOT in .env}:/vault"
-      - opc-config:/config
-      - video-assembly-data:/workspace/Video-Assembly-hd/data
+      - "${VIDEO_ASSEMBLY_WORK_ROOT:?Set VIDEO_ASSEMBLY_WORK_ROOT in .env}:/assembly-work"
+      - "${OPC_DOCKER_DATA_ROOT:?Set OPC_DOCKER_DATA_ROOT in .env}/config:/config"
+      - "${OPC_DOCKER_DATA_ROOT:?Set OPC_DOCKER_DATA_ROOT in .env}/video-assembly-data:/workspace/Video-Assembly-hd/data"
 
   hybrid-script-adaptation:
     <<: *common-service
@@ -260,14 +260,8 @@ services:
     ports: ["${OPC_DOCKER_BIND:-127.0.0.1}:10005:10005"]
     volumes:
       - "${OPC_VAULT_ROOT:?Set OPC_VAULT_ROOT in .env}:/vault"
-      - opc-config:/config
-      - auto-publish-data:/workspace/Auto-Publish-Pipeline/data
-      - finished-video-data:/workspace/Finished-Video-Manager/data
-      - video-assembly-data:/workspace/Video-Assembly-hd/data
+      - "${OPC_DOCKER_DATA_ROOT:?Set OPC_DOCKER_DATA_ROOT in .env}/config:/config"
+      - "${OPC_DOCKER_DATA_ROOT:?Set OPC_DOCKER_DATA_ROOT in .env}/auto-publish-data:/workspace/Auto-Publish-Pipeline/data"
+      - "${OPC_DOCKER_DATA_ROOT:?Set OPC_DOCKER_DATA_ROOT in .env}/finished-video-data:/workspace/Finished-Video-Manager/data"
+      - "${OPC_DOCKER_DATA_ROOT:?Set OPC_DOCKER_DATA_ROOT in .env}/video-assembly-data:/workspace/Video-Assembly-hd/data"
       - ./Finished-Video-Manager/config/product_mappings.json:/workspace/Finished-Video-Manager/config/product_mappings.json
-
-volumes:
-  opc-config:
-  finished-video-data:
-  video-assembly-data:
-  auto-publish-data:
