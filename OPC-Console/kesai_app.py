@@ -32,10 +32,15 @@ HOST = os.environ.get("KESAI_APP_HOST", "127.0.0.1")
 PORT = int(os.environ.get("KESAI_APP_PORT", "8888"))
 HEALTH_STATUS_DIR = LOCAL_CONFIG_ROOT / "service-health"
 HEALTH_STATUS_MAX_AGE_SECONDS = 45
+SERVICE_MANAGER = os.environ.get("OPC_SERVICE_MANAGER", "native")
 
 
 def service_url(env_name: str, default: str) -> str:
     return os.environ.get(env_name, default)
+
+
+def public_service_url(env_name: str, default: str) -> str:
+    return os.environ.get(f"{env_name}_PUBLIC", service_url(env_name, default))
 
 
 def service_port(url: str, fallback: int) -> int:
@@ -70,22 +75,30 @@ HYBRID_VIDEO_MIXER_DIR = WORKSPACE_ROOT / "Hybrid-Video-Mixer"
 
 
 def build_services() -> dict[str, dict]:
+    defaults = {
+        "collect": ("OPC_HOT_VIDEO_AGENT_URL", "http://127.0.0.1:9991/"),
+        "analyze": ("OPC_VIDEO_TEARDOWN_AGENT_URL", "http://127.0.0.1:9992/"),
+        "script": ("OPC_SCRIPT_PRODUCTION_AGENT_URL", "http://127.0.0.1:9993/"),
+        "adapt": ("OPC_SCRIPT_ADAPTATION_AGENT_URL", "http://127.0.0.1:9994/"),
+        "assemble": ("OPC_VIDEO_OUTPUT_AGENT_URL", "http://127.0.0.1:9995/"),
+        "finished": ("OPC_FINISHED_VIDEO_MANAGER_URL", "http://127.0.0.1:9996/"),
+        "rewrite": ("OPC_PRODUCT_SCRIPT_REWRITE_URL", "http://127.0.0.1:9997/"),
+        "compose": ("OPC_VIDEO_ASSEMBLY_AGENT_URL", "http://127.0.0.1:9998/"),
+        "hybrid_adapt": ("OPC_HYBRID_SCRIPT_ADAPTATION_AGENT_URL", "http://127.0.0.1:9999/"),
+        "hybrid_mix": ("OPC_HYBRID_VIDEO_MIXER_AGENT_URL", "http://127.0.0.1:10000/"),
+        "hybrid_collect": ("OPC_HYBRID_VIDEO_COLLECTION_AGENT_URL", "http://127.0.0.1:10001/"),
+        "hybrid_analyze": ("OPC_HYBRID_SCRIPT_ANALYSIS_AGENT_URL", "http://127.0.0.1:10002/"),
+        "hybrid_script": ("OPC_HYBRID_SCRIPT_GENERATION_AGENT_URL", "http://127.0.0.1:10003/"),
+        "hybrid_voice": ("OPC_HYBRID_AUDIO_GENERATION_AGENT_URL", "http://127.0.0.1:10004/"),
+        "auto_publish": ("OPC_AUTO_PUBLISH_PIPELINE_URL", "http://127.0.0.1:10005/"),
+    }
     urls = {
-        "collect": service_url("OPC_HOT_VIDEO_AGENT_URL", "http://127.0.0.1:9991/"),
-        "analyze": service_url("OPC_VIDEO_TEARDOWN_AGENT_URL", "http://127.0.0.1:9992/"),
-        "script": service_url("OPC_SCRIPT_PRODUCTION_AGENT_URL", "http://127.0.0.1:9993/"),
-        "adapt": service_url("OPC_SCRIPT_ADAPTATION_AGENT_URL", "http://127.0.0.1:9994/"),
-        "assemble": service_url("OPC_VIDEO_OUTPUT_AGENT_URL", "http://127.0.0.1:9995/"),
-        "finished": service_url("OPC_FINISHED_VIDEO_MANAGER_URL", "http://127.0.0.1:9996/"),
-        "rewrite": service_url("OPC_PRODUCT_SCRIPT_REWRITE_URL", "http://127.0.0.1:9997/"),
-        "compose": service_url("OPC_VIDEO_ASSEMBLY_AGENT_URL", "http://127.0.0.1:9998/"),
-        "hybrid_adapt": service_url("OPC_HYBRID_SCRIPT_ADAPTATION_AGENT_URL", "http://127.0.0.1:9999/"),
-        "hybrid_mix": service_url("OPC_HYBRID_VIDEO_MIXER_AGENT_URL", "http://127.0.0.1:10000/"),
-        "hybrid_collect": service_url("OPC_HYBRID_VIDEO_COLLECTION_AGENT_URL", "http://127.0.0.1:10001/"),
-        "hybrid_analyze": service_url("OPC_HYBRID_SCRIPT_ANALYSIS_AGENT_URL", "http://127.0.0.1:10002/"),
-        "hybrid_script": service_url("OPC_HYBRID_SCRIPT_GENERATION_AGENT_URL", "http://127.0.0.1:10003/"),
-        "hybrid_voice": service_url("OPC_HYBRID_AUDIO_GENERATION_AGENT_URL", "http://127.0.0.1:10004/"),
-        "auto_publish": service_url("OPC_AUTO_PUBLISH_PIPELINE_URL", "http://127.0.0.1:10005/"),
+        key: service_url(env_name, default)
+        for key, (env_name, default) in defaults.items()
+    }
+    public_urls = {
+        key: public_service_url(env_name, default)
+        for key, (env_name, default) in defaults.items()
     }
     services = {
         "collect": {
@@ -197,6 +210,8 @@ def build_services() -> dict[str, dict]:
         },
     }
     for service_id, service in services.items():
+        service["url"] = public_urls[service_id]
+        service["health_url"] = urls[service_id]
         service["launch_agent_label"] = f"com.kesai.opc-agent.{service_id}"
         service["windows_task_name"] = rf"\OPC-Agent-Suite\agent-{service_id}"
     health_paths = {
@@ -487,7 +502,7 @@ def service_running(service: dict) -> bool:
 
     try:
         request = urllib.request.Request(
-            urljoin(service["url"], service["health_path"].lstrip("/")),
+            urljoin(service["health_url"], service["health_path"].lstrip("/")),
             method="GET",
         )
         with urllib.request.urlopen(request, timeout=1.2) as response:
@@ -506,6 +521,7 @@ def service_status(service_id: str) -> dict:
         "url": service["url"],
         "running": running,
         "process_running": running,
+        "controllable": SERVICE_MANAGER != "docker",
     }
 
 
@@ -575,6 +591,8 @@ def start_service(service_id: str) -> dict:
     if service_id not in SERVICES:
         raise ValueError("未知 Agent 服务")
     service = SERVICES[service_id]
+    if SERVICE_MANAGER == "docker":
+        raise RuntimeError("Docker 部署中的 Agent 由 Docker Compose 管理")
     if service_running(service):
         return service_status(service_id) | {"started": False, "message": "服务已运行"}
 
@@ -615,6 +633,8 @@ def stop_service(service_id: str) -> dict:
     if service_id not in SERVICES:
         raise ValueError("未知 Agent 服务")
     service = SERVICES[service_id]
+    if SERVICE_MANAGER == "docker":
+        raise RuntimeError("Docker 部署中的 Agent 由 Docker Compose 管理")
     if not service_running(service):
         return service_status(service_id) | {"stopped": False, "message": "服务未运行"}
 
@@ -658,7 +678,7 @@ const workflowLines=[
 let services=[];
 const busyServices=new Set();
 function esc(value){return String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function cardHtml(step,index){const reference=typeof step==='string'?{id:step}:step;if(!reference.id){return `<article class="card planned"><div class="top"><span class="step">STEP ${String(index+1).padStart(2,'0')} · ${esc(reference.port)}</span><span class="status planned">待开发</span></div><h2>${esc(reference.label)}</h2><div class="actions"><button disabled>暂未接入</button></div></article>`}const service=services.find(item=>item.id===reference.id);if(!service)return '';const busy=busyServices.has(service.id);return `<article class="card"><div class="top"><span class="step">STEP ${String(index+1).padStart(2,'0')} · ${esc(new URL(service.url).port)}</span><span class="status ${service.running?'on':''}">${busy?(service.running?'停止中…':'启动中…'):(service.running?'运行中':'未启动')}</span></div><h2>${esc(reference.label||service.label)}</h2><div class="actions"><button class="primary" onclick="toggleService('${esc(service.id)}',${service.running})" ${busy?'disabled':''}>${busy?'处理中…':service.running?'停止':'启动'}</button><a class="button" href="${esc(service.url)}" target="_blank" rel="noreferrer">打开</a></div></article>`}
+function cardHtml(step,index){const reference=typeof step==='string'?{id:step}:step;if(!reference.id){return `<article class="card planned"><div class="top"><span class="step">STEP ${String(index+1).padStart(2,'0')} · ${esc(reference.port)}</span><span class="status planned">待开发</span></div><h2>${esc(reference.label)}</h2><div class="actions"><button disabled>暂未接入</button></div></article>`}const service=services.find(item=>item.id===reference.id);if(!service)return '';const busy=busyServices.has(service.id),canControl=service.controllable!==false;return `<article class="card"><div class="top"><span class="step">STEP ${String(index+1).padStart(2,'0')} · ${esc(new URL(service.url).port)}</span><span class="status ${service.running?'on':''}">${busy?(service.running?'停止中…':'启动中…'):(service.running?'运行中':'未启动')}</span></div><h2>${esc(reference.label||service.label)}</h2><div class="actions"><button class="primary" onclick="toggleService('${esc(service.id)}',${service.running})" ${busy||!canControl?'disabled':''}>${canControl?(busy?'处理中…':service.running?'停止':'启动'):'Compose 管理'}</button><a class="button" href="${esc(service.url)}" target="_blank" rel="noreferrer">打开</a></div></article>`}
 function render(){workflowsHost.innerHTML=workflowLines.map(line=>`<section class="workflow"><div class="workflowHead"><div class="workflowTitle">${esc(line.title)}</div><div class="workflowDescription">${esc(line.description)}</div></div><div class="flow">${line.steps.map(cardHtml).join('')}</div></section>`).join('');destination.innerHTML=cardHtml({id:'finished'},0);const count=services.filter(s=>s.running).length;summary.textContent=`${count} / ${services.length} 个 Agent 运行中`;}
 async function refresh(){try{const r=await fetch('/api/agent-services');const data=await r.json();services=data.services;render()}catch(e){summary.textContent='服务状态读取失败'}}
 async function waitForService(id,running){const deadline=Date.now()+30000;while(Date.now()<deadline){await new Promise(resolve=>setTimeout(resolve,1000));await refresh();if(services.some(s=>s.id===id&&s.running===running))return true}return false}

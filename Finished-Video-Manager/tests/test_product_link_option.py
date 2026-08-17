@@ -1,4 +1,5 @@
 import unittest
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -6,6 +7,10 @@ from finished_video_manager import web
 
 
 class ProductLinkOptionTest(unittest.TestCase):
+    def test_bitbrowser_api_url_can_point_to_docker_host(self) -> None:
+        with patch.dict(os.environ, {"BITBROWSER_API_URL": "http://host.docker.internal:54345/"}):
+            self.assertEqual(web.bitbrowser_api_url(), "http://host.docker.internal:54345")
+
     def build_tasks(self, attach_product: bool) -> list[dict]:
         video_path = Path("/finished/TEST/video.mp4")
         profile = {
@@ -66,7 +71,11 @@ class ProductLinkOptionTest(unittest.TestCase):
         with (
             patch("playwright.sync_api.sync_playwright") as sync_playwright,
             patch.object(web, "prepare_tiktok_upload", return_value={"caption_filled": True}),
-            patch.object(web, "bitbrowser_post", return_value={"data": {"http": "127.0.0.1:1234"}}),
+            patch.object(
+                web,
+                "bitbrowser_post",
+                return_value={"success": True, "data": {"http": "127.0.0.1:1234"}},
+            ),
             patch.object(web, "find_tiktok_upload_page", return_value=page),
             patch.object(web, "dismiss_tiktok_upload_preview_dialog", return_value=False),
             patch.object(web, "visible_tiktok_caption_input", return_value=locator),

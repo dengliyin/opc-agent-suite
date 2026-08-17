@@ -4,6 +4,46 @@
 
 本目录是迁移改造区。原运行目录 `/Users/kesai1/Documents/带货视频产出` 没有被安装脚本修改，仍可继续提供当前服务。
 
+## Docker Compose 部署
+
+Docker 部署会把控制台和 15 个 Agent 分别放入独立容器，默认只监听本机回环地址。所有容器共享同一个 Vault 挂载，但依赖和进程互相隔离。
+
+1. 安装 Docker Desktop（或 Linux Docker Engine + Compose 插件）。
+2. 从 `.env.docker.example` 复制或补全仓库根目录的 `.env`，至少把 `OPC_VAULT_ROOT` 改成宿主机上 Obsidian Vault 的绝对路径，并填写需要的 API Key。
+3. 构建并启动：
+
+```bash
+docker compose up -d --build
+docker compose ps
+```
+
+打开 `http://127.0.0.1:8888/`。查看日志和停止服务：
+
+```bash
+docker compose logs -f console
+docker compose down
+```
+
+容器模式下，Agent 的启停由 Compose 管理，所以控制台中的启停按钮显示为“Compose 管理”。代码更新后再次执行 `docker compose up -d --build` 即可；Vault、控制台本机配置、成品管理数据和片段合成状态不会因重建容器而丢失。
+
+`Finished-Video-Manager/config/product_mappings.json` 不会打进镜像，而是从本机以文件形式挂载，继续作为本地产品映射库使用。
+
+9998 和 10005 镜像会固定安装 Linux Node.js 22、HyperFrames 0.7.44、FFmpeg/FFprobe 和 Playwright Chrome，并为 Chrome 分配 512MB 共享内存。构建阶段会检查四项命令；容器运行时通过 `VIDEO_ASSEMBLY_HYPERFRAMES` 和 `HYPERFRAMES_BROWSER_PATH` 使用镜像内版本，不依赖仓库里的 macOS 离线运行时。
+
+BitBrowser 继续运行在宿主机。容器默认通过 `http://host.docker.internal:54345` 连接；如端口或地址不同，在 `.env` 中修改 `BITBROWSER_API_URL`。Docker Desktop 可直接使用该主机名，Linux Docker Engine 由 Compose 的 `host-gateway` 映射解析；同时需要确保 BitBrowser API 允许来自 Docker 网桥的连接。
+
+成品视频管理服务（9996）也包含 FFmpeg，用于在容器内生成视频缩略图。
+
+如果宿主机的标准端口已被本机进程占用，可用独立验证端口启动整套容器：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.verify.yml up -d --no-build
+```
+
+验证配置把控制台映射到 `18888`，其余服务依次映射到 `19991`–`20005`，只监听本机 `127.0.0.1`。验证完成后使用相同的两个 `-f` 参数执行 `docker compose down -v`。
+
+如需从其他电脑访问，将 `.env` 中的 `OPC_DOCKER_BIND` 设为 `0.0.0.0`，并把 `OPC_PUBLIC_HOST` 设为服务器 IP 或域名。服务本身没有统一登录保护，公网部署前应使用防火墙或带认证的反向代理限制访问。
+
 ## 组件
 
 | 端口 | 目录 | 功能 |

@@ -7,6 +7,7 @@ import mimetypes
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -24,7 +25,7 @@ from .publish_queue import PublishQueue
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 9996
-BITBROWSER_API = "http://127.0.0.1:54345"
+DEFAULT_BITBROWSER_API = "http://127.0.0.1:54345"
 TIKTOK_UPLOAD_URL = "https://www.tiktok.com/tiktokstudio/upload?from=creator_center&tab=video"
 TIKTOK_UPLOAD_FALLBACK_URL = "https://www.tiktok.com/tiktokstudio/upload?lang=en"
 APP_ROOT = Path(__file__).resolve().parents[1]
@@ -62,6 +63,8 @@ _FINISHED_VIDEO_INDEX_TTL_SECONDS = 2.0
 STORAGE_POLL_SECONDS = 5
 STORAGE_FAILURE_LIMIT = 3
 STORAGE_STARTUP_RETRY_SECONDS = 30
+BITBROWSER_CDP_CONNECT_ATTEMPTS = 5
+BITBROWSER_CDP_RETRY_SECONDS = 1.0
 
 
 def ffmpeg_path() -> Path:
@@ -637,9 +640,13 @@ def read_json_body(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
     return json.loads(body.decode("utf-8"))
 
 
+def bitbrowser_api_url() -> str:
+    return os.environ.get("BITBROWSER_API_URL", DEFAULT_BITBROWSER_API).rstrip("/")
+
+
 def bitbrowser_post(path: str, payload: dict[str, Any], timeout: int = 15) -> dict[str, Any]:
     request = urllib.request.Request(
-        BITBROWSER_API + path,
+        bitbrowser_api_url() + path,
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -731,9 +738,45 @@ def product_id_for(config: dict[str, Any], product_code: str, country: str, prof
 def normalize_cdp_endpoint(value: str) -> str:
     if not value:
         return ""
-    if value.startswith(("http://", "https://", "ws://", "wss://")):
-        return value
-    return "http://" + value
+    endpoint = value
+    if not endpoint.startswith(("http://", "https://", "ws://", "wss://")):
+        endpoint = "http://" + endpoint
+    parsed = urllib.parse.urlsplit(endpoint)
+    api_host = urllib.parse.urlsplit(bitbrowser_api_url()).hostname
+    if api_host == "host.docker.internal" and parsed.hostname in {"127.0.0.1", "localhost"}:
+        try:
+            host_gateway = socket.gethostbyname("host.docker.internal")
+            parsed = parsed._replace(netloc=f"{host_gateway}:{parsed.port}")
+            endpoint = urllib.parse.urlunsplit(parsed)
+        except OSError:
+            pass
+    return endpoint
+
+
+def connect_bitbrowser_cdp(playwright: Any, profile_id: str, execution_mode: str = "visible") -> Any:
+    last_error: Exception | None = None
+    for attempt in range(BITBROWSER_CDP_CONNECT_ATTEMPTS):
+        try:
+            open_result = bitbrowser_post(
+                "/browser/open",
+                bitbrowser_open_payload(profile_id, execution_mode),
+                timeout=30,
+            )
+            if not open_result.get("success"):
+                raise RuntimeError(open_result.get("msg") or "打开比特浏览器窗口失败")
+            data = open_result.get("data") or {}
+            endpoint = normalize_cdp_endpoint(data.get("http") or data.get("ws") or "")
+            if not endpoint:
+                raise RuntimeError("比特浏览器没有返回可连接的调试地址")
+            return playwright.chromium.connect_over_cdp(endpoint)
+        except Exception as exc:  # noqa: BLE001 - CDP startup errors are transient.
+            last_error = exc
+            if attempt + 1 < BITBROWSER_CDP_CONNECT_ATTEMPTS:
+                time.sleep(BITBROWSER_CDP_RETRY_SECONDS)
+    detail = str(last_error).strip().replace("\n", " ") if last_error else "未知错误"
+    raise RuntimeError(
+        f"比特浏览器调试端口连接失败（已重试 {BITBROWSER_CDP_CONNECT_ATTEMPTS} 次）：{detail[:500]}"
+    ) from last_error
 
 
 def find_tiktok_upload_page(context: Any) -> Any | None:
@@ -1706,16 +1749,6 @@ def publish_tiktok_video(
     if caption and not result.get("caption_filled"):
         raise RuntimeError("视频已选择，但文案没有被完整替换，停止发布")
 
-    open_result = bitbrowser_post(
-        "/browser/open",
-        bitbrowser_open_payload(profile_id, execution_mode),
-        timeout=30,
-    )
-    open_data = open_result.get("data") or {}
-    cdp_endpoint = normalize_cdp_endpoint(open_data.get("http") or open_data.get("ws") or "")
-    if not cdp_endpoint:
-        raise RuntimeError("比特浏览器没有返回可连接的调试地址")
-
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
@@ -1724,7 +1757,7 @@ def publish_tiktok_video(
     video_path = safe_video_path(video_value)
     playwright = sync_playwright().start()
     try:
-        browser = playwright.chromium.connect_over_cdp(cdp_endpoint)
+        browser = connect_bitbrowser_cdp(playwright, profile_id, execution_mode)
         context = browser.contexts[0] if browser.contexts else browser.new_context()
         page = find_tiktok_upload_page(context) or context.new_page()
         page.bring_to_front()
@@ -1789,18 +1822,6 @@ def prepare_tiktok_upload(
     if not video_path.exists() or not video_path.is_file():
         raise ValueError("视频文件不存在")
 
-    open_result = bitbrowser_post(
-        "/browser/open",
-        bitbrowser_open_payload(profile_id, execution_mode),
-        timeout=30,
-    )
-    if not open_result.get("success"):
-        raise RuntimeError(open_result.get("msg") or "打开比特浏览器窗口失败")
-    open_data = open_result.get("data") or {}
-    cdp_endpoint = normalize_cdp_endpoint(open_data.get("http") or open_data.get("ws") or "")
-    if not cdp_endpoint:
-        raise RuntimeError("比特浏览器没有返回可连接的调试地址")
-
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
@@ -1808,7 +1829,7 @@ def prepare_tiktok_upload(
 
     playwright = sync_playwright().start()
     try:
-        browser = playwright.chromium.connect_over_cdp(cdp_endpoint)
+        browser = connect_bitbrowser_cdp(playwright, profile_id, execution_mode)
         context = browser.contexts[0] if browser.contexts else browser.new_context()
         page = context.new_page()
         page.goto(TIKTOK_UPLOAD_URL, wait_until="domcontentloaded", timeout=60000)
