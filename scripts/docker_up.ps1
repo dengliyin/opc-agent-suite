@@ -14,14 +14,32 @@ foreach ($Line in Get-Content -LiteralPath $EnvFile -Encoding UTF8) {
     }
 }
 
+function Initialize-RootDirectory {
+    param([string]$Name, [string]$Path)
+
+    if (-not $Path) {
+        throw "$Name 未配置。"
+    }
+    if (Test-Path -LiteralPath $Path -PathType Leaf) {
+        throw "$Name 不是目录：$Path"
+    }
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        $Parent = Split-Path -Parent $Path
+        if (-not $Parent -or -not (Test-Path -LiteralPath $Parent -PathType Container)) {
+            throw "$Name 的上一级目录或外置盘必须已经存在：$Parent"
+        }
+        New-Item -ItemType Directory -Path $Path | Out-Null
+    }
+}
+
 foreach ($Name in @("OPC_VAULT_ROOT", "OPC_DOCKER_DATA_ROOT", "VIDEO_ASSEMBLY_WORK_ROOT")) {
     $Value = $Settings[$Name]
-    if (-not $Value -or -not (Test-Path -LiteralPath $Value -PathType Container)) {
-        throw "$Name 必须指向已挂载的目录：$Value"
-    }
+    Initialize-RootDirectory -Name $Name -Path $Value
     $Probe = Join-Path $Value ".opc-write-test-$PID"
     try { [System.IO.File]::WriteAllText($Probe, "ok") } finally { Remove-Item -LiteralPath $Probe -Force -ErrorAction SilentlyContinue }
 }
+
+& (Join-Path $PSScriptRoot "create_storage_layout.ps1") -VaultRoot $Settings["OPC_VAULT_ROOT"]
 
 foreach ($Name in @("config", "finished-video-data", "video-assembly-data", "auto-publish-data")) {
     New-Item -ItemType Directory -Force -Path (Join-Path $Settings["OPC_DOCKER_DATA_ROOT"] $Name) | Out-Null

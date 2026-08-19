@@ -19,6 +19,25 @@ if [ ! -d "$TEMPLATE_ROOT" ]; then
   exit 1
 fi
 
+if [ -e "$VAULT_ROOT" ] && [ ! -d "$VAULT_ROOT" ]; then
+  echo "Vault root is not a directory: $VAULT_ROOT" >&2
+  exit 1
+fi
+
+if [ ! -d "$VAULT_ROOT" ]; then
+  vault_parent="$(dirname "$VAULT_ROOT")"
+  if [ ! -d "$vault_parent" ] || [ ! -w "$vault_parent" ]; then
+    echo "Vault parent must already exist and be writable: $vault_parent" >&2
+    exit 1
+  fi
+  mkdir "$VAULT_ROOT"
+fi
+
+if [ ! -w "$VAULT_ROOT" ]; then
+  echo "Vault root is not writable: $VAULT_ROOT" >&2
+  exit 1
+fi
+
 while IFS= read -r -d '' template_dir; do
   if [ "$template_dir" = "$TEMPLATE_ROOT" ]; then
     continue

@@ -14,13 +14,37 @@ set -a
 source "$ENV_FILE"
 set +a
 
+ensure_root_directory() {
+  variable="$1"
+  value="$2"
+  if [ -z "$value" ]; then
+    printf '%s 未配置。\n' "$variable" >&2
+    exit 1
+  fi
+  if [ -e "$value" ] && [ ! -d "$value" ]; then
+    printf '%s 不是目录：%s\n' "$variable" "$value" >&2
+    exit 1
+  fi
+  if [ ! -d "$value" ]; then
+    parent="$(dirname "$value")"
+    if [ ! -d "$parent" ] || [ ! -w "$parent" ]; then
+      printf '%s 的上一级目录或外置盘必须已经存在且可写：%s\n' "$variable" "$parent" >&2
+      exit 1
+    fi
+    mkdir "$value"
+  fi
+}
+
 for variable in OPC_VAULT_ROOT OPC_DOCKER_DATA_ROOT VIDEO_ASSEMBLY_WORK_ROOT; do
   value="${!variable:-}"
-  if [ -z "$value" ] || [ ! -d "$value" ] || [ ! -w "$value" ]; then
+  ensure_root_directory "$variable" "$value"
+  if [ ! -w "$value" ]; then
     printf '%s 必须指向已挂载且可写的目录：%s\n' "$variable" "$value" >&2
     exit 1
   fi
 done
+
+"$ROOT_DIR/scripts/create_storage_layout.sh" "$OPC_VAULT_ROOT"
 
 mkdir -p \
   "$OPC_DOCKER_DATA_ROOT/config" \
