@@ -310,6 +310,7 @@ def config_for_client() -> dict[str, Any]:
         "form_options": FORM_OPTIONS,
         "environment": {
             "playwright": bool(importlib.util.find_spec("playwright")),
+            "browser_viewer_port": int(os.environ.get("OPC_BROWSER_VIEWER_PORT") or 0),
             "phone_from_env": bool(env_phone),
             "password_from_env": bool(env_password),
             "has_phone": bool(env_phone or fastmoss.get("phone")),
@@ -886,7 +887,7 @@ HTML = r"""<!doctype html>
         <label>FastMoss 密码</label>
         <input id="password" type="password" autocomplete="new-password" placeholder="留空则保持不变" />
         <div class="switchRow">
-          <div>显示浏览器<span>遇到验证码或滑块时开启</span></div>
+          <div>显示浏览器<span>勾选后运行时自动打开，可处理验证码或滑块</span></div>
           <input id="show_browser" type="checkbox" />
         </div>
         <div class="switchRow">
@@ -1040,6 +1041,7 @@ HTML = r"""<!doctype html>
     let categoryData = {top_categories:['全部'], category_tree:{}};
     let formOptions = {};
     let hotVideoRoot = '';
+    let browserViewerPort = 0;
     const $ = (id) => document.getElementById(id);
 
     async function api(path, options={}) {
@@ -1090,6 +1092,7 @@ HTML = r"""<!doctype html>
       const product = c.product || {};
       const f = c.fastmoss || {};
       const d = c.download || {};
+      browserViewerPort = Number((data.environment || {}).browser_viewer_port || 0);
       formOptions = data.form_options || {};
       renderFixedSelects(f);
       renderProductNameOptions(data.product_options || [], product.name || '');
@@ -1287,6 +1290,10 @@ HTML = r"""<!doctype html>
 
     async function runAgent() {
       $('logs').textContent = '';
+      if ($('show_browser').checked && browserViewerPort) {
+        const viewerUrl = `${window.location.protocol}//${window.location.hostname}:${browserViewerPort}/vnc.html?autoconnect=1&resize=scale&reconnect=1`;
+        window.open(viewerUrl, `opc-browser-${browserViewerPort}`);
+      }
       await api('/api/settings', {method:'POST', body:JSON.stringify(payload())});
       const data = await api('/api/run', {method:'POST', body:JSON.stringify({mode:selectedMode, direct_urls:$('direct_urls').value})});
       renderJob(data);

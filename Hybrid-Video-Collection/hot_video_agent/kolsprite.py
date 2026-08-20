@@ -4,13 +4,15 @@ import csv
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
+import urllib.parse
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 from .config import VIDEO_USERNAME_MAX, browser_headless, safe_name, video_filename_stem
@@ -18,8 +20,7 @@ from .paths import ProjectPaths
 
 
 DOWNLOADER_URL = "https://dl.kolsprite.com/tools/video-download"
-DOWNLOADER_SUBMIT_TEXT = re.compile(r"^(立即下载|开始解析|解析|下载)$")
-SNAPTIK_URL = "https://snaptik.app/en2"
+KOLSPRITE_API_URL = "https://www.kolsprite.com/api/v2/video/fetch_video_data_by_url"
 
 
 def chromium_launch_options() -> Dict[str, str]:
@@ -35,10 +36,9 @@ class KolspriteDownloader:
         self.fastmoss = config.get("fastmoss") or {}
         self.download = config.get("download") or {}
         self.show_browser = bool(self.fastmoss.get("show_browser", False))
-        self.headless = browser_headless()
+        self.headless = browser_headless(self.show_browser)
         self.limit = int(self.download.get("limit") or 0)
         self.retry_count = max(1, int(self.download.get("retry_count") or 3))
-        self.parse_timeout_ms = max(60000, int(self.download.get("parse_timeout_ms") or 90000))
         self.current_result_dir: Optional[Path] = None
 
     def browser_profile_dir(self) -> Path:
@@ -171,23 +171,6 @@ class KolspriteDownloader:
                 return candidate
         return None
 
-    def extract_kolsprite_title(self, page) -> str:
-        selectors = [
-            ".style_video_details_text__TMXot",
-            "p[class*='video_details_text']",
-        ]
-        for selector in selectors:
-            locator = page.locator(selector).first
-            try:
-                locator.wait_for(state="visible", timeout=5000)
-                title = (locator.inner_text(timeout=2000) or "").strip()
-                if title:
-                    self.log(f"  解析页标题: {title[:80]}")
-                    return title
-            except Exception:
-                continue
-        return ""
-
     def metadata_for_row(
         self,
         row: Dict[str, str],
@@ -225,22 +208,31 @@ class KolspriteDownloader:
         payload = self.metadata_for_row(row, video_id, url, page_title=page_title)
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    @staticmethod
-    def click_first_visible_text(page, text: str, timeout: int = 20000) -> None:
-        locator = page.get_by_text(text, exact=False)
-        locator.first.wait_for(state="visible", timeout=timeout)
-        locator.first.click()
+    def fetch_kolsprite_video_data(self, url: str) -> Dict[str, Any]:
+        api_url = KOLSPRITE_API_URL + "?" + urllib.parse.urlencode({"url": url})
+        request = urllib.request.Request(api_url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(request, timeout=90) as response:
+            payload = json.load(response)
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, dict) or not payload.get("success"):
+            message = payload.get("message") if isinstance(payload, dict) else "返回格式错误"
+            raise RuntimeError(f"Kolsprite 解析失败: {message}")
+        if not (data.get("hdUrls") or data.get("urls")):
+            raise RuntimeError("Kolsprite 没有返回可下载的视频地址")
+        return data
 
-    def confirm_kolsprite_download_quota(self, page, timeout: int = 12000) -> bool:
-        confirm = page.get_by_text("确认下载", exact=True)
+    @staticmethod
+    def save_video_url(url: str, target: Path) -> None:
+        partial = target.with_suffix(target.suffix + ".part")
+        request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         try:
-            confirm.first.wait_for(state="visible", timeout=timeout)
-            confirm.first.click()
-            self.log("  已确认 Kolsprite 下载额度弹窗")
-            page.wait_for_timeout(1200)
-            return True
-        except PlaywrightTimeoutError:
-            return False
+            with urllib.request.urlopen(request, timeout=120) as response, partial.open("wb") as handle:
+                shutil.copyfileobj(response, handle, length=1024 * 1024)
+            if partial.stat().st_size <= 100000:
+                raise RuntimeError("Kolsprite 返回的视频文件过小")
+            partial.replace(target)
+        finally:
+            partial.unlink(missing_ok=True)
 
     def download_one(self, page, row: Dict[str, str]) -> Tuple[str, Path]:
         url, video_id, target, metadata_path = self.row_download_info(row)
@@ -258,221 +250,22 @@ class KolspriteDownloader:
         input_box = page.locator("input[placeholder*='TikTok'], input[placeholder*='链接'], input").first
         input_box.wait_for(state="visible", timeout=20000)
         input_box.fill(url)
-
-        submit = page.get_by_role("button", name=DOWNLOADER_SUBMIT_TEXT).or_(page.get_by_text(DOWNLOADER_SUBMIT_TEXT))
-        submit.first.wait_for(state="visible", timeout=10000)
-        submit.first.click()
-        self.confirm_kolsprite_download_quota(page)
-        self.log("  等待解析完成...")
-
-        high_quality = page.get_by_text("下载无水印Mp4", exact=True).or_(
-            page.locator("a:has-text('下载无水印Mp4'), button:has-text('下载无水印Mp4')")
-        )
-        try:
-            high_quality.first.wait_for(state="visible", timeout=self.parse_timeout_ms)
-        except PlaywrightTimeoutError:
-            raise RuntimeError(f"解析超时: {url}")
-
-        page_title = self.extract_kolsprite_title(page)
-        self.log("  点击下载无水印Mp4...")
-        with page.expect_download(timeout=60000) as download_info:
-            high_quality.first.click()
-        download = download_info.value
-
-        suggested = download.suggested_filename
-        suffix = Path(suggested).suffix or ".mp4"
-        target = self.target_for_row(row, video_id, url, suffix=suffix, page_title=page_title)
+        self.log("  通过 Kolsprite 解析视频...")
+        data = self.fetch_kolsprite_video_data(url)
+        video_urls = data.get("hdUrls") or data.get("urls") or []
+        page_title = str(data.get("desc") or "").strip()
+        target = self.target_for_row(row, video_id, url, page_title=page_title)
         metadata_path = target.with_suffix(".json")
+        self.log("  下载高清无水印 MP4...")
+        self.save_video_url(str(video_urls[0]), target)
         self.write_metadata(metadata_path, row, video_id, url, page_title=page_title)
-        download.save_as(str(target))
         self.log(f"  保存完成: {target.name}")
         return "downloaded", target
-
-    @staticmethod
-    def click_first_visible(locator, timeout_ms: int = 500) -> bool:
-        try:
-            count = min(locator.count(), 5)
-        except Exception:
-            return False
-        for index in range(count):
-            item = locator.nth(index)
-            try:
-                if item.is_visible(timeout=timeout_ms):
-                    item.click(force=True, timeout=3000)
-                    return True
-            except Exception:
-                continue
-        return False
 
     @staticmethod
     def is_browser_closed_error(exc: Exception) -> bool:
         message = str(exc).lower()
         return "target page, context or browser has been closed" in message or "browser has been closed" in message
-
-    def close_snaptik_ad_pages(self, page) -> bool:
-        closed = False
-        try:
-            pages = list(page.context.pages)
-        except Exception:
-            return False
-        for extra_page in pages:
-            if extra_page == page:
-                continue
-            try:
-                if not extra_page.is_closed():
-                    extra_page.close()
-                    closed = True
-            except Exception:
-                continue
-        if closed:
-            self.log("  已关闭 SnapTik 弹出的广告页")
-        return closed
-
-    def close_snaptik_popup(self, page, timeout_ms: int = 2500) -> bool:
-        """Close SnapTik/Google vignette popups before retrying the download click."""
-        close_text = re.compile(r"^\s*(close|关闭|×|x)\s*$", re.I)
-        selectors = [
-            "#modal-vignette .modal-close",
-            "#modal-vignette .continue-web",
-            ".modal.is-active .modal-close",
-            ".modal.is-active .continue-web",
-            "[aria-label='Close']",
-            "[aria-label='close']",
-            "[aria-label*='close' i]",
-            "[data-testid*='close' i]",
-            "[id*='close' i]",
-            "[id*='dismiss' i]",
-            "[class*='close' i]",
-            "button:has-text('Close')",
-            "a:has-text('Close')",
-            "div:text-is('Close')",
-            "span:text-is('Close')",
-            "text=/^\\s*Close\\s*$/i",
-        ]
-        deadline = time.monotonic() + timeout_ms / 1000
-        while time.monotonic() < deadline:
-            self.close_snaptik_ad_pages(page)
-            frames = []
-            try:
-                frames = list(page.frames)
-            except Exception:
-                frames = []
-            for frame in frames:
-                locators = [
-                    frame.get_by_role("button", name=close_text),
-                    frame.get_by_text(close_text),
-                    *(frame.locator(selector) for selector in selectors),
-                ]
-                for locator in locators:
-                    if self.click_first_visible(locator):
-                        page.wait_for_timeout(900)
-                        self.log("  已点击 SnapTik 弹窗右上角 Close")
-                        return True
-            page.wait_for_timeout(250)
-        try:
-            page.keyboard.press("Escape")
-            page.wait_for_timeout(500)
-        except Exception:
-            pass
-        return False
-
-    def find_snaptik_download_button(self, page):
-        candidates = [
-            "#download a.download-file:has-text('Download Video')",
-            "#download a:has-text('Download Video')",
-            "a.download-file:has-text('Download Video')",
-        ]
-        for selector in candidates:
-            locator = page.locator(selector)
-            try:
-                if locator.count() > 0:
-                    return locator.first
-            except Exception:
-                continue
-        return page.locator("#download a.download-file, #download a[href]").first
-
-    def wait_for_snaptik_download_button(self, page, timeout_ms: int = 60000):
-        deadline = time.monotonic() + timeout_ms / 1000
-        while time.monotonic() < deadline:
-            self.close_snaptik_popup(page, timeout_ms=900)
-            button = self.find_snaptik_download_button(page)
-            try:
-                if button.count() > 0 and button.is_visible(timeout=700):
-                    return button
-            except Exception:
-                pass
-            page.wait_for_timeout(1000)
-        body_text = page.locator("body").inner_text(timeout=5000)
-        raise RuntimeError(f"SnapTik 未返回下载按钮: {body_text[:300]}")
-
-    def save_snaptik_href(self, page, button, output_dir: Path, video_id: str) -> Optional[Path]:
-        href = button.get_attribute("href") or ""
-        if not href or href.startswith("javascript:"):
-            return None
-        if href.startswith("/"):
-            href = "https://snaptik.app" + href
-        self.log("  尝试直接读取 SnapTik 下载链接")
-        response = page.request.get(href, timeout=90000)
-        body = response.body()
-        content_type = (response.headers.get("content-type") or "").lower()
-        if response.status < 400 and len(body) > 100000 and ("video" in content_type or "octet" in content_type):
-            target = output_dir / f"{video_id}.mp4"
-            target.write_bytes(body)
-            self.log(f"  SnapTik 保存完成: {target.name}")
-            return target
-        return None
-
-    def download_one_snaptik(self, page, row: Dict[str, str]) -> Tuple[str, Path]:
-        url = self.normalize_tiktok_download_url(row.get("tiktok_video_url") or "")
-        username, video_id = self.parse_tiktok_identity(url)
-        output_dir = self.output_dir_for_source()
-        target = self.target_for_row(row, video_id, url)
-        metadata_path = target.with_suffix(".json")
-
-        existing = self.existing_video_for_identity(username, video_id)
-        if existing:
-            self.write_metadata(existing.with_suffix(".json"), row, video_id, url)
-            self.log(f"  已存在，已更新 JSON，跳过视频下载: {existing.name}")
-            return "skipped", existing
-
-        self.write_metadata(metadata_path, row, video_id, url)
-
-        self.log(f"  切换 SnapTik 备用下载源: {video_id}")
-        page.goto(SNAPTIK_URL, wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_timeout(2500)
-        self.close_snaptik_popup(page, timeout_ms=4000)
-
-        input_box = page.locator('form[name="formurl"] input#url, input[name="url"]').first
-        input_box.wait_for(state="visible", timeout=20000)
-        input_box.fill(url)
-        page.locator('form[name="formurl"] button[type="submit"], button.button-go').first.click(force=True, timeout=10000)
-        self.close_snaptik_popup(page, timeout_ms=1500)
-
-        button = self.wait_for_snaptik_download_button(page, timeout_ms=60000)
-
-        for attempt in range(1, 4):
-            self.log(f"  点击 SnapTik Download Video（第 {attempt} 次）")
-            try:
-                self.close_snaptik_popup(page, timeout_ms=1200)
-                button.scroll_into_view_if_needed(timeout=5000)
-                with page.expect_download(timeout=12000) as download_info:
-                    button.click(timeout=7000)
-                download = download_info.value
-                suffix = Path(download.suggested_filename).suffix or ".mp4"
-                final_target = output_dir / f"{video_id}{suffix}"
-                download.save_as(str(final_target))
-                self.log(f"  SnapTik 保存完成: {final_target.name}")
-                return "downloaded", final_target
-            except Exception as exc:
-                self.log(f"  SnapTik 点击后未直接下载: {exc}")
-                self.close_snaptik_popup(page, timeout_ms=5000)
-                direct_target = self.save_snaptik_href(page, button, output_dir, video_id)
-                if direct_target:
-                    return "downloaded", direct_target
-                if attempt == 3:
-                    raise RuntimeError(f"SnapTik 下载按钮点击失败: {exc}")
-                button = self.wait_for_snaptik_download_button(page, timeout_ms=15000)
-        raise RuntimeError("SnapTik 下载失败")
 
     def download_one_with_retries(
         self,
@@ -499,10 +292,7 @@ class KolspriteDownloader:
                     page.wait_for_timeout(2500)
                 except Exception:
                     pass
-        self.log(f"  Kolsprite 多次失败，改用 SnapTik: {last_error}")
-        if last_error and reset_page and self.is_browser_closed_error(last_error):
-            page = reset_page()
-        return self.download_one_snaptik(page, row)
+        raise RuntimeError(f"Kolsprite 多次尝试仍然失败: {last_error}")
 
     def run(self, csv_path: Optional[Path] = None) -> Tuple[Path, List[Path], List[Path], List[str]]:
         source_csv = self.find_csv(csv_path)
