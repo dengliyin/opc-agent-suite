@@ -62,11 +62,11 @@ class ConfigError(RuntimeError):
     pass
 
 
-def browser_headless() -> bool:
+def browser_headless(show_browser: bool = False) -> bool:
     configured = os.environ.get("OPC_BROWSER_HEADLESS")
-    if configured is not None:
-        return configured.strip().lower() in {"1", "true", "yes", "on"}
-    return sys.platform.startswith("linux") and not os.environ.get("DISPLAY")
+    if configured is not None and configured.strip().lower() in {"1", "true", "yes", "on"}:
+        return True
+    return not show_browser or (sys.platform.startswith("linux") and not os.environ.get("DISPLAY"))
 
 
 def migrate_legacy_config(config_path: Path = CONFIG_PATH) -> bool:

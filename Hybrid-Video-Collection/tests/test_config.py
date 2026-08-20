@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 import stat
 import sys
 import tempfile
@@ -13,20 +14,32 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from hot_video_agent import config as core  # noqa: E402
+from hot_video_agent import kolsprite  # noqa: E402
 from hot_video_agent import paths  # noqa: E402
 
 
 class ConfigTests(unittest.TestCase):
+    def test_downloads_use_kolsprite_only(self) -> None:
+        source = inspect.getsource(kolsprite)
+        self.assertNotIn("Snap" + "Tik", source)
+        self.assertIn("Kolsprite 多次尝试仍然失败", source)
+        self.assertIn("fetch_video_data_by_url", source)
+        self.assertNotIn("DOWNLOADER_SUBMIT_TEXT", source)
+
     def test_browser_is_headless_when_docker_requests_it(self) -> None:
         with patch.dict(core.os.environ, {"OPC_BROWSER_HEADLESS": "1"}, clear=True):
-            self.assertTrue(core.browser_headless())
+            self.assertTrue(core.browser_headless(show_browser=True))
 
-    def test_browser_uses_display_outside_docker(self) -> None:
+    def test_checked_browser_uses_available_display(self) -> None:
         with (
             patch.dict(core.os.environ, {"DISPLAY": ":0"}, clear=True),
             patch.object(core.sys, "platform", "linux"),
         ):
-            self.assertFalse(core.browser_headless())
+            self.assertFalse(core.browser_headless(show_browser=True))
+
+    def test_unchecked_browser_stays_headless(self) -> None:
+        with patch.dict(core.os.environ, {"DISPLAY": ":0"}, clear=True):
+            self.assertTrue(core.browser_headless(show_browser=False))
 
     def test_video_filename_is_bounded_and_keeps_video_id(self) -> None:
         video_id = "7666010963795102989"

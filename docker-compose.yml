@@ -2,7 +2,6 @@ x-common-environment: &common-environment
   HOME: /config
   KESAI_APP_HOST: 0.0.0.0
   KESAI_APP_NO_OPEN: "1"
-  OPC_BROWSER_HEADLESS: "1"
   BITBROWSER_API_URL: ${BITBROWSER_API_URL:-http://host.docker.internal:54345}
   OPC_VAULT_ROOT: /vault
   VIDEO_TEARDOWN_INPUT_ROOT: /vault/wiki/视频/纯AI视频/01来源素材
@@ -113,11 +112,13 @@ services:
     <<: *common-service
     build:
       context: .
-      args: {SERVICE_DIR: Video-Collection, INSTALL_PLAYWRIGHT: "1"}
+      args: {SERVICE_DIR: Video-Collection, INSTALL_PLAYWRIGHT: "1", SYSTEM_PACKAGES: "xvfb x11vnc novnc websockify fluxbox"}
     working_dir: /workspace/Video-Collection
-    command: ["python", "-u", "-m", "hot_video_agent", "web", "--host", "0.0.0.0", "--port", "9991"]
-    environment: {<<: *common-environment, SERVICE_PORT: "9991", HEALTH_PATH: /api/state}
-    ports: ["${OPC_DOCKER_BIND:-127.0.0.1}:9991:9991"]
+    command: ["/workspace/scripts/start_visible_browser.sh", "python", "-u", "-m", "hot_video_agent", "web", "--host", "0.0.0.0", "--port", "9991"]
+    environment: {<<: *common-environment, SERVICE_PORT: "9991", HEALTH_PATH: /api/state, OPC_BROWSER_VIEWER_PORT: "15991"}
+    ports:
+      - "${OPC_DOCKER_BIND:-127.0.0.1}:9991:9991"
+      - "${OPC_DOCKER_BIND:-127.0.0.1}:15991:6080"
 
   script-analysis:
     <<: *common-service
@@ -214,11 +215,13 @@ services:
     <<: *common-service
     build:
       context: .
-      args: {SERVICE_DIR: Hybrid-Video-Collection, INSTALL_PLAYWRIGHT: "1"}
+      args: {SERVICE_DIR: Hybrid-Video-Collection, INSTALL_PLAYWRIGHT: "1", SYSTEM_PACKAGES: "xvfb x11vnc novnc websockify fluxbox"}
     working_dir: /workspace/Hybrid-Video-Collection
-    command: ["python", "-u", "-m", "hot_video_agent", "web", "--host", "0.0.0.0", "--port", "10001"]
-    environment: {<<: *common-environment, SERVICE_PORT: "10001", HEALTH_PATH: /api/state}
-    ports: ["${OPC_DOCKER_BIND:-127.0.0.1}:10001:10001"]
+    command: ["/workspace/scripts/start_visible_browser.sh", "python", "-u", "-m", "hot_video_agent", "web", "--host", "0.0.0.0", "--port", "10001"]
+    environment: {<<: *common-environment, SERVICE_PORT: "10001", HEALTH_PATH: /api/state, OPC_BROWSER_VIEWER_PORT: "16001"}
+    ports:
+      - "${OPC_DOCKER_BIND:-127.0.0.1}:10001:10001"
+      - "${OPC_DOCKER_BIND:-127.0.0.1}:16001:6080"
 
   hybrid-script-analysis:
     <<: *common-service

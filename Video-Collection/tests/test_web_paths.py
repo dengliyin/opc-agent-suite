@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 import sys
 import tempfile
 import unittest
@@ -11,10 +12,22 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from hot_video_agent import paths, web  # noqa: E402
+from hot_video_agent import kolsprite, paths, web  # noqa: E402
 
 
 class WebPathTests(unittest.TestCase):
+    def test_downloads_use_kolsprite_only(self) -> None:
+        source = inspect.getsource(kolsprite)
+        self.assertNotIn("Snap" + "Tik", source)
+        self.assertIn("Kolsprite 多次尝试仍然失败", source)
+        self.assertIn("fetch_video_data_by_url", source)
+        self.assertNotIn("DOWNLOADER_SUBMIT_TEXT", source)
+
+    def test_visible_browser_viewer_is_exposed_to_the_page(self) -> None:
+        self.assertIn("OPC_BROWSER_VIEWER_PORT", inspect.getsource(web.config_for_client))
+        self.assertIn("window.open(viewerUrl", web.HTML)
+        self.assertIn("autoconnect=1", web.HTML)
+
     def test_hot_video_path_can_be_resolved_without_creating_it(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             library = Path(temporary) / "library"

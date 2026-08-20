@@ -47,7 +47,7 @@ class FastMossCollector:
         self.product_limit = int(self.fastmoss.get("product_limit", 3))
         self.videos_per_product = int(self.fastmoss.get("videos_per_product", 5))
         self.show_browser = bool(self.fastmoss.get("show_browser", False))
-        self.headless = browser_headless()
+        self.headless = browser_headless(self.show_browser)
 
         self.search_filters = {
             "达人出单率": str(self.fastmoss.get("creator_conversion_rate_filter") or "全部").strip(),
