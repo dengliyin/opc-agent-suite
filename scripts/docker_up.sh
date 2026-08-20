@@ -5,8 +5,17 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="$ROOT_DIR/.env"
 
 if [ ! -f "$ENV_FILE" ]; then
-  printf '缺少 %s，请复制 .env.docker.example 并填写真实路径。\n' "$ENV_FILE" >&2
-  exit 1
+  STORAGE_ROOT="$(dirname "$ROOT_DIR")"
+  EXAMPLE_ENV="$ROOT_DIR/.env.docker.example"
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      OPC_VAULT_ROOT=*) printf 'OPC_VAULT_ROOT="%s/Obsidian Vault"\n' "$STORAGE_ROOT" ;;
+      OPC_DOCKER_DATA_ROOT=*) printf 'OPC_DOCKER_DATA_ROOT="%s/OPC-Data/docker"\n' "$STORAGE_ROOT" ;;
+      VIDEO_ASSEMBLY_WORK_ROOT=*) printf 'VIDEO_ASSEMBLY_WORK_ROOT="%s/OPC-Data/Video-Assembly-hd"\n' "$STORAGE_ROOT" ;;
+      *) printf '%s\n' "$line" ;;
+    esac
+  done < "$EXAMPLE_ENV" > "$ENV_FILE"
+  printf '已按代码仓库所在盘自动创建配置：%s\n' "$ENV_FILE"
 fi
 
 set -a

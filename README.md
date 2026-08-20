@@ -11,14 +11,15 @@
 ### 首次配置
 
 1. 安装 Docker Desktop，并启用“登录时启动 Docker Desktop”。
-2. 复制 `.env.docker.example` 为 `.env`。
-3. 设置三个宿主机目录：
+2. 直接运行对应系统的启动脚本。首次启动会自动选择代码仓库所在盘，在仓库的上一级目录创建 `.env` 中的三个存储路径。例如代码位于 `/Volumes/seafer/opc-agent-suite`，则默认为：
 
 ```dotenv
 OPC_VAULT_ROOT="/Volumes/seafer/Obsidian Vault"
 OPC_DOCKER_DATA_ROOT="/Volumes/seafer/OPC-Data/docker"
 VIDEO_ASSEMBLY_WORK_ROOT="/Volumes/seafer/OPC-Data/Video-Assembly-hd"
 ```
+
+已有 `.env` 时启动脚本不会修改或覆盖。如需使用其他存储位置，再手动修改这三个值。
 
 - `OPC_VAULT_ROOT`：业务资料库，容器内统一映射为 `/vault`。
 - `OPC_DOCKER_DATA_ROOT`：Docker 持久配置和 Agent 数据。

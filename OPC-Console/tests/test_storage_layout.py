@@ -18,6 +18,14 @@ class DockerStorageLayoutTests(unittest.TestCase):
         self.assertIn('create_storage_layout.sh" "$OPC_VAULT_ROOT"', launcher)
         self.assertIn('[ ! -w "$value" ]', launcher)
 
+    def test_first_start_chooses_storage_beside_repository(self):
+        launcher = (WORKSPACE_ROOT / "scripts" / "docker_up.sh").read_text(encoding="utf-8")
+        self.assertIn('STORAGE_ROOT="$(dirname "$ROOT_DIR")"', launcher)
+        self.assertIn('OPC_VAULT_ROOT="%s/Obsidian Vault"', launcher)
+        self.assertIn('OPC_DOCKER_DATA_ROOT="%s/OPC-Data/docker"', launcher)
+        self.assertIn('VIDEO_ASSEMBLY_WORK_ROOT="%s/OPC-Data/Video-Assembly-hd"', launcher)
+        self.assertIn("if [ ! -f \"$ENV_FILE\" ]", launcher)
+
     def test_docker_start_creates_data_subdirectories(self):
         launcher = (WORKSPACE_ROOT / "scripts" / "docker_up.sh").read_text(encoding="utf-8")
         self.assertIn('"$OPC_DOCKER_DATA_ROOT/config"', launcher)
@@ -65,6 +73,10 @@ class DockerStorageLayoutTests(unittest.TestCase):
         self.assertIn("create_storage_layout.ps1", launcher)
         self.assertIn("Copy-Item", initializer)
         self.assertIn('Name -ne ".gitkeep"', initializer)
+        self.assertIn('$StorageRoot = Split-Path -Parent $RootDir', launcher)
+        self.assertIn('Join-Path $StorageRoot "Obsidian Vault"', launcher)
+        self.assertIn('Join-Path $StorageRoot "OPC-Data\\docker"', launcher)
+        self.assertIn('if (-not (Test-Path -LiteralPath $EnvFile -PathType Leaf))', launcher)
         self.assertNotIn("ScheduledTask", launcher)
 
 

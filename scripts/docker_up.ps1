@@ -4,7 +4,22 @@ $RootDir = Split-Path -Parent $PSScriptRoot
 $EnvFile = Join-Path $RootDir ".env"
 
 if (-not (Test-Path -LiteralPath $EnvFile -PathType Leaf)) {
-    throw "缺少 $EnvFile，请复制 .env.docker.example 并填写真实路径。"
+    $StorageRoot = Split-Path -Parent $RootDir
+    $ExampleEnv = Join-Path $RootDir ".env.docker.example"
+    $GeneratedEnv = foreach ($Line in Get-Content -LiteralPath $ExampleEnv -Encoding UTF8) {
+        if ($Line -match '^OPC_VAULT_ROOT=') {
+            'OPC_VAULT_ROOT="{0}"' -f (Join-Path $StorageRoot "Obsidian Vault")
+        } elseif ($Line -match '^OPC_DOCKER_DATA_ROOT=') {
+            'OPC_DOCKER_DATA_ROOT="{0}"' -f (Join-Path $StorageRoot "OPC-Data\docker")
+        } elseif ($Line -match '^VIDEO_ASSEMBLY_WORK_ROOT=') {
+            'VIDEO_ASSEMBLY_WORK_ROOT="{0}"' -f (Join-Path $StorageRoot "OPC-Data\Video-Assembly-hd")
+        } else {
+            $Line
+        }
+    }
+    $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllLines($EnvFile, $GeneratedEnv, $Utf8NoBom)
+    Write-Host "已按代码仓库所在盘自动创建配置：$EnvFile"
 }
 
 $Settings = @{}
