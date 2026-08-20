@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable
 
@@ -59,6 +60,13 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 
 class ConfigError(RuntimeError):
     pass
+
+
+def browser_headless() -> bool:
+    configured = os.environ.get("OPC_BROWSER_HEADLESS")
+    if configured is not None:
+        return configured.strip().lower() in {"1", "true", "yes", "on"}
+    return sys.platform.startswith("linux") and not os.environ.get("DISPLAY")
 
 
 def migrate_legacy_config(config_path: Path = CONFIG_PATH) -> bool:

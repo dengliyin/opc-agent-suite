@@ -13,7 +13,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
-from .config import VIDEO_USERNAME_MAX, safe_name, video_filename_stem
+from .config import VIDEO_USERNAME_MAX, browser_headless, safe_name, video_filename_stem
 from .paths import ProjectPaths
 
 
@@ -35,6 +35,7 @@ class KolspriteDownloader:
         self.fastmoss = config.get("fastmoss") or {}
         self.download = config.get("download") or {}
         self.show_browser = bool(self.fastmoss.get("show_browser", False))
+        self.headless = browser_headless()
         self.limit = int(self.download.get("limit") or 0)
         self.retry_count = max(1, int(self.download.get("retry_count") or 3))
         self.parse_timeout_ms = max(60000, int(self.download.get("parse_timeout_ms") or 90000))
@@ -45,7 +46,7 @@ class KolspriteDownloader:
         return self.paths.root / "browser-profile" / "fastmoss" / safe_name(phone, "default", 80)
 
     def minimize_browser_windows(self) -> None:
-        if self.show_browser:
+        if self.show_browser or self.headless:
             return
         try:
             subprocess.run(
@@ -514,7 +515,8 @@ class KolspriteDownloader:
         self.log(f"项目目录: {self.paths.project_root}")
         self.log(f"结果文件夹: {self.current_result_dir}")
         self.log(f"下载目录: {self.paths.hot_video_dir()}")
-        self.log(f"浏览器模式: {'可见窗口' if self.show_browser else '最小化窗口'}")
+        browser_mode = "无头模式" if self.headless else ("可见窗口" if self.show_browser else "最小化窗口")
+        self.log(f"浏览器模式: {browser_mode}")
 
         downloaded: List[Path] = []
         skipped: List[Path] = []
@@ -530,7 +532,7 @@ class KolspriteDownloader:
                 "--disable-renderer-backgrounding",
                 "--disable-features=CalculateNativeWinOcclusion",
             ]
-            if not self.show_browser:
+            if not self.show_browser and not self.headless:
                 browser_args.extend(["--start-minimized", "--window-size=1440,900"])
             context = None
             page = None
@@ -539,7 +541,7 @@ class KolspriteDownloader:
                 nonlocal context, page
                 context = p.chromium.launch_persistent_context(
                     user_data_dir=str(profile_dir),
-                    headless=False,
+                    headless=self.headless,
                     slow_mo=350,
                     accept_downloads=True,
                     viewport={"width": 1440, "height": 900},

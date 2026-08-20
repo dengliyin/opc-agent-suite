@@ -17,6 +17,17 @@ from hot_video_agent import paths  # noqa: E402
 
 
 class ConfigTests(unittest.TestCase):
+    def test_browser_is_headless_when_docker_requests_it(self) -> None:
+        with patch.dict(core.os.environ, {"OPC_BROWSER_HEADLESS": "1"}, clear=True):
+            self.assertTrue(core.browser_headless())
+
+    def test_browser_uses_display_outside_docker(self) -> None:
+        with (
+            patch.dict(core.os.environ, {"DISPLAY": ":0"}, clear=True),
+            patch.object(core.sys, "platform", "linux"),
+        ):
+            self.assertFalse(core.browser_headless())
+
     def test_video_filename_is_bounded_and_keeps_video_id(self) -> None:
         video_id = "7666010963795102989"
         stem = core.video_filename_stem("digimon634", video_id, "Mini drone " + "very high end " * 30)

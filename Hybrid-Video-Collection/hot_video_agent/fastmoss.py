@@ -17,7 +17,7 @@ from urllib.parse import unquote
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
-from .config import safe_name
+from .config import browser_headless, safe_name
 from .paths import ProjectPaths
 
 
@@ -47,6 +47,7 @@ class FastMossCollector:
         self.product_limit = int(self.fastmoss.get("product_limit", 3))
         self.videos_per_product = int(self.fastmoss.get("videos_per_product", 5))
         self.show_browser = bool(self.fastmoss.get("show_browser", False))
+        self.headless = browser_headless()
 
         self.search_filters = {
             "达人出单率": str(self.fastmoss.get("creator_conversion_rate_filter") or "全部").strip(),
@@ -132,7 +133,7 @@ class FastMossCollector:
                 pass
 
     def minimize_browser_windows(self) -> None:
-        if self.show_browser:
+        if self.show_browser or self.headless:
             return
         try:
             subprocess.run(
@@ -796,7 +797,8 @@ class FastMossCollector:
             f"任务参数: 关键词={self.keyword or '空'}, 国家={self.country}, 类目={self.category}, "
             f"商品数={self.product_limit}, 每商品视频数={self.videos_per_product}"
         )
-        self.log(f"浏览器模式: {'可见窗口' if self.show_browser else '最小化窗口'}")
+        browser_mode = "无头模式" if self.headless else ("可见窗口" if self.show_browser else "最小化窗口")
+        self.log(f"浏览器模式: {browser_mode}")
         self.prepare_account_profile()
 
         with sync_playwright() as p:
@@ -808,11 +810,11 @@ class FastMossCollector:
                 "--disable-renderer-backgrounding",
                 "--disable-features=CalculateNativeWinOcclusion",
             ]
-            if not self.show_browser:
+            if not self.show_browser and not self.headless:
                 browser_args.extend(["--start-minimized", "--window-size=1920,1000"])
             context = p.chromium.launch_persistent_context(
                 user_data_dir=str(self.profile_dir),
-                headless=False,
+                headless=self.headless,
                 slow_mo=450,
                 viewport={"width": 1920, "height": 1000},
                 args=browser_args,
@@ -911,11 +913,11 @@ class FastMossCollector:
         with sync_playwright() as p:
             self.profile_dir.mkdir(parents=True, exist_ok=True)
             browser_args = ["--disable-blink-features=AutomationControlled"]
-            if not self.show_browser:
+            if not self.show_browser and not self.headless:
                 browser_args.extend(["--start-minimized", "--window-size=1440,900"])
             context = p.chromium.launch_persistent_context(
                 user_data_dir=str(self.profile_dir),
-                headless=False,
+                headless=self.headless,
                 slow_mo=350,
                 viewport={"width": 1440, "height": 900},
                 args=browser_args,

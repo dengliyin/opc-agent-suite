@@ -2,6 +2,7 @@ x-common-environment: &common-environment
   HOME: /config
   KESAI_APP_HOST: 0.0.0.0
   KESAI_APP_NO_OPEN: "1"
+  OPC_BROWSER_HEADLESS: "1"
   BITBROWSER_API_URL: ${BITBROWSER_API_URL:-http://host.docker.internal:54345}
   OPC_VAULT_ROOT: /vault
   VIDEO_TEARDOWN_INPUT_ROOT: /vault/wiki/视频/纯AI视频/01来源素材
