@@ -43,4 +43,12 @@ foreach ($TemplateDirectory in Get-ChildItem -LiteralPath $TemplateRoot -Directo
     New-Item -ItemType Directory -Force -Path (Join-Path $VaultRoot $RelativePath) | Out-Null
 }
 
+foreach ($TemplateFile in Get-ChildItem -LiteralPath $TemplateRoot -File -Recurse | Where-Object Name -ne ".gitkeep") {
+    $RelativePath = $TemplateFile.FullName.Substring($TemplatePrefix.Length)
+    $TargetFile = Join-Path $VaultRoot $RelativePath
+    if (-not (Test-Path -LiteralPath $TargetFile)) {
+        Copy-Item -LiteralPath $TemplateFile.FullName -Destination $TargetFile
+    }
+}
+
 Write-Host "资料库空目录结构已就绪：$VaultRoot"
