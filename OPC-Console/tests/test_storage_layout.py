@@ -30,11 +30,22 @@ class DockerStorageLayoutTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             vault = Path(temp_dir) / "Obsidian Vault"
             subprocess.run([str(initializer), str(vault)], check=True, capture_output=True, text=True)
+            claude_file = vault / "CLAUDE.md"
+            self.assertIn("OPC 资料库协作规则", claude_file.read_text(encoding="utf-8"))
             marker = vault / "wiki" / "视频" / "纯AI视频" / "01来源素材" / "existing.txt"
             marker.write_text("keep", encoding="utf-8")
+            claude_file.write_text("custom rules", encoding="utf-8")
             subprocess.run([str(initializer), str(vault)], check=True, capture_output=True, text=True)
             self.assertEqual(marker.read_text(encoding="utf-8"), "keep")
+            self.assertEqual(claude_file.read_text(encoding="utf-8"), "custom rules")
             self.assertTrue((vault / "wiki" / "视频" / "成品视频" / "视频标题库").is_dir())
+
+    def test_storage_template_claude_file_uses_current_layout(self):
+        content = (WORKSPACE_ROOT / "storage-template" / "CLAUDE.md").read_text(encoding="utf-8")
+        for current_path in ("纯AI视频/01来源素材", "纯AI视频/06合成工作区", "AI实拍混剪/08混剪工作区"):
+            self.assertIn(current_path, content)
+        for legacy_path in ("03爆款视频", "10omni视频片段", "视频片段 （待拼接）"):
+            self.assertNotIn(legacy_path, content)
 
     def test_storage_layout_initializer_refuses_missing_parent(self):
         initializer = WORKSPACE_ROOT / "scripts" / "create_storage_layout.sh"
@@ -49,8 +60,11 @@ class DockerStorageLayoutTests(unittest.TestCase):
         for name in ("create_storage_layout.ps1", "docker_up.ps1", "docker_stop.ps1", "docker_health.ps1"):
             self.assertTrue((scripts / name).is_file())
         launcher = (scripts / "docker_up.ps1").read_text(encoding="utf-8")
+        initializer = (scripts / "create_storage_layout.ps1").read_text(encoding="utf-8")
         self.assertIn("docker compose", launcher)
         self.assertIn("create_storage_layout.ps1", launcher)
+        self.assertIn("Copy-Item", initializer)
+        self.assertIn('Name -ne ".gitkeep"', initializer)
         self.assertNotIn("ScheduledTask", launcher)
 
 

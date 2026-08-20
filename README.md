@@ -24,7 +24,7 @@ VIDEO_ASSEMBLY_WORK_ROOT="/Volumes/seafer/OPC-Data/Video-Assembly-hd"
 - `OPC_DOCKER_DATA_ROOT`：Docker 持久配置和 Agent 数据。
 - `VIDEO_ASSEMBLY_WORK_ROOT`：9998 的装配记录、缓存及运行资料。
 
-启动脚本会在已挂载且可写的上一级目录或盘符下自动创建这三个根目录，并根据 `storage-template` 补齐空白业务资料库结构。重复启动只补充缺失目录，不会覆盖已有文件。外置盘未挂载时脚本会拒绝创建和启动，避免误写回电脑内置盘。
+启动脚本会在已挂载且可写的上一级目录或盘符下自动创建这三个根目录，并根据 `storage-template` 补齐空白业务资料库结构和根目录 `CLAUDE.md`。重复启动只补充缺失目录和缺失模板文件，不会覆盖已有文件。外置盘未挂载时脚本会拒绝创建和启动，避免误写回电脑内置盘。
 
 ### 启动、停止和检查
 

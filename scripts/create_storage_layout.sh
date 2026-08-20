@@ -46,4 +46,12 @@ while IFS= read -r -d '' template_dir; do
   mkdir -p "$VAULT_ROOT/$relative_path"
 done < <(find "$TEMPLATE_ROOT" -type d -print0)
 
+while IFS= read -r -d '' template_file; do
+  relative_path="${template_file#"$TEMPLATE_ROOT"/}"
+  target_file="$VAULT_ROOT/$relative_path"
+  if [ ! -e "$target_file" ]; then
+    cp "$template_file" "$target_file"
+  fi
+done < <(find "$TEMPLATE_ROOT" -type f ! -name '.gitkeep' -print0)
+
 echo "Storage layout ready: $VAULT_ROOT"
