@@ -356,7 +356,7 @@ async function refreshStatus() {
   $("rootPath").textContent = "混剪参考视频 · 类型与产品镜像 · Markdown 脚本归档";
   $("rootPath").title = data.skill_root || "";
   $("modelBadge").textContent = data.settings.model || "未设置模型";
-  $("keyBadge").textContent = data.settings.api_key_hint || "API";
+  $("keyBadge").textContent = `${data.settings.api_key_hint || "API"} · ${data.settings.ai_settings_source || "8888 全局设置"}`;
   $("modelInput").value = data.settings.model || "";
   $("baseUrlInput").value = data.settings.base_url || "";
   setPathInput("videoDirInput", data.queue_defaults.video_dir || "");

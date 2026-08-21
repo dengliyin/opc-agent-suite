@@ -62,6 +62,12 @@ foreach ($Name in @("config", "finished-video-data", "video-assembly-data", "aut
 
 docker compose --project-directory $RootDir config --quiet
 if ($LASTEXITCODE -ne 0) { throw "Docker Compose 配置校验失败。" }
+docker compose --project-directory $RootDir build console
+if ($LASTEXITCODE -ne 0) { throw "8888 控制台镜像构建失败。" }
+$LegacyMount = "${RootDir}:/legacy:ro"
+docker compose --project-directory $RootDir run --rm --no-deps -v $LegacyMount console `
+    python /workspace/scripts/migrate_legacy_ai_config.py --repo-root /legacy --config-dir /config
+if ($LASTEXITCODE -ne 0) { throw "旧 Agent API/模型配置迁移失败。" }
 docker compose --project-directory $RootDir up -d --build --wait --wait-timeout 300
 if ($LASTEXITCODE -ne 0) { throw "Docker Compose 启动失败。" }
 & (Join-Path $PSScriptRoot "docker_health.ps1")

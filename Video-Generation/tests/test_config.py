@@ -28,24 +28,25 @@ def test_update_env_values_preserves_existing_and_quotes_paths(tmp_path: Path, m
     assert 'REFERENCE_ROOT="/refs"' in text
 
 
-def test_shared_settings_override_stale_local_model_values(tmp_path: Path, monkeypatch) -> None:
-    shared = tmp_path / "agent_settings.env"
-    shared.write_text(
-        "OTU_BASE_URL=https://shared.test\n"
-        "IMAGE_MODEL=shared-image\n"
-        "IMAGE_FALLBACK_MODELS=\n",
+def test_global_settings_override_stale_local_model_values(tmp_path: Path, monkeypatch) -> None:
+    global_env = tmp_path / ".env"
+    global_env.write_text(
+        "OTU_API_KEY=global-secret\n"
+        "OTU_BASE_URL=https://global.test\n"
+        "IMAGE_MODEL=global-image\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(config, "SETTINGS_PATH", shared)
+    monkeypatch.setenv("OPC_ENV_FILE", str(global_env))
     monkeypatch.setenv("OTU_API_KEY", "secret")
     monkeypatch.setenv("OTU_BASE_URL", "https://stale.test")
     monkeypatch.setenv("IMAGE_MODEL", "stale-image")
+    monkeypatch.setenv("IMAGE_FALLBACK_MODELS", "")
 
     settings = config.load_settings("omni")
 
-    assert settings.otu_api_key == "secret"
-    assert settings.otu_base_url == "https://shared.test"
-    assert settings.image_model == "shared-image"
+    assert settings.otu_api_key == "global-secret"
+    assert settings.otu_base_url == "https://global.test"
+    assert settings.image_model == "global-image"
     assert settings.image_fallback_models == []
 
 

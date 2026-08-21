@@ -32,7 +32,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings["model"], "gemini-3.5-flash")
         self.assertNotIn("api_key", settings)
 
-    def test_runner_merges_only_local_api_key(self):
+    def test_runner_uses_global_video_analysis_profile(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             shared = root / "settings.json"
@@ -42,29 +42,38 @@ class SettingsTests(unittest.TestCase):
 
             with patch.object(self.analyze_video, "DEFAULT_SETTINGS_PATH", shared), patch.object(
                 self.analyze_video, "DEFAULT_SECRETS_PATH", local
+            ), patch.object(
+                self.analyze_video,
+                "load_profile",
+                return_value={"base_url": "https://global.test", "model": "global-model", "api_key": "global-secret"},
             ):
                 settings = self.analyze_video.load_settings(shared)
 
-        self.assertEqual(settings["api_key"], "secret")
-        self.assertEqual(settings["base_url"], "https://shared.test")
+        self.assertEqual(settings["api_key"], "global-secret")
+        self.assertEqual(settings["base_url"], "https://global.test")
+        self.assertEqual(settings["model"], "global-model")
 
-    def test_web_saves_shared_settings_and_api_key_separately(self):
+    def test_web_api_and_model_override_is_process_only(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             shared = root / "settings.json"
             local = root / "settings.local.json"
             shared.write_text("{}", encoding="utf-8")
 
-            with patch.object(self.web_app, "SETTINGS_PATH", shared), patch.object(self.web_app, "SECRETS_PATH", local):
+            with patch.object(self.web_app, "SETTINGS_PATH", shared), patch.object(self.web_app, "SECRETS_PATH", local), patch.dict(
+                self.web_app.os.environ, {}, clear=True
+            ):
                 self.web_app.update_settings(
                     {"base_url": "https://shared.test", "model": "shared-model", "api_key": "secret"}
                 )
+                self.assertEqual(self.web_app.os.environ["OPC_RUNTIME_VIDEO_ANALYSIS_BASE_URL"], "https://shared.test")
+                self.assertEqual(self.web_app.os.environ["OPC_RUNTIME_VIDEO_ANALYSIS_MODEL"], "shared-model")
+                self.assertEqual(self.web_app.os.environ["OPC_RUNTIME_VIDEO_ANALYSIS_API_KEY"], "secret")
 
             shared_settings = json.loads(shared.read_text(encoding="utf-8"))
-            local_settings = json.loads(local.read_text(encoding="utf-8"))
 
-        self.assertEqual(shared_settings, {"base_url": "https://shared.test", "model": "shared-model"})
-        self.assertEqual(local_settings["api_key"], "secret")
+        self.assertEqual(shared_settings, {})
+        self.assertFalse(local.exists())
 
     def test_business_paths_prefer_global_environment(self):
         with tempfile.TemporaryDirectory() as temp_dir:

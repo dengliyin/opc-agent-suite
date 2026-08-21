@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -218,14 +219,12 @@ def test_catalog_polling_is_deduplicated_after_terminal_job():
     assert "}).finally(() => {\n  setInterval(pollJobs, 4000);\n});" in source
 
 
-def test_api_settings_save_shared_models_and_local_keys_separately(monkeypatch, tmp_path):
+def test_api_settings_save_is_process_only(monkeypatch):
     calls = []
-    shared = tmp_path / "agent_settings.env"
-    local = tmp_path / ".env"
-    monkeypatch.setattr(app_module, "SETTINGS_PATH", shared)
-    monkeypatch.setattr(app_module, "ENV_PATH", local)
     monkeypatch.setattr(app_module, "update_env_values", lambda updates, path: calls.append((updates, path)))
     monkeypatch.setattr(app_module, "_reload_runtime_settings", lambda: None)
+    monkeypatch.setenv("OPC_RUNTIME_VIDEO_GENERATION_OMNI_CHARACTER_API_MODEL", "before")
+    monkeypatch.setenv("OPC_RUNTIME_OTU_API_KEY", "before")
 
     app_module.save_api_settings(
         {
@@ -234,7 +233,6 @@ def test_api_settings_save_shared_models_and_local_keys_separately(monkeypatch, 
         }
     )
 
-    assert calls == [
-        ({"OMNI_CHARACTER_API_MODEL": "otu:shared-model"}, shared),
-        ({"OTU_API_KEY": "local-secret"}, local),
-    ]
+    assert calls == []
+    assert os.environ["OPC_RUNTIME_VIDEO_GENERATION_OMNI_CHARACTER_API_MODEL"] == "otu:shared-model"
+    assert os.environ["OPC_RUNTIME_OTU_API_KEY"] == "local-secret"

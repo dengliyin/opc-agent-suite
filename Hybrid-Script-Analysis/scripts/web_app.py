@@ -15,6 +15,8 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from opc_shared.global_ai import load_profile, runtime_override_active, set_runtime_overrides
+
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 VAULT_ROOT = Path(
@@ -547,22 +549,24 @@ def cleanup_non_markdown_outputs(output_dir):
 
 def masked_settings():
     settings = read_json(SETTINGS_PATH)
-    api_key = str(read_json(SECRETS_PATH).get("api_key") or "")
+    profile = load_profile("video_analysis")
+    api_key = profile["api_key"]
     return {
-        "base_url": settings.get("base_url", ""),
-        "model": settings.get("model", ""),
+        "base_url": profile["base_url"],
+        "model": profile["model"],
         "max_output_tokens": settings.get("max_output_tokens", ""),
         "timeout_seconds": settings.get("timeout_seconds", ""),
         "temperature": settings.get("temperature", ""),
         "output_dir": settings.get("output_dir", "outputs"),
         "api_key_set": bool(api_key),
         "api_key_hint": f"已设置，尾号 {api_key[-4:]}" if api_key else "未设置",
+        "ai_settings_source": "本 Agent 临时覆盖" if runtime_override_active("video_analysis") else "8888 全局设置",
     }
 
 
 def update_settings(payload):
     settings = read_json(SETTINGS_PATH)
-    allowed_text = {"base_url", "model", "output_dir", "prompt_file"}
+    allowed_text = {"output_dir", "prompt_file"}
     allowed_int = {"max_output_tokens", "timeout_seconds"}
     allowed_float = {"temperature"}
     for key in allowed_text:
@@ -577,11 +581,14 @@ def update_settings(payload):
     settings.pop("api_key", None)
     write_json(SETTINGS_PATH, settings)
 
-    api_key = str(payload.get("api_key") or "").strip()
-    if api_key:
-        secrets = read_json(SECRETS_PATH)
-        secrets["api_key"] = api_key
-        write_json(SECRETS_PATH, secrets)
+    set_runtime_overrides(
+        "video_analysis",
+        {
+            "base_url": payload.get("base_url"),
+            "model": payload.get("model"),
+            "api_key": payload.get("api_key"),
+        },
+    )
 
 
 def set_job(job_id, **values):

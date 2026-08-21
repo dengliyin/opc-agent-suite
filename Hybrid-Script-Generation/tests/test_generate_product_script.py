@@ -238,7 +238,7 @@ class GenerateProductScriptTests(unittest.TestCase):
                 self.assertIn(expected, prompt)
                 self.assertIn(forbidden, prompt)
 
-    def test_local_model_settings_override_shared_defaults(self):
+    def test_global_profile_overrides_local_model_settings(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             shared = root / "model_defaults.json"
@@ -258,12 +258,17 @@ class GenerateProductScriptTests(unittest.TestCase):
                 patch.object(generate_product_script, "SHARED_MODEL_SETTINGS_PATH", shared),
                 patch.object(generate_product_script, "LOCAL_MODEL_SETTINGS_PATH", local),
                 patch.object(generate_product_script, "SCRIPT_INPUTS_PATH", inputs),
+                patch.object(
+                    generate_product_script,
+                    "load_profile",
+                    return_value={"base_url": "https://global.test", "model": "global-model", "api_key": "global-secret"},
+                ),
             ):
                 config = generate_product_script.load_script_generation_config()
 
-        self.assertEqual(config["modelmesh_base_url"], "https://stale.test")
-        self.assertEqual(config["script_generation_model"], "shared-model")
-        self.assertEqual(config["modelmesh_api_key"], "secret")
+        self.assertEqual(config["modelmesh_base_url"], "https://global.test")
+        self.assertEqual(config["script_generation_model"], "global-model")
+        self.assertEqual(config["modelmesh_api_key"], "global-secret")
 
     def test_legacy_local_configs_migrate_to_runtime_directory(self):
         with tempfile.TemporaryDirectory() as temp_dir:

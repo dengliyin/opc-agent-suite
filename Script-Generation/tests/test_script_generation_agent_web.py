@@ -74,7 +74,7 @@ class ScriptGenerationAgentWebTests(unittest.TestCase):
         command = GenerationJob()._subprocess_command({"script_total_duration": "8秒"})
         self.assertNotIn("--total-duration", command)
 
-    def test_save_state_writes_runtime_model_settings_not_shared_defaults(self):
+    def test_save_state_uses_process_only_model_override(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             shared = root / "bundled" / "model_defaults.json"
@@ -92,6 +92,7 @@ class ScriptGenerationAgentWebTests(unittest.TestCase):
                 patch.object(script_generation_agent_web, "LOCAL_INPUTS_PATH", local_inputs),
                 patch.object(script_generation_agent_web, "migrate_legacy_local_configs"),
                 patch.object(script_generation_agent_web, "state_payload", return_value={"ok": True}),
+                patch.dict(script_generation_agent_web.os.environ, {}, clear=True),
             ):
                 result = script_generation_agent_web.save_state(
                     {
@@ -101,12 +102,14 @@ class ScriptGenerationAgentWebTests(unittest.TestCase):
                         "script_generation_max_output_tokens": 32768,
                     }
                 )
+                self.assertEqual(script_generation_agent_web.os.environ["OPC_RUNTIME_TEXT_MODEL"], "custom-model")
+                self.assertEqual(script_generation_agent_web.os.environ["OPC_RUNTIME_TEXT_BASE_URL"], "https://example.test")
 
             self.assertEqual(result, {"ok": True})
             self.assertEqual(json.loads(shared.read_text(encoding="utf-8"))["script_generation_model"], "default-model")
             saved_local = json.loads(local_model.read_text(encoding="utf-8"))
-            self.assertEqual(saved_local["script_generation_model"], "custom-model")
-            self.assertEqual(saved_local["modelmesh_api_key"], "secret")
+            self.assertNotIn("script_generation_model", saved_local)
+            self.assertNotIn("modelmesh_api_key", saved_local)
 
     def test_open_markdown_uses_exact_absolute_obsidian_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -1,5 +1,7 @@
 x-common-environment: &common-environment
   HOME: /config
+  PYTHONPATH: /workspace
+  OPC_ENV_FILE: /config/.env
   KESAI_APP_HOST: 0.0.0.0
   KESAI_APP_NO_OPEN: "1"
   BITBROWSER_API_URL: ${BITBROWSER_API_URL:-http://host.docker.internal:54345}

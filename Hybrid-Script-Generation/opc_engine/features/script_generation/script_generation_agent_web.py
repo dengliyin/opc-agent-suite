@@ -19,6 +19,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from opc_shared.global_ai import load_profile, runtime_override_active, set_runtime_overrides
+
 from opc_engine.features.script_generation.generate_product_script import (
     CONFIG_DIR,
     DEFAULT_BASE_URL,
@@ -323,6 +325,10 @@ def state_payload() -> dict[str, Any]:
     inputs = read_json_config(LOCAL_INPUTS_PATH)
     model = read_json_config(SHARED_MODEL_SETTINGS_PATH)
     model.update(read_json_config(LOCAL_MODEL_SETTINGS_PATH))
+    profile = load_profile("text")
+    model["modelmesh_base_url"] = profile["base_url"]
+    model["script_generation_model"] = profile["model"]
+    model["modelmesh_api_key"] = profile["api_key"]
     prompt_path = resolve_root_path(config.get("script_generation_prompt_path") or DEFAULT_PROMPT_PATH)
     mutation_prompt_path = resolve_root_path(config.get("script_generation_mutation_prompt_path") or DEFAULT_MUTATION_PROMPT_PATH)
     knowledge_path = resolve_root_path(config.get("script_content_knowledge_base_path") or SCRIPT_MISTAKE_BOOK_SOURCE_ROOT)
@@ -390,6 +396,7 @@ def state_payload() -> dict[str, Any]:
             "has_api_key": bool(get_api_key(config) or os.environ.get("MODELMESH_API_KEY") or os.environ.get("GEMINI_API_KEY")),
             "product_project_ready": product_project_ready(config),
             "direct_file_ready": has_direct_file_inputs(config),
+            "ai_settings_source": "本 Agent 临时覆盖" if runtime_override_active("text") else "8888 全局设置",
         },
     }
 
@@ -409,17 +416,25 @@ def save_state(payload: dict[str, Any]) -> dict[str, Any]:
         inputs["script_reference_script_path"] = ""
 
     local_model = read_json_config(LOCAL_MODEL_SETTINGS_PATH)
+    for key in ("modelmesh_api_key", "modelmesh_base_url", "script_generation_model"):
+        local_model.pop(key, None)
     for key in MODEL_KEYS:
         if key in payload:
             value = payload.get(key)
-            if key == "modelmesh_api_key":
-                if str(value or "").strip():
-                    local_model[key] = str(value).strip()
+            if key in {"modelmesh_api_key", "modelmesh_base_url", "script_generation_model"}:
                 continue
             if key in {"script_generation_timeout", "script_generation_max_output_tokens"}:
                 local_model[key] = int(value or (DEFAULT_TIMEOUT if key.endswith("timeout") else DEFAULT_MAX_OUTPUT_TOKENS))
             else:
                 local_model[key] = str(value or "").strip()
+    set_runtime_overrides(
+        "text",
+        {
+            "base_url": payload.get("modelmesh_base_url"),
+            "model": payload.get("script_generation_model"),
+            "api_key": payload.get("modelmesh_api_key"),
+        },
+    )
 
     if "prompt_text" in payload:
         DEFAULT_PROMPT_PATH.write_text(str(payload.get("prompt_text") or "").rstrip() + "\n", encoding="utf-8")
@@ -2074,7 +2089,7 @@ HTML_PAGE = r"""<!doctype html>
       $('maxTokens').value = model.script_generation_max_output_tokens || 32768;
       const files = data.files || {};
       currentFiles = files;
-      setChip($('apiChip'), data.status && data.status.has_api_key, data.status && data.status.has_api_key ? 'API Key 已就绪' : 'API Key 未配置');
+      setChip($('apiChip'), data.status && data.status.has_api_key, `${data.status && data.status.has_api_key ? 'API Key 已就绪' : 'API Key 未配置'} · ${(data.status && data.status.ai_settings_source) || '8888 全局设置'}`);
       updateDropState('reference', $('referencePath').value, files.reference && files.reference.exists ? files.reference.chars : 0);
       $('configMeta').textContent = (data.paths && data.paths.config_dir) || '';
       renderLibrary();

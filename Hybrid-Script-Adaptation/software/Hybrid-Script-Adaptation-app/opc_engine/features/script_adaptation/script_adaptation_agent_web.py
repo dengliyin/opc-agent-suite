@@ -18,6 +18,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from opc_shared.global_ai import load_profile, runtime_override_active, set_runtime_overrides
+
 from opc_engine.core.project_assets import (
     ensure_project_dirs,
     product_project_ready,
@@ -28,7 +30,6 @@ from opc_engine.core.project_assets import (
 from opc_engine.features.script_adaptation import content_workflow_stage as workflow
 from opc_engine.features.script_adaptation.script_adaptation_agent import (
     AGENT_CONFIG_DIR,
-    AGENT_SECRETS_PATH,
     AGENT_SETTINGS_PATH,
     ROOT,
     ScriptAdaptationAgent,
@@ -208,6 +209,11 @@ def target_profiles_for_client(settings: dict[str, Any], config: dict[str, Any])
 def settings_for_client() -> dict[str, Any]:
     settings = read_json_object(AGENT_SETTINGS_PATH)
     config = load_local_agent_config()
+    profile = load_profile("text")
+    model_settings = settings.setdefault("model", {})
+    model_settings["modelmesh_base_url"] = profile["base_url"]
+    model_settings["video_analysis_model"] = profile["model"]
+    model_settings["script_adaptation_text_model"] = profile["model"]
     target_model = normalize_target_model(config.get("script_adaptation_target_model"))
     prompt_path = target_prompt_path(settings, target_model)
     target_profiles = target_profiles_for_client(settings, config)
@@ -231,7 +237,8 @@ def settings_for_client() -> dict[str, Any]:
             "adaptation_max_concurrency": ADAPTATION_MAX_CONCURRENCY,
             "adaptation_qc_max_attempts": ADAPTATION_QC_MAX_ATTEMPTS,
         },
-        "has_api_key": bool(config.get("modelmesh_api_key") or config.get("gemini_api_key") or os.environ.get("MODELMESH_API_KEY") or os.environ.get("GEMINI_API_KEY")),
+        "has_api_key": bool(profile["api_key"]),
+        "ai_settings_source": "本 Agent 临时覆盖" if runtime_override_active("text") else "8888 全局设置",
     }
 
 
@@ -1190,9 +1197,14 @@ def update_settings(payload: dict[str, Any]) -> dict[str, Any]:
     model = settings.setdefault("model", {})
     adaptation = settings.setdefault("adaptation", {})
 
-    for key in ("modelmesh_base_url", "video_analysis_model", "script_adaptation_text_model"):
-        if key in payload:
-            model[key] = str(payload.get(key) or "").strip()
+    set_runtime_overrides(
+        "text",
+        {
+            "base_url": payload.get("modelmesh_base_url"),
+            "model": payload.get("script_adaptation_text_model") or payload.get("video_analysis_model"),
+            "api_key": payload.get("modelmesh_api_key"),
+        },
+    )
 
     if "video_analysis_max_output_tokens" in payload:
         model["video_analysis_max_output_tokens"] = int(payload.get("video_analysis_max_output_tokens") or 32768)
@@ -1209,25 +1221,7 @@ def update_settings(payload: dict[str, Any]) -> dict[str, Any]:
         )
 
     AGENT_SETTINGS_PATH.write_text(json.dumps(settings, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    update_secrets(payload)
     return settings_for_client()
-
-
-def update_secrets(payload: dict[str, Any]) -> None:
-    api_key = str(payload.get("modelmesh_api_key") or "").strip()
-    if not api_key:
-        return
-
-    secrets = read_json_object(AGENT_SECRETS_PATH)
-    if not secrets:
-        secrets = {
-            "_说明": "复制为 agent_secrets.local.json 后填写本地 API Key。agent_secrets.local.json 已被 .gitignore 忽略。",
-            "modelmesh_api_key": "",
-            "gemini_api_key": "",
-        }
-    secrets["modelmesh_api_key"] = api_key
-    AGENT_SECRETS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    AGENT_SECRETS_PATH.write_text(json.dumps(secrets, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def build_overrides(payload: dict[str, Any]) -> dict[str, Any]:
@@ -3841,7 +3835,7 @@ HTML = r"""<!doctype html>
       else document.querySelector('input[name="script_adaptation_target_model"][value="veo"]').checked = true;
       syncSegmentSecondsDisplay();
       applyStatePaths(data);
-      $('apiBadge').textContent = data.has_api_key ? 'API Key 已就绪' : '缺少 API Key';
+      $('apiBadge').textContent = `${data.has_api_key ? 'API Key 已就绪' : '缺少 API Key'} · ${data.ai_settings_source || '8888 全局设置'}`;
       $('apiBadge').className = 'badge ' + (data.has_api_key ? 'ok' : 'warn');
       await refreshScripts();
       await inspectAgent();
@@ -3855,7 +3849,7 @@ HTML = r"""<!doctype html>
       $('modelmesh_api_key').value = '';
       $('modelmesh_api_key').placeholder = data.has_api_key ? '已配置；输入新密钥后保存' : '请输入 API 密钥';
       applyStatePaths(data);
-      $('apiBadge').textContent = data.has_api_key ? 'API Key 已就绪' : '缺少 API Key';
+      $('apiBadge').textContent = `${data.has_api_key ? 'API Key 已就绪' : '缺少 API Key'} · ${data.ai_settings_source || '8888 全局设置'}`;
       $('apiBadge').className = 'badge ' + (data.has_api_key ? 'ok' : 'warn');
       await inspectAgent();
       await refreshScripts();
