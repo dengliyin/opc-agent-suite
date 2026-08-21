@@ -104,6 +104,56 @@ class ConsoleBoundaryTests(unittest.TestCase):
         self.assertIn("9998 · 片段合成", group_labels)
         self.assertIn("10000 · AI＋实拍混剪", group_labels)
 
+    def test_console_exposes_global_ai_settings_page(self):
+        self.assertIn('href="/settings/ai"', self.app.INDEX_HTML)
+        self.assertIn("全局 API / 模型设置", self.app.AI_SETTINGS_HTML)
+        self.assertIn("/api/global-ai-settings", self.app.AI_SETTINGS_HTML)
+        group_ids = {group["id"] for group in self.app.GLOBAL_AI_GROUPS}
+        self.assertEqual(group_ids, {"video_analysis", "text", "otu", "grok"})
+        self.assertIn("/api/global-ai-migration", self.app.AI_SETTINGS_HTML)
+        self.assertIn("发现旧 Agent 配置冲突", self.app.AI_SETTINGS_HTML)
+
+    def test_saving_global_ai_settings_masks_secrets_and_preserves_other_values(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_file = Path(temp_dir) / ".env"
+            env_file.write_text(
+                'OPC_VAULT_ROOT="/vault"\n'
+                'MODELMESH_API_KEY="legacy-key"\n',
+                encoding="utf-8",
+            )
+            payload = self.app.save_global_ai_settings(
+                {
+                    "OPC_TEXT_API_BASE_URL": "https://text.example/v1/",
+                    "OPC_TEXT_MODEL": "text-model",
+                    "OPC_TEXT_API_KEY": "new-secret",
+                },
+                env_file,
+            )
+            saved = env_file.read_text(encoding="utf-8")
+
+        self.assertIn('OPC_VAULT_ROOT="/vault"', saved)
+        self.assertIn('OPC_TEXT_API_BASE_URL="https://text.example/v1"', saved)
+        self.assertIn('OPC_TEXT_API_KEY="new-secret"', saved)
+        secret = next(item for item in payload["fields"] if item["key"] == "OPC_TEXT_API_KEY")
+        self.assertEqual(secret["value"], "")
+        self.assertTrue(secret["configured"])
+
+    def test_legacy_environment_secrets_migrate_to_global_private_config(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_file = Path(temp_dir) / ".env"
+            env_file.write_text('OPC_VAULT_ROOT="/vault"\n', encoding="utf-8")
+            with mock.patch.dict(
+                self.app.os.environ,
+                {"VIDEO_TEARDOWN_AGENT_API_KEY": "vision-secret", "DEEPSEEK_API_KEY": "text-secret"},
+                clear=True,
+            ):
+                count = self.app.migrate_global_ai_secrets(env_file)
+            saved = env_file.read_text(encoding="utf-8")
+
+        self.assertEqual(count, 2)
+        self.assertIn('OPC_VIDEO_ANALYSIS_API_KEY="vision-secret"', saved)
+        self.assertIn('OPC_TEXT_API_KEY="text-secret"', saved)
+
     def test_global_paths_are_read_from_container_config(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             env_file = Path(temp_dir) / ".env"

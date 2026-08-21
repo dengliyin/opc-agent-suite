@@ -14,6 +14,8 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
+from opc_shared.global_ai import load_profile
+
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SETTINGS_PATH = SKILL_ROOT / "config" / "settings.json"
@@ -40,6 +42,10 @@ def load_settings(path):
             raise SystemExit(f"配置文件 JSON 格式错误: {DEFAULT_SECRETS_PATH}\n{exc}") from exc
         if isinstance(local_settings, dict) and local_settings.get("api_key"):
             data["api_key"] = local_settings["api_key"]
+    profile = load_profile("video_analysis")
+    data["base_url"] = profile["base_url"]
+    data["model"] = profile["model"]
+    data["api_key"] = profile["api_key"]
     return data
 
 
@@ -65,11 +71,7 @@ def read_text(path):
 
 
 def get_api_key(settings, cli_api_key):
-    return (
-        cli_api_key
-        or os.environ.get("VIDEO_TEARDOWN_AGENT_API_KEY")
-        or str(settings.get("api_key") or "").strip()
-    )
+    return cli_api_key or str(settings.get("api_key") or "").strip()
 
 
 def guess_mime_type(video_path):

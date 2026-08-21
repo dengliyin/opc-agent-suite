@@ -11,6 +11,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from opc_shared.global_ai import load_profile
+
 from opc_engine.core.config_store import load_app_config
 from opc_engine.core.project_assets import ensure_project_dirs, infer_source_id, require_product_project, source_stage_dir
 
@@ -78,13 +80,7 @@ def load_config(*workflow_stages):
 
 
 def get_api_key(config):
-    return (
-        os.environ.get("MODELMESH_API_KEY")
-        or os.environ.get("GEMINI_API_KEY")
-        or config.get("modelmesh_api_key")
-        or config.get("gemini_api_key")
-        or ""
-    )
+    return load_profile("text")["api_key"]
 
 
 def resolve_project_path(value):

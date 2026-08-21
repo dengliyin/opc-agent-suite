@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from opc_shared.global_ai import load_profile
+
 from opc_engine.core.project_assets import (
     ensure_project_dirs,
     product_project_ready,
@@ -240,6 +242,12 @@ def load_local_agent_config() -> dict[str, Any]:
         for key, value in visible_items(secrets).items():
             if value:
                 config[key] = value
+
+    profile = load_profile("text")
+    config["modelmesh_base_url"] = profile["base_url"]
+    config["video_analysis_model"] = profile["model"]
+    config["script_adaptation_text_model"] = profile["model"]
+    config["modelmesh_api_key"] = profile["api_key"]
 
     return config
 

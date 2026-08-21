@@ -203,7 +203,7 @@
       function render(data) {
         settingsSummary.textContent = data.active_jobs?.length
           ? `有 ${data.active_jobs.length} 个任务运行中`
-          : "API 设置保存后立即生效";
+          : `${data.ai_settings_source || "8888 全局设置"}；本页修改仅当前 Agent 进程有效，重启后恢复全局`;
         renderSummary(data.summary || {});
         form.innerHTML = (data.groups || [])
           .map(

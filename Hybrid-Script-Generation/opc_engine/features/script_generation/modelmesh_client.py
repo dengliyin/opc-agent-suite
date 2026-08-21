@@ -7,19 +7,15 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from opc_shared.global_ai import load_profile
+
 
 DEFAULT_MODEL = "deepseek-v4-pro"
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 
 
 def get_api_key(config: dict) -> str:
-    return (
-        os.environ.get("MODELMESH_API_KEY")
-        or os.environ.get("GEMINI_API_KEY")
-        or config.get("modelmesh_api_key")
-        or config.get("gemini_api_key")
-        or ""
-    )
+    return load_profile("text")["api_key"]
 
 
 def extract_text(response: dict) -> str:

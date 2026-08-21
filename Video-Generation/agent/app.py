@@ -11,6 +11,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from opc_shared.global_ai import runtime_override_active, set_runtime_overrides
+
 from .config import ENV_PATH, SETTINGS_PATH, Settings, load_hybrid_omni_settings, load_settings, mask_secrets, update_env_values
 from .exporter import (
     deliver_hybrid_scripts,
@@ -293,7 +295,12 @@ def _api_settings_payload() -> Dict[str, Any]:
             ],
         },
     ]
+    has_runtime_override = any(runtime_override_active(name) for name in ("otu", "grok")) or any(
+        key.startswith("OPC_RUNTIME_VIDEO_GENERATION_") and value
+        for key, value in os.environ.items()
+    )
     return {
+        "ai_settings_source": "本 Agent 临时覆盖" if has_runtime_override else "8888 全局设置",
         "summary": _api_summary_payload(),
         "groups": groups,
         "active_jobs": _active_jobs(),
@@ -999,8 +1006,7 @@ def save_path_settings(request: PathSettingsRequest) -> Dict[str, Any]:
 def save_api_settings(request: Dict[str, Any]) -> Dict[str, Any]:
     if _active_jobs():
         raise HTTPException(status_code=409, detail="有任务正在运行，请等待任务结束后再保存 API 设置")
-    shared_updates: Dict[str, str] = {}
-    secret_updates: Dict[str, str] = {}
+    runtime_updates: Dict[str, str] = {}
     payload_env_map = {
         "omni_character_api_model": "OMNI_CHARACTER_API_MODEL",
         "omni_storyboard_api_model": "OMNI_STORYBOARD_API_MODEL",
@@ -1032,17 +1038,18 @@ def save_api_settings(request: Dict[str, Any]) -> Dict[str, Any]:
     for payload_key, env_key in payload_env_map.items():
         value = _payload_text(request, payload_key, required=False)
         if value:
-            shared_updates[env_key] = value
-    if _payload_text(request, "otu_api_key", required=False):
-        secret_updates["OTU_API_KEY"] = _payload_text(request, "otu_api_key", required=False)
-    if _payload_text(request, "grok_api_key", required=False):
-        secret_updates["GROK_API_KEY"] = _payload_text(request, "grok_api_key", required=False)
+            runtime_updates[env_key] = value
     try:
-        if shared_updates:
-            update_env_values(shared_updates, SETTINGS_PATH)
-        if secret_updates:
-            update_env_values(secret_updates, ENV_PATH)
-        if shared_updates or secret_updates:
+        for env_key, value in runtime_updates.items():
+            target_key = f"OPC_RUNTIME_VIDEO_GENERATION_{env_key}" if env_key.endswith("_API_MODEL") else env_key
+            os.environ[target_key] = value
+        otu_key = _payload_text(request, "otu_api_key", required=False)
+        grok_key = _payload_text(request, "grok_api_key", required=False)
+        if otu_key:
+            set_runtime_overrides("otu", {"api_key": otu_key})
+        if grok_key:
+            set_runtime_overrides("grok", {"api_key": grok_key})
+        if runtime_updates or otu_key or grok_key:
             _reload_runtime_settings()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=_safe(str(exc)))

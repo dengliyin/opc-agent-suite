@@ -11,6 +11,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
+from opc_shared.global_ai import load_profile
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = ROOT / "agent_config"
@@ -36,6 +38,10 @@ def load_config() -> dict[str, Any]:
             config.update({key: value for key, value in values.items() if not key.startswith("_")})
     secrets = read_json_object(SECRETS_PATH)
     config.update({key: value for key, value in secrets.items() if value and not key.startswith("_")})
+    profile = load_profile("text")
+    config["deepseek_base_url"] = profile["base_url"]
+    config["deepseek_model"] = profile["model"]
+    config["deepseek_api_key"] = profile["api_key"]
     return config
 
 
@@ -62,12 +68,7 @@ def prompt_path(config: dict[str, Any]) -> Path:
 
 
 def get_api_key(config: dict[str, Any]) -> str:
-    return str(
-        config.get("deepseek_api_key")
-        or os.environ.get("DEEPSEEK_API_KEY")
-        or os.environ.get("MODELMESH_API_KEY")
-        or ""
-    ).strip()
+    return str(config.get("deepseek_api_key") or "").strip()
 
 
 def product_info_path(config: dict[str, Any], product: str) -> Path:

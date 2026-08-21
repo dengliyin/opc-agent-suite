@@ -62,5 +62,10 @@ mkdir -p \
   "$OPC_DOCKER_DATA_ROOT/auto-publish-data"
 
 docker compose --project-directory "$ROOT_DIR" config --quiet
+docker compose --project-directory "$ROOT_DIR" build console
+docker compose --project-directory "$ROOT_DIR" run --rm --no-deps \
+  -v "$ROOT_DIR:/legacy:ro" \
+  console python /workspace/scripts/migrate_legacy_ai_config.py \
+  --repo-root /legacy --config-dir /config
 docker compose --project-directory "$ROOT_DIR" up -d --build --wait --wait-timeout 300
 "$ROOT_DIR/scripts/docker_health.sh"

@@ -11,6 +11,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
+from opc_shared.legacy_ai_migration import load_report as load_ai_migration_report
+from opc_shared.legacy_ai_migration import resolve_conflicts as resolve_ai_migration_conflicts
+
 
 ROOT = Path(__file__).resolve().parent
 ENV_FILE = Path(os.environ.get("OPC_ENV_FILE", "/config/.env")).expanduser()
@@ -269,6 +272,51 @@ OTHER_AGENT_PATH_NOTES = (
     {"port": "10005", "label": "自动发布流水线", "note": "继承9993–9998的业务路径，但使用独立任务数据库和执行进程"},
 )
 
+GLOBAL_AI_GROUPS = (
+    {
+        "id": "video_analysis",
+        "label": "视频解析模型",
+        "description": "9992、10002 共同继承，用于读取视频并生成解析脚本",
+    },
+    {
+        "id": "text",
+        "label": "文本生成模型",
+        "description": "9993、9994、9997、9999、10003 共同继承",
+    },
+    {
+        "id": "otu",
+        "label": "Omni 图像与视频",
+        "description": "9995 的 Omni 人物图、故事版和视频片段生成",
+    },
+    {
+        "id": "grok",
+        "label": "Grok 图像与视频",
+        "description": "9995 的 Grok 人物图、故事版和视频片段生成",
+    },
+)
+
+GLOBAL_AI_FIELDS = (
+    ("OPC_VIDEO_ANALYSIS_API_BASE_URL", "API 地址", "video_analysis", "url", "https://zexapi.com"),
+    ("OPC_VIDEO_ANALYSIS_MODEL", "模型", "video_analysis", "text", "gemini-3.5-flash"),
+    ("OPC_VIDEO_ANALYSIS_API_KEY", "API Key", "video_analysis", "password", ""),
+    ("OPC_TEXT_API_BASE_URL", "API 地址", "text", "url", "https://api.deepseek.com"),
+    ("OPC_TEXT_MODEL", "模型", "text", "text", "deepseek-v4-pro"),
+    ("OPC_TEXT_API_KEY", "API Key", "text", "password", ""),
+    ("OTU_BASE_URL", "API 地址", "otu", "url", "https://zexapi.com"),
+    ("IMAGE_MODEL", "图像模型", "otu", "text", "gpt-image-2-4K"),
+    ("OMNI_MODEL", "视频模型", "otu", "text", "omni_flash-10s"),
+    ("OTU_API_KEY", "API Key", "otu", "password", ""),
+    ("GROK_BASE_URL", "API 地址", "grok", "url", "https://www.runninghub.cn"),
+    ("GROK_IMAGE_MODEL", "图像模型", "grok", "text", "G-2.0"),
+    ("GROK_VIDEO_MODEL", "视频模型", "grok", "text", "X v1.5"),
+    ("GROK_API_KEY", "API Key", "grok", "password", ""),
+)
+
+GLOBAL_AI_SECRET_FALLBACKS = {
+    "OPC_VIDEO_ANALYSIS_API_KEY": ("VIDEO_TEARDOWN_AGENT_API_KEY", "MODELMESH_API_KEY"),
+    "OPC_TEXT_API_KEY": ("DEEPSEEK_API_KEY", "MODELMESH_API_KEY"),
+}
+
 
 def unquote_env_value(raw_value: str) -> str:
     value = raw_value.strip()
@@ -293,6 +341,116 @@ def read_global_path_values(env_file: Path = ENV_FILE) -> dict[str, str]:
         if match and match.group(1) in allowed:
             values[match.group(1)] = unquote_env_value(match.group(2))
     return values
+
+
+def read_env_values(env_file: Path = ENV_FILE) -> dict[str, str]:
+    values: dict[str, str] = {}
+    if not env_file.is_file():
+        return values
+    for raw_line in env_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+        match = re.match(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$", raw_line)
+        if match:
+            values[match.group(1)] = unquote_env_value(match.group(2))
+    return values
+
+
+def global_ai_payload(env_file: Path = ENV_FILE) -> dict:
+    env_values = read_env_values(env_file)
+    fields = []
+    for key, label, group, field_type, default in GLOBAL_AI_FIELDS:
+        value = str(env_values.get(key) or "").strip()
+        if field_type == "password" and not value:
+            for fallback_key in (key, *GLOBAL_AI_SECRET_FALLBACKS.get(key, ())):
+                value = str(env_values.get(fallback_key) or os.environ.get(fallback_key) or "").strip()
+                if value:
+                    break
+        fields.append(
+            {
+                "key": key,
+                "label": label,
+                "group": group,
+                "type": field_type,
+                "value": "" if field_type == "password" else (value or default),
+                "configured": bool(value) if field_type == "password" else True,
+            }
+        )
+    return {
+        "env_file": str(env_file),
+        "groups": list(GLOBAL_AI_GROUPS),
+        "fields": fields,
+        "note": "Agent 页面修改仅在当前进程有效；重启后重新继承这里的全局值。",
+    }
+
+
+def save_global_ai_settings(updates: dict, env_file: Path = ENV_FILE) -> dict:
+    if not isinstance(updates, dict):
+        raise ValueError("AI 配置格式错误")
+    field_map = {field[0]: field for field in GLOBAL_AI_FIELDS}
+    unknown = set(updates) - set(field_map)
+    if unknown:
+        raise ValueError(f"未知 AI 配置：{sorted(unknown)[0]}")
+
+    clean_updates: dict[str, str] = {}
+    for key, raw_value in updates.items():
+        _key, _label, _group, field_type, _default = field_map[key]
+        value = str(raw_value or "").strip()
+        if field_type == "password" and not value:
+            continue
+        if not value or "\n" in value or "\r" in value or "\0" in value:
+            raise ValueError(f"{key} 的值无效")
+        if field_type == "url" and not re.match(r"^https?://", value, re.IGNORECASE):
+            raise ValueError(f"{key} 必须以 http:// 或 https:// 开头")
+        clean_updates[key] = value.rstrip("/") if field_type == "url" else value
+
+    existing_lines = env_file.read_text(encoding="utf-8").splitlines() if env_file.is_file() else []
+    remaining = set(clean_updates)
+    output_lines = []
+    for line in existing_lines:
+        match = re.match(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=", line)
+        key = match.group(1) if match else ""
+        if key in clean_updates:
+            output_lines.append(f"{key}={json.dumps(clean_updates[key], ensure_ascii=False)}")
+            remaining.discard(key)
+        else:
+            output_lines.append(line)
+    for key, _label, _group, _field_type, _default in GLOBAL_AI_FIELDS:
+        if key in remaining:
+            output_lines.append(f"{key}={json.dumps(clean_updates[key], ensure_ascii=False)}")
+
+    env_file.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=env_file.parent, delete=False) as handle:
+        handle.write("\n".join(output_lines) + "\n")
+        temporary_path = Path(handle.name)
+    if env_file.exists():
+        temporary_path.chmod(env_file.stat().st_mode)
+    os.replace(temporary_path, env_file)
+    return global_ai_payload(env_file)
+
+
+def migrate_global_ai_secrets(env_file: Path = ENV_FILE) -> int:
+    env_values = read_env_values(env_file)
+    updates: dict[str, str] = {}
+    for key, _label, _group, field_type, _default in GLOBAL_AI_FIELDS:
+        if field_type != "password" or env_values.get(key):
+            continue
+        for source_key in (key, *GLOBAL_AI_SECRET_FALLBACKS.get(key, ())):
+            value = str(env_values.get(source_key) or os.environ.get(source_key) or "").strip()
+            if value:
+                updates[key] = value
+                break
+    if updates:
+        save_global_ai_settings(updates, env_file)
+    return len(updates)
+
+
+def global_ai_migration_payload(env_file: Path = ENV_FILE) -> dict:
+    return load_ai_migration_report(env_file.parent)
+
+
+def resolve_global_ai_migration(choices: dict, env_file: Path = ENV_FILE) -> dict:
+    if not isinstance(choices, dict):
+        raise ValueError("迁移选择格式错误")
+    return resolve_ai_migration_conflicts(env_file.parent, choices)
 
 
 def resolve_path_values(values: dict[str, str]) -> dict[str, str]:
@@ -451,7 +609,7 @@ main{max-width:1180px;margin:auto;padding:64px 24px 80px}header{display:flex;jus
 @media(max-width:700px){main{padding-top:38px}header{align-items:start;flex-direction:column}.summary{white-space:normal}.workflowHead{align-items:start;flex-direction:column}.workflowDescription{text-align:left}.flow{grid-template-columns:1fr}.destination .card{width:100%}}
 </style>
 </head>
-<body><main><header><div><h1>OPC 内容量化增长引擎</h1><p>按手动生产线路与自动发布流水线组织现有 Agent。手动 Agent 保持独立，自动流水线复用底层能力。</p></div><div class="headerTools"><a class="button" href="/settings/paths">全局路径设置</a><div class="summary" id="summary">正在检测服务…</div></div></header><section class="workflows" id="workflows"></section><section class="destination"><div class="destinationHead"><div class="destinationTitle">统一归口 · 成品管理与发布</div><div class="destinationDescription">三条线路的最终成片统一进入成品目录，由同一个 Agent 扫描、管理和发布。</div></div><div class="flow" id="destination"></div></section><p class="note">控制台端口 8888 · 已接入 15 个 Agent</p></main>
+<body><main><header><div><h1>OPC 内容量化增长引擎</h1><p>按手动生产线路与自动发布流水线组织现有 Agent。手动 Agent 保持独立，自动流水线复用底层能力。</p></div><div class="headerTools"><a class="button" href="/settings/ai">全局 API / 模型</a><a class="button" href="/settings/paths">全局路径设置</a><div class="summary" id="summary">正在检测服务…</div></div></header><section class="workflows" id="workflows"></section><section class="destination"><div class="destinationHead"><div class="destinationTitle">统一归口 · 成品管理与发布</div><div class="destinationDescription">三条线路的最终成片统一进入成品目录，由同一个 Agent 扫描、管理和发布。</div></div><div class="flow" id="destination"></div></section><p class="note">控制台端口 8888 · 已接入 15 个 Agent</p></main>
 <script>
 const workflowsHost=document.querySelector('#workflows'),destination=document.querySelector('#destination'),summary=document.querySelector('#summary');
 const workflowLines=[
@@ -475,7 +633,7 @@ PATH_SETTINGS_HTML = """<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>全局路径设置 · OPC</title>
 <style>
-:root{color-scheme:dark;--bg:#0b0d10;--panel:#15191f;--line:#29313b;--text:#f3f5f7;--muted:#98a2ad;--green:#66d19e;--red:#ff8b8b;--blue:#70a7ff}
+:root{color-scheme:dark;--bg:#0b0d10;--panel:#15191f;--line:#29313b;--text:#f3f5f7;--muted:#98a2ad;--green:#66d19e;--red:#ff8b8b;--blue:#70a7ff;--amber:#f3be63}
 *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#18202b 0,#0b0d10 42%);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 main{max-width:980px;margin:auto;padding:48px 24px 80px}header{display:flex;justify-content:space-between;gap:24px;align-items:start;margin-bottom:26px}h1{font-size:clamp(30px,5vw,48px);margin:0 0 12px;letter-spacing:-.035em}p{color:var(--muted);line-height:1.6;margin:0}.groups{display:grid;gap:16px}.panel{padding:22px;border:1px solid var(--line);border-radius:18px;background:linear-gradient(145deg,#181d24,#11151a);box-shadow:0 16px 48px #0005}.groupHead{padding-bottom:17px;border-bottom:1px solid var(--line)}.groupTitle{font-size:20px;font-weight:720;margin-bottom:5px}.groupDescription{font-size:13px;color:var(--muted)}.field{padding:18px 0;border-bottom:1px solid var(--line)}.field:last-child{border-bottom:0;padding-bottom:0}.fieldHead{display:flex;justify-content:space-between;gap:16px;margin-bottom:8px}.label{font-weight:650}.key{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--blue)}.description,.resolved{font-size:13px;color:var(--muted)}input{width:100%;margin:9px 0 7px;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:#0d1116;color:var(--text);font:14px ui-monospace,SFMono-Regular,Menlo,monospace}.status{font-size:12px;margin-left:8px}.status.ok{color:var(--green)}.status.warn{color:var(--red)}.agentNotes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:16px}.agentNote{padding:13px;border:1px solid var(--line);border-radius:12px;background:#0d1116}.agentName{font-weight:650;margin-bottom:5px}.agentDetail{font-size:12px;color:var(--muted);line-height:1.5}.actions{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-top:20px;flex-wrap:wrap}button,a.button{appearance:none;border:1px solid var(--line);background:#202733;color:var(--text);padding:10px 14px;border-radius:10px;font:inherit;text-decoration:none;cursor:pointer}button.primary{background:#e7edf5;color:#11161d;border-color:#e7edf5}button:disabled{opacity:.5;cursor:wait}.message{font-size:13px;color:var(--muted)}.message.error{color:var(--red)}.envFile{margin:0 0 14px;font-size:12px;color:var(--muted);overflow-wrap:anywhere}
 @media(max-width:700px){main{padding-top:32px}header{flex-direction:column}.fieldHead{flex-direction:column;gap:4px}.agentNotes{grid-template-columns:1fr}}
@@ -498,6 +656,36 @@ async function savePaths(){saveButton.disabled=true;message.className='message';
 loadPaths().catch(error=>{fields.textContent=error.message;message.className='message error';message.textContent='路径读取失败'})
 </script>
 </body></html>"""
+
+AI_SETTINGS_HTML = """<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>全局 API / 模型设置 · OPC</title>
+<style>
+:root{color-scheme:dark;--bg:#0b0d10;--panel:#15191f;--line:#29313b;--text:#f3f5f7;--muted:#98a2ad;--green:#66d19e;--red:#ff8b8b;--blue:#70a7ff}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#18202b 0,#0b0d10 42%);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:980px;margin:auto;padding:48px 24px 80px}header{display:flex;justify-content:space-between;gap:24px;align-items:start;margin-bottom:26px}h1{font-size:clamp(30px,5vw,48px);margin:0 0 12px;letter-spacing:-.035em}p{color:var(--muted);line-height:1.6;margin:0}.groups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.panel{padding:22px;border:1px solid var(--line);border-radius:18px;background:linear-gradient(145deg,#181d24,#11151a);box-shadow:0 16px 48px #0005}.groupHead{padding-bottom:16px;border-bottom:1px solid var(--line)}.groupTitle{font-size:20px;font-weight:720;margin-bottom:5px}.groupDescription,.hint{font-size:13px;color:var(--muted);line-height:1.5}.field{padding-top:16px}.fieldHead{display:flex;justify-content:space-between;gap:12px;margin-bottom:7px}.label{font-weight:650}.key{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--blue)}input{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:#0d1116;color:var(--text);font:14px ui-monospace,SFMono-Regular,Menlo,monospace}.configured{margin-top:6px;color:var(--green);font-size:12px}.actions{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-top:20px;flex-wrap:wrap}button,a.button{appearance:none;border:1px solid var(--line);background:#202733;color:var(--text);padding:10px 14px;border-radius:10px;font:inherit;text-decoration:none;cursor:pointer}button.primary{background:#e7edf5;color:#11161d;border-color:#e7edf5}button:disabled{opacity:.5;cursor:wait}.message{font-size:13px;color:var(--muted)}.message.error{color:var(--red)}.envFile{margin:0 0 14px;font-size:12px;color:var(--muted);overflow-wrap:anywhere}.notice{padding:14px 16px;margin-bottom:16px;border:1px solid #36506f;border-radius:12px;background:#111a25;color:#b9cbe0;font-size:13px;line-height:1.6}.migration{display:none;margin-bottom:18px;padding:18px;border:1px solid #72582a;border-radius:14px;background:#211b11}.migration.show{display:block}.migration h2{margin:0 0 8px;font-size:19px}.migration p{color:#d6c39f}.conflict{margin-top:14px;padding-top:14px;border-top:1px solid #554528}.choice{display:flex;gap:9px;align-items:flex-start;margin-top:8px;color:#e9edf2;font-size:13px}.choice input{width:auto;margin-top:2px}.choice small{display:block;color:var(--muted);margin-top:3px}.migration button{margin-top:16px;background:var(--amber);border-color:var(--amber);color:#1b1408;font-weight:700}@media(max-width:760px){main{padding-top:32px}header{flex-direction:column}.groups{grid-template-columns:1fr}.fieldHead{flex-direction:column;gap:4px}}
+</style>
+</head>
+<body><main>
+<header><div><h1>全局 API / 模型设置</h1><p>所有相关 Agent 默认继承这里的配置。Agent 页面允许临时覆盖，但重启 Agent 后会自动恢复全局设置。</p></div><a class="button" href="/">返回控制台</a></header>
+<div class="envFile" id="envFile"></div><div class="notice">API Key 只保存到外置盘的 Docker 私有配置文件，不会写入 GitHub，也不会在页面中回显。保存后请重启相关 Agent，使全部进程重新继承全局值。</div>
+<section class="migration" id="migration"></section>
+<section class="groups" id="groups">正在读取配置…</section>
+<div class="actions"><span class="message" id="message"></span><button class="primary" id="saveButton" onclick="saveSettings()">保存全局配置</button></div>
+</main>
+<script>
+const groupsHost=document.querySelector('#groups'),message=document.querySelector('#message'),saveButton=document.querySelector('#saveButton'),envFile=document.querySelector('#envFile'),migrationHost=document.querySelector('#migration');let fields=[],groups=[];
+function esc(value){return String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function fieldHtml(field){const placeholder=field.type==='password'?(field.configured?'已配置；留空保持不变':'请输入 API Key'):'';return `<div class="field"><div class="fieldHead"><span class="label">${esc(field.label)}</span><span class="key">${esc(field.key)}</span></div><input data-key="${esc(field.key)}" type="${field.type==='password'?'password':'text'}" value="${esc(field.value)}" placeholder="${esc(placeholder)}" autocomplete="off">${field.type==='password'&&field.configured?'<div class="configured">已配置</div>':''}</div>`}
+function render(){groupsHost.innerHTML=groups.map(group=>`<section class="panel"><div class="groupHead"><div class="groupTitle">${esc(group.label)}</div><div class="groupDescription">${esc(group.description)}</div></div>${fields.filter(field=>field.group===group.id).map(fieldHtml).join('')}</section>`).join('')}
+async function loadSettings(){const r=await fetch('/api/global-ai-settings');const data=await r.json();if(!r.ok)throw new Error(data.error||'读取失败');fields=data.fields;groups=data.groups;envFile.textContent=`私有配置文件：${data.env_file}`;message.textContent=data.note;render()}
+async function loadMigration(){const r=await fetch('/api/global-ai-migration');const data=await r.json();if(!r.ok)throw new Error(data.error||'迁移状态读取失败');if(data.status!=='pending'){migrationHost.className='migration';return}migrationHost.className='migration show';migrationHost.innerHTML=`<h2>发现旧 Agent 配置冲突</h2><p>${esc(data.message)} 迁移前备份：${esc(data.backup_dir||'')}</p>${data.conflicts.map(item=>`<div class="conflict"><strong>${esc(item.label)}</strong>${item.candidates.map((candidate,index)=>`<label class="choice"><input type="radio" name="migration-${esc(item.field)}" value="${esc(candidate.id)}" ${index===0?'checked':''}><span>${esc(candidate.display_value)}<small>${esc(candidate.source)}</small></span></label>`).join('')}</div>`).join('')}<button onclick="resolveMigration()">应用选择并完成迁移</button>`}
+async function resolveMigration(){const choices={};migrationHost.querySelectorAll('input[type=radio]:checked').forEach(input=>choices[input.name.replace('migration-','')]=input.value);const r=await fetch('/api/global-ai-migration',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({choices})});const data=await r.json();if(!r.ok)throw new Error(data.error||'迁移失败');await Promise.all([loadMigration(),loadSettings()]);message.textContent='旧配置迁移完成。请重启相关 Agent，使其继承迁移后的全局值。'}
+async function saveSettings(){saveButton.disabled=true;message.className='message';message.textContent='正在保存…';try{const updates={};document.querySelectorAll('input[data-key]').forEach(input=>updates[input.dataset.key]=input.value);const r=await fetch('/api/global-ai-settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({settings:updates})});const data=await r.json();if(!r.ok)throw new Error(data.error||'保存失败');fields=data.fields;render();message.textContent='保存成功。重启相关 Agent 后，所有临时覆盖会清空并继承这些全局值。'}catch(error){message.className='message error';message.textContent=error.message}finally{saveButton.disabled=false}}
+Promise.all([loadSettings(),loadMigration()]).catch(error=>{groupsHost.textContent=error.message;message.className='message error';message.textContent='配置读取失败'})
+</script></body></html>"""
 
 
 ROUTE_TO_SERVICE = {
@@ -550,6 +738,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+        elif path == "/settings/ai":
+            body = AI_SETTINGS_HTML.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
         elif path in ROUTE_TO_SERVICE:
             self.send_response(302)
             self.send_header("Location", SERVICES[ROUTE_TO_SERVICE[path]]["url"])
@@ -558,6 +753,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(200, services_payload())
         elif path == "/api/global-paths":
             self.send_json(200, global_paths_payload())
+        elif path == "/api/global-ai-settings":
+            self.send_json(200, global_ai_payload())
+        elif path == "/api/global-ai-migration":
+            self.send_json(200, global_ai_migration_payload())
         elif path == "/health":
             self.send_json(200, {"ok": True, "service": "OPC-Console"})
         else:
@@ -569,6 +768,12 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/global-paths":
                 payload = self.read_json()
                 self.send_json(200, save_global_paths(payload.get("paths")))
+            elif path == "/api/global-ai-settings":
+                payload = self.read_json()
+                self.send_json(200, save_global_ai_settings(payload.get("settings")))
+            elif path == "/api/global-ai-migration":
+                payload = self.read_json()
+                self.send_json(200, resolve_global_ai_migration(payload.get("choices")))
             else:
                 self.send_json(404, {"error": "Not found"})
         except (ValueError, json.JSONDecodeError) as exc:
@@ -581,6 +786,10 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    migration_status = global_ai_migration_payload().get("status")
+    migrated_secret_count = 0 if migration_status == "pending" else migrate_global_ai_secrets()
+    if migrated_secret_count:
+        print(f"已迁移 {migrated_secret_count} 组全局 AI 密钥到 Docker 私有配置", flush=True)
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     url = f"http://{HOST}:{PORT}/"
     print(f"OPC 内容量化增长引擎已启动: {url}", flush=True)

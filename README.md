@@ -47,7 +47,9 @@ Windows PowerShell：
 
 启动后打开 [http://127.0.0.1:8888/](http://127.0.0.1:8888/)。
 
-代码更新后再次执行 `docker compose up -d --build`。停止和重建容器不会删除外置盘中的持久数据。不要执行 `docker compose down -v`，也不要手动删除 `OPC_DOCKER_DATA_ROOT`。
+代码更新后仍应再次执行对应系统的 `docker_up` 启动脚本，不要绕过脚本直接启动。脚本会在构建前扫描旧 Agent 的 API 地址、模型和 API Key，把无冲突且全局尚未配置的值迁移到 `OPC_DOCKER_DATA_ROOT/config/.env`。迁移前会在 `OPC_DOCKER_DATA_ROOT/config/ai-config-backups/` 自动备份；迁移完成后写入一次性标记，后续更新不会重复执行。若旧 Agent 配置彼此冲突，请打开 8888 的“全局 API / 模型”页面选择要保留的值。
+
+停止和重建容器不会删除外置盘中的持久数据。不要执行 `docker compose down -v`，也不要手动删除 `OPC_DOCKER_DATA_ROOT`。
 
 ## 服务端口
 

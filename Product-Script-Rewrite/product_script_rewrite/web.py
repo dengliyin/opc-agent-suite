@@ -11,6 +11,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from opc_shared.global_ai import runtime_override_active, set_runtime_overrides
+
 from product_script_rewrite import core
 
 
@@ -72,24 +74,18 @@ def state_payload() -> dict[str, Any]:
         },
         "products": core.list_products(config),
         "has_api_key": bool(core.get_api_key(config)),
+        "ai_settings_source": "本 Agent 临时覆盖" if runtime_override_active("text") else "8888 全局设置",
     }
 
 
 def update_settings(payload: dict[str, Any]) -> dict[str, Any]:
-    settings = core.read_json_object(core.SETTINGS_PATH)
-    model = settings.setdefault("model", {})
     base_url = str(payload.get("deepseek_base_url") or "").strip()
     model_name = str(payload.get("deepseek_model") or "").strip()
-    if base_url:
-        model["deepseek_base_url"] = base_url.rstrip("/")
-    if model_name:
-        model["deepseek_model"] = model_name
-    core.SETTINGS_PATH.write_text(json.dumps(settings, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     api_key = str(payload.get("deepseek_api_key") or "").strip()
-    if api_key:
-        secrets = core.read_json_object(core.SECRETS_PATH)
-        secrets["deepseek_api_key"] = api_key
-        core.SECRETS_PATH.write_text(json.dumps(secrets, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    set_runtime_overrides(
+        "text",
+        {"base_url": base_url, "model": model_name, "api_key": api_key},
+    )
     return state_payload()
 
 
@@ -378,7 +374,7 @@ HTML = r"""<!doctype html>
       $('baseUrl').value = state.model.deepseek_base_url || '';
       $('model').value = state.model.deepseek_model || '';
       $('apiKey').placeholder = state.has_api_key ? '已配置；输入新密钥可替换' : '请输入 API Key';
-      $('apiBadge').textContent = state.has_api_key ? 'API Key 已就绪' : '缺少 API Key';
+      $('apiBadge').textContent = `${state.has_api_key ? 'API Key 已就绪' : '缺少 API Key'} · ${state.ai_settings_source || '8888 全局设置'}`;
       $('apiBadge').className = `badge ${state.has_api_key ? 'ok' : 'warn'}`;
       $('sourceProduct').innerHTML = productOptions(state.products);
       $('targetProduct').innerHTML = productOptions(state.products, true);
@@ -480,7 +476,7 @@ HTML = r"""<!doctype html>
       state = await api('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({deepseek_base_url:$('baseUrl').value, deepseek_model:$('model').value, deepseek_api_key:$('apiKey').value})});
       $('apiKey').value = '';
       $('apiKey').placeholder = state.has_api_key ? '已配置；输入新密钥可替换' : '请输入 API Key';
-      $('apiBadge').textContent = state.has_api_key ? 'API Key 已就绪' : '缺少 API Key';
+      $('apiBadge').textContent = `${state.has_api_key ? 'API Key 已就绪' : '缺少 API Key'} · ${state.ai_settings_source || '8888 全局设置'}`;
       $('apiBadge').className = `badge ${state.has_api_key ? 'ok' : 'warn'}`;
     }
     function requestRewrite() {

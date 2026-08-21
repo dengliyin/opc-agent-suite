@@ -8,6 +8,8 @@ import re
 
 from dotenv import load_dotenv
 
+from opc_shared.global_ai import load_profile
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ENV_PATH = PROJECT_ROOT / ".env"
@@ -55,6 +57,10 @@ def _env_list(name: str, default: List[str]) -> List[str]:
         return default
     items = [item.strip() for item in value.split(",") if item.strip()]
     return items or default
+
+
+def _runtime_value(name: str, default: str) -> str:
+    return os.getenv(f"OPC_RUNTIME_VIDEO_GENERATION_{name}", default)
 
 
 @dataclass(frozen=True)
@@ -196,7 +202,6 @@ class Settings:
 
 
 def load_settings(provider: str = "omni") -> Settings:
-    load_dotenv(SETTINGS_PATH, override=True)
     provider = provider.strip().lower()
     if provider not in {"omni", "grok"}:
         raise ValueError(f"未知 provider：{provider}")
@@ -213,13 +218,15 @@ def load_settings(provider: str = "omni") -> Settings:
     provider_labels = {"omni": "Omni", "grok": "Grok"}
     provider_prefixes = {"omni": "OMNI", "grok": "GROK"}
     prefix = provider_prefixes[provider]
-    image_model = os.getenv("IMAGE_MODEL", "gpt-image-2-4K")
+    otu_profile = load_profile("otu")
+    grok_profile = load_profile("grok")
+    image_model = otu_profile["image_model"]
     image_fallback_models = _env_list("IMAGE_FALLBACK_MODELS", [])
-    omni_model = os.getenv("OMNI_MODEL", "omni_flash-10s")
-    default_character_api_model = "grok:G-2.0" if provider == "grok" else f"otu:{image_model}"
+    omni_model = otu_profile["video_model"]
+    default_character_api_model = f"grok:{grok_profile['image_model']}" if provider == "grok" else f"otu:{image_model}"
     default_storyboard_api_model = default_character_api_model
     if provider == "grok":
-        default_video_api_model = "grok:X v1.5"
+        default_video_api_model = f"grok:{grok_profile['video_model']}"
         default_video_duration = int(os.getenv("GROK_VIDEO_DURATION", "10"))
     else:
         default_video_api_model = f"otu:{omni_model}"
@@ -234,13 +241,13 @@ def load_settings(provider: str = "omni") -> Settings:
         provider=provider,
         provider_label=provider_labels[provider],
         api_base_path=f"/{provider}/api",
-        otu_api_key=os.getenv("OTU_API_KEY", ""),
-        otu_base_url=os.getenv("OTU_BASE_URL", "https://zexapi.com"),
+        otu_api_key=otu_profile["api_key"],
+        otu_base_url=otu_profile["base_url"],
         image_model=image_model,
         image_fallback_models=image_fallback_models,
         omni_model=omni_model,
-        grok_api_key=os.getenv("GROK_API_KEY", ""),
-        grok_base_url=os.getenv("GROK_BASE_URL", "https://www.runninghub.cn"),
+        grok_api_key=grok_profile["api_key"],
+        grok_base_url=grok_profile["base_url"],
         grok_image_aspect_ratio=grok_image_aspect_ratio,
         grok_image_resolution=grok_image_resolution,
         grok_video_aspect_ratio=grok_video_aspect_ratio,
@@ -259,9 +266,9 @@ def load_settings(provider: str = "omni") -> Settings:
             )
         ).expanduser(),
         script_concurrency=_env_int(f"{prefix}_SCRIPT_CONCURRENCY", _env_int("SCRIPT_CONCURRENCY", 3)),
-        character_api_model=os.getenv(f"{prefix}_CHARACTER_API_MODEL", default_character_api_model),
-        storyboard_api_model=os.getenv(f"{prefix}_STORYBOARD_API_MODEL", default_storyboard_api_model),
-        video_api_model=os.getenv(f"{prefix}_VIDEO_API_MODEL", default_video_api_model),
+        character_api_model=_runtime_value(f"{prefix}_CHARACTER_API_MODEL", default_character_api_model),
+        storyboard_api_model=_runtime_value(f"{prefix}_STORYBOARD_API_MODEL", default_storyboard_api_model),
+        video_api_model=_runtime_value(f"{prefix}_VIDEO_API_MODEL", default_video_api_model),
         character_image_size=os.getenv(f"{prefix}_CHARACTER_IMAGE_SIZE", image_size),
         character_image_aspect_ratio=os.getenv(f"{prefix}_CHARACTER_IMAGE_ASPECT_RATIO", grok_image_aspect_ratio),
         character_image_resolution=os.getenv(f"{prefix}_CHARACTER_IMAGE_RESOLUTION", grok_image_resolution),

@@ -17,6 +17,8 @@ import uuid
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
+from opc_shared.global_ai import load_profile
+
 from opc_engine.features.script_generation.modelmesh_client import (
     DEFAULT_BASE_URL,
     DEFAULT_MODEL,
@@ -410,6 +412,10 @@ def load_script_generation_config():
     config = read_json_config(SHARED_MODEL_SETTINGS_PATH)
     config.update(read_json_config(LOCAL_MODEL_SETTINGS_PATH))
     config.update(read_json_config(SCRIPT_INPUTS_PATH))
+    profile = load_profile("text")
+    config["modelmesh_base_url"] = profile["base_url"]
+    config["script_generation_model"] = profile["model"]
+    config["modelmesh_api_key"] = profile["api_key"]
     return config
 
 
