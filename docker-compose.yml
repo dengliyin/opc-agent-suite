@@ -1,3 +1,5 @@
+name: opc-agent-suite
+
 x-common-environment: &common-environment
   HOME: /config
   PYTHONPATH: /workspace
@@ -44,6 +46,7 @@ x-common-environment: &common-environment
   OPC_HYBRID_SCRIPT_GENERATION_AGENT_URL: http://hybrid-script-generation:10003/
   OPC_HYBRID_AUDIO_GENERATION_AGENT_URL: http://hybrid-audio-generation:10004/
   OPC_AUTO_PUBLISH_PIPELINE_URL: http://auto-publish-pipeline:10005/
+  OPC_UPDATER_URL: http://opc-updater:18888
   OPC_HOT_VIDEO_AGENT_URL_PUBLIC: http://${OPC_PUBLIC_HOST:-localhost}:9991/
   OPC_VIDEO_TEARDOWN_AGENT_URL_PUBLIC: http://${OPC_PUBLIC_HOST:-localhost}:9992/
   OPC_SCRIPT_PRODUCTION_AGENT_URL_PUBLIC: http://${OPC_PUBLIC_HOST:-localhost}:9993/
@@ -77,6 +80,29 @@ x-common-service: &common-service
     test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:$${SERVICE_PORT}$${HEALTH_PATH} >/dev/null"]
 
 services:
+  opc-updater:
+    build:
+      context: ./OPC-Updater
+    restart: unless-stopped
+    working_dir: /repo
+    environment:
+      OPC_UPDATER_HOST: 0.0.0.0
+      OPC_UPDATER_PORT: "18888"
+      OPC_REPO_ROOT: /repo
+      OPC_CONFIG_ROOT: /config
+      OPC_COMPOSE_PROJECT: opc-agent-suite
+      OPC_UPDATE_BRANCH: main
+    volumes:
+      - .:/repo
+      - "${OPC_DOCKER_DATA_ROOT:?Set OPC_DOCKER_DATA_ROOT in .env}/config:/config"
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      interval: 30s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18888/health', timeout=3)"]
+
   console:
     <<: *common-service
     build:
@@ -94,6 +120,7 @@ services:
     ports:
       - "${OPC_DOCKER_BIND:-127.0.0.1}:8888:8888"
     depends_on:
+      - opc-updater
       - video-collection
       - script-analysis
       - script-generation

@@ -6,7 +6,7 @@
 
 本项目只支持 Docker，不再提供 macOS LaunchAgent、Windows 计划任务、本机 Python 虚拟环境或 Service-Runtime 启动方式。所有容器均使用 `restart: unless-stopped`，Docker Desktop 启动后会自动恢复。
 
-8888 只负责显示状态、全局路径配置和打开各 Agent。Agent 的启动、停止和自动恢复全部由 Docker Compose 管理，所以卡片中只有“打开”按钮。
+8888 负责显示状态、全局配置、程序更新和打开各 Agent。Agent 的启动、停止和自动恢复全部由 Docker Compose 管理，所以卡片中只有“打开”按钮。
 
 ### 首次配置
 
@@ -47,7 +47,11 @@ Windows PowerShell：
 
 启动后打开 [http://127.0.0.1:8888/](http://127.0.0.1:8888/)。
 
-代码更新后仍应再次执行对应系统的 `docker_up` 启动脚本，不要绕过脚本直接启动。脚本会在构建前扫描旧 Agent 的 API 地址、模型和 API Key，把无冲突且全局尚未配置的值迁移到 `OPC_DOCKER_DATA_ROOT/config/.env`。迁移前会在 `OPC_DOCKER_DATA_ROOT/config/ai-config-backups/` 自动备份；迁移完成后写入一次性标记，后续更新不会重复执行。若旧 Agent 配置彼此冲突，请打开 8888 的“全局 API / 模型”页面选择要保留的值。
+首次启动完成后，日常更新只需打开 8888，点击“更新”并等待页面提示全部 Agent 恢复正常。独立更新服务会获取 GitHub `main`、执行旧配置迁移、重建 Docker，并验证全部服务健康。若代码目录存在尚未提交的本地改动，更新会停止并列出文件，不会覆盖、删除或暂存这些改动。
+
+启动脚本和独立更新服务都会扫描旧 Agent 的 API 地址、模型和 API Key，把无冲突且全局尚未配置的值迁移到 `OPC_DOCKER_DATA_ROOT/config/.env`。迁移前会在 `OPC_DOCKER_DATA_ROOT/config/ai-config-backups/` 自动备份；迁移完成后写入一次性标记，后续更新不会重复执行。若旧 Agent 配置彼此冲突，请打开 8888 的“全局 API / 模型”页面选择要保留的值。
+
+独立更新服务不开放宿主机端口，只接受 8888 使用私有令牌调用。它需要挂载 Docker Socket 才能重建其他容器，因此不要把更新服务端口暴露到局域网或公网。
 
 停止和重建容器不会删除外置盘中的持久数据。不要执行 `docker compose down -v`，也不要手动删除 `OPC_DOCKER_DATA_ROOT`。
 
