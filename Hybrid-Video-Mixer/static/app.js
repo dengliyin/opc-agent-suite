@@ -4,6 +4,8 @@ const state = {
   library: null,
   plan: null,
   taskStatus: "idle",
+  planPhase: "idle",
+  planError: "",
   hookPage: 1,
   selectedHookPaths: new Set(),
   reservedHookPaths: new Set()
@@ -274,9 +276,13 @@ function updateReady() {
   const selected = (
     els.product.value && productiveMarkets.length && availableHookCount && hasDeduplication
   );
-  els.planButton.disabled = !selected || state.taskStatus === "running";
+  const planInProgress = state.planPhase === "running";
+  els.planButton.disabled = !selected || state.taskStatus === "running" || planInProgress;
+  els.planButton.textContent = planInProgress
+    ? `正在生成方案（${availableHookCount} 条）…`
+    : (state.plan ? "重新生成编排方案" : "生成编排方案");
   if (product) {
-    els.message.className = "message";
+    els.message.className = state.planPhase === "error" ? "message error" : "message";
     const scope = currentMarket()?.label || `全部国家（可编排 ${productiveMarkets.length} 个）`;
     const ctaCount = productiveMarkets.reduce((total, market) => {
       const model = automaticModelForMarket(market);
@@ -284,6 +290,12 @@ function updateReady() {
     }, 0);
     els.message.textContent = state.taskStatus === "running"
       ? `当前渲染任务运行中，${counts.reserved} 条钩子已标记为任务占用，任务完成后才能重新编排`
+      : planInProgress
+      ? `正在为 ${scope} 生成 ${availableHookCount} 条编排方案；素材较多时需要几十秒，请稍候…`
+      : state.planPhase === "ready" && state.plan
+      ? `编排方案已生成，共 ${state.plan.variants.length} 条成片；现在可以点击“确认并渲染”。`
+      : state.planPhase === "error"
+      ? `编排方案生成失败：${state.planError}`
       : hasDeduplication
       ? `${scope} · 本次自动生成 ${availableHookCount} 条成片 · CTA ${ctaCount} 条（可选）`
       : "请至少选择一项去重处理，或选择随机去重";
@@ -360,10 +372,11 @@ function deleteSelectedHooks() {
 }
 
 async function createPlan() {
-  els.planButton.disabled = true;
+  state.plan = null;
+  state.planPhase = "running";
+  state.planError = "";
   els.renderButton.disabled = true;
-  els.message.className = "message";
-  els.message.textContent = "正在分析素材并生成时间线…";
+  updateReady();
   const payload = {
     product: els.product.value,
     market: els.market.value,
@@ -378,11 +391,11 @@ async function createPlan() {
       method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload)
     });
     state.plan = data.plan;
+    state.planPhase = "ready";
     els.renderButton.disabled = false;
-    els.message.textContent = `编排方案已生成，共 ${data.plan.variants.length} 条成片；确认后可开始渲染。`;
   } catch (error) {
-    els.message.className = "message error";
-    els.message.textContent = error.message;
+    state.planPhase = "error";
+    state.planError = error.message;
   } finally {
     updateReady();
   }
@@ -419,6 +432,8 @@ async function pollTask() {
     updateReady();
     if (task.status === "completed" && previousStatus !== "completed") {
       state.plan = null;
+      state.planPhase = "idle";
+      state.planError = "";
       els.renderButton.disabled = true;
       await loadLibrary(true);
       await loadOutputs();
