@@ -41,7 +41,7 @@ class UpdaterTests(unittest.TestCase):
         self.assertTrue(self.app._update_lock.acquire(blocking=False))
         self.app.perform_update()
 
-    def test_dirty_worktree_blocks_before_fetch_or_build(self):
+    def test_dirty_worktree_blocks_before_migration_or_build(self):
         commands = []
 
         def fake_run(command, check=True):
@@ -58,12 +58,11 @@ class UpdaterTests(unittest.TestCase):
         status = self.app.read_state()
         self.assertEqual(status["state"], "blocked")
         self.assertEqual(status["dirty_paths"], ["local-change.txt"])
-        self.assertFalse(any(command[:2] == ["git", "fetch"] for command in commands))
+        self.assertFalse(any(command[:2] in (["git", "fetch"], ["git", "pull"]) for command in commands))
         self.assertFalse(any(command[:2] == ["docker", "compose"] for command in commands))
 
-    def test_clean_update_rebuilds_core_services_but_not_updater(self):
+    def test_clean_local_update_rebuilds_core_services_without_network_git(self):
         commands = []
-        commits = iter(("old123\n", "new456\n"))
 
         def fake_run(command, check=True):
             commands.append(command)
@@ -72,7 +71,7 @@ class UpdaterTests(unittest.TestCase):
             if command[:3] == ["git", "status", "--porcelain"]:
                 return self.result(command, "")
             if command[:3] == ["git", "rev-parse", "--short"]:
-                return self.result(command, next(commits))
+                return self.result(command, "local456\n")
             if command[-2:] == ["config", "--services"]:
                 return self.result(command, "\n".join((*self.app.CORE_SERVICES, "opc-updater")) + "\n")
             return self.result(command)
@@ -84,8 +83,9 @@ class UpdaterTests(unittest.TestCase):
 
         status = self.app.read_state()
         self.assertEqual(status["state"], "complete")
-        self.assertEqual(status["old_commit"], "old123")
-        self.assertEqual(status["new_commit"], "new456")
+        self.assertEqual(status["old_commit"], "local456")
+        self.assertEqual(status["new_commit"], "local456")
+        self.assertFalse(any(command[:2] in (["git", "fetch"], ["git", "pull"]) for command in commands))
         compose_up = next(command for command in commands if "up" in command and "--build" in command)
         self.assertNotIn("opc-updater", compose_up)
         for service in self.app.CORE_SERVICES:

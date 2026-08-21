@@ -203,13 +203,15 @@ def perform_update() -> None:
             log("更新已停止，存在本地改动：" + "、".join(dirty))
             return
 
-        old_commit = current_commit()
-        update_phase("pull", "正在从 GitHub 获取 main 最新代码", old_commit=old_commit)
-        run(["git", "fetch", "origin", BRANCH])
-        run(["git", "pull", "--ff-only", "origin", BRANCH])
-        new_commit = current_commit()
+        local_commit = current_commit()
+        update_phase(
+            "prepare",
+            "正在应用已手动拉取的本地代码",
+            old_commit=local_commit,
+            new_commit=local_commit,
+        )
 
-        update_phase("validate", "正在检查 Docker 配置", new_commit=new_commit)
+        update_phase("validate", "正在检查 Docker 配置", new_commit=local_commit)
         run(compose_command("config", "--quiet"))
         services = configured_services()
 
@@ -234,10 +236,10 @@ def perform_update() -> None:
             {
                 "state": "complete",
                 "phase": "complete",
-                "message": "更新完成，8888 和全部 Agent 已恢复正常",
+                "message": "本地更新完成，8888 和全部 Agent 已恢复正常",
                 "finished_at": now_iso(),
-                "old_commit": old_commit,
-                "new_commit": new_commit,
+                "old_commit": local_commit,
+                "new_commit": local_commit,
             }
         )
         log("更新完成")
