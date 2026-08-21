@@ -3,6 +3,7 @@
 .env.*
 !.env.docker.example
 .runtime/
+.workbuddy/
 
 # Python environments and caches
 **/.venv/

@@ -13,6 +13,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /workspace
 
 RUN attempt=1; \
+    sed -i 's|http://deb.debian.org|https://mirrors.aliyun.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true; \
     until apt-get -o Acquire::Retries=5 update \
         && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
             ca-certificates \
@@ -56,7 +57,7 @@ COPY --from=node-runtime /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
     && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
     && npm install --global "hyperframes@${HYPERFRAMES_VERSION}" \
-    && browser_path="$(find /ms-playwright -type f -path '*/chrome-linux/chrome' -print -quit)" \
+    && browser_path="$(find /ms-playwright -type f -path '*/chrome-linux*/chrome' -print -quit)" \
     && test -n "${browser_path}" \
     && ln -s "${browser_path}" /usr/local/bin/hyperframes-chrome \
     && node --version \
