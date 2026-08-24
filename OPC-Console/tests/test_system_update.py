@@ -59,6 +59,22 @@ class ConsoleSystemUpdateTests(unittest.TestCase):
         request = urlopen.call_args.args[0]
         self.assertEqual(request.get_header("X-opc-updater-token"), "secret-token")
 
+    def test_ai_restart_proxy_forwards_selected_group(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            token_file = Path(temp_dir) / "updater.token"
+            token_file.write_text("secret-token", encoding="utf-8")
+            with mock.patch.object(self.app, "UPDATER_TOKEN_FILE", token_file), mock.patch.object(
+                self.app.urllib.request, "urlopen", return_value=Response()
+            ) as urlopen:
+                self.app.updater_request(
+                    "/restart-ai-agents",
+                    method="POST",
+                    payload={"group": "text"},
+                )
+
+        request = urlopen.call_args.args[0]
+        self.assertEqual(json.loads(request.data.decode("utf-8")), {"group": "text"})
+
     def test_missing_token_reports_service_unavailable(self):
         with mock.patch.object(self.app, "UPDATER_TOKEN_FILE", Path("/missing/updater.token")):
             status, payload = self.app.updater_request("/status")

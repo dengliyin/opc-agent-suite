@@ -280,21 +280,25 @@ GLOBAL_AI_GROUPS = (
         "id": "video_analysis",
         "label": "视频解析模型",
         "description": "9992、10002 共同继承，用于读取视频并生成解析脚本",
+        "restart_label": "重启 9992、10002",
     },
     {
         "id": "text",
         "label": "文本生成模型",
         "description": "9993、9994、9997、9999、10003 共同继承",
+        "restart_label": "重启 9993、9994、9997、9999、10003",
     },
     {
         "id": "otu",
         "label": "Omni 图像与视频",
         "description": "9995 的 Omni 人物图、故事版和视频片段生成",
+        "restart_label": "重启 9995",
     },
     {
         "id": "grok",
         "label": "Grok 图像与视频",
         "description": "9995 的 Grok 人物图、故事版和视频片段生成",
+        "restart_label": "重启 9995",
     },
 )
 
@@ -597,14 +601,14 @@ def services_payload() -> dict:
     return {"services": [service_status(service_id) for service_id in SERVICES]}
 
 
-def updater_request(path: str, method: str = "GET") -> tuple[int, dict]:
+def updater_request(path: str, method: str = "GET", payload: dict | None = None) -> tuple[int, dict]:
     try:
         token = UPDATER_TOKEN_FILE.read_text(encoding="utf-8").strip()
     except OSError as exc:
         return 503, {"state": "unavailable", "message": f"更新服务尚未就绪：{exc}"}
     request = urllib.request.Request(
         f"{UPDATER_URL}{path}",
-        data=b"{}" if method == "POST" else None,
+        data=json.dumps(payload or {}).encode("utf-8") if method == "POST" else None,
         headers={"X-OPC-Updater-Token": token, "Content-Type": "application/json"},
         method=method,
     )
@@ -698,12 +702,12 @@ AI_SETTINGS_HTML = """<!doctype html>
 <title>全局 API / 模型设置 · OPC</title>
 <style>
 :root{color-scheme:dark;--bg:#0b0d10;--panel:#15191f;--line:#29313b;--text:#f3f5f7;--muted:#98a2ad;--green:#66d19e;--red:#ff8b8b;--blue:#70a7ff}
-*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#18202b 0,#0b0d10 42%);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:980px;margin:auto;padding:48px 24px 80px}header{display:flex;justify-content:space-between;gap:24px;align-items:start;margin-bottom:26px}h1{font-size:clamp(30px,5vw,48px);margin:0 0 12px;letter-spacing:-.035em}p{color:var(--muted);line-height:1.6;margin:0}.groups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.panel{padding:22px;border:1px solid var(--line);border-radius:18px;background:linear-gradient(145deg,#181d24,#11151a);box-shadow:0 16px 48px #0005}.groupHead{padding-bottom:16px;border-bottom:1px solid var(--line)}.groupTitle{font-size:20px;font-weight:720;margin-bottom:5px}.groupDescription,.hint{font-size:13px;color:var(--muted);line-height:1.5}.field{padding-top:16px}.fieldHead{display:flex;justify-content:space-between;gap:12px;margin-bottom:7px}.label{font-weight:650}.key{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--blue)}input{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:#0d1116;color:var(--text);font:14px ui-monospace,SFMono-Regular,Menlo,monospace}.configured{margin-top:6px;color:var(--green);font-size:12px}.actions{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-top:20px;flex-wrap:wrap}button,a.button{appearance:none;border:1px solid var(--line);background:#202733;color:var(--text);padding:10px 14px;border-radius:10px;font:inherit;text-decoration:none;cursor:pointer}button.primary{background:#e7edf5;color:#11161d;border-color:#e7edf5}button:disabled{opacity:.5;cursor:wait}.message{font-size:13px;color:var(--muted)}.message.error{color:var(--red)}.envFile{margin:0 0 14px;font-size:12px;color:var(--muted);overflow-wrap:anywhere}.notice{padding:14px 16px;margin-bottom:16px;border:1px solid #36506f;border-radius:12px;background:#111a25;color:#b9cbe0;font-size:13px;line-height:1.6}.migration{display:none;margin-bottom:18px;padding:18px;border:1px solid #72582a;border-radius:14px;background:#211b11}.migration.show{display:block}.migration h2{margin:0 0 8px;font-size:19px}.migration p{color:#d6c39f}.conflict{margin-top:14px;padding-top:14px;border-top:1px solid #554528}.choice{display:flex;gap:9px;align-items:flex-start;margin-top:8px;color:#e9edf2;font-size:13px}.choice input{width:auto;margin-top:2px}.choice small{display:block;color:var(--muted);margin-top:3px}.migration button{margin-top:16px;background:var(--amber);border-color:var(--amber);color:#1b1408;font-weight:700}@media(max-width:760px){main{padding-top:32px}header{flex-direction:column}.groups{grid-template-columns:1fr}.fieldHead{flex-direction:column;gap:4px}}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#18202b 0,#0b0d10 42%);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:980px;margin:auto;padding:48px 24px 80px}header{display:flex;justify-content:space-between;gap:24px;align-items:start;margin-bottom:26px}h1{font-size:clamp(30px,5vw,48px);margin:0 0 12px;letter-spacing:-.035em}p{color:var(--muted);line-height:1.6;margin:0}.groups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.panel{padding:22px;border:1px solid var(--line);border-radius:18px;background:linear-gradient(145deg,#181d24,#11151a);box-shadow:0 16px 48px #0005}.groupHead{padding-bottom:16px;border-bottom:1px solid var(--line)}.groupTitle{font-size:20px;font-weight:720;margin-bottom:5px}.groupDescription,.hint{font-size:13px;color:var(--muted);line-height:1.5}.field{padding-top:16px}.fieldHead{display:flex;justify-content:space-between;gap:12px;margin-bottom:7px}.label{font-weight:650}.key{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--blue)}input{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:#0d1116;color:var(--text);font:14px ui-monospace,SFMono-Regular,Menlo,monospace}.configured{margin-top:6px;color:var(--green);font-size:12px}.groupActions{display:flex;justify-content:flex-end;margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}.groupActions button{font-size:13px}.actions{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-top:20px;flex-wrap:wrap}button,a.button{appearance:none;border:1px solid var(--line);background:#202733;color:var(--text);padding:10px 14px;border-radius:10px;font:inherit;text-decoration:none;cursor:pointer}button.primary{background:#e7edf5;color:#11161d;border-color:#e7edf5}button:disabled{opacity:.5;cursor:wait}.message{font-size:13px;color:var(--muted)}.message.error{color:var(--red)}.envFile{margin:0 0 14px;font-size:12px;color:var(--muted);overflow-wrap:anywhere}.notice{padding:14px 16px;margin-bottom:16px;border:1px solid #36506f;border-radius:12px;background:#111a25;color:#b9cbe0;font-size:13px;line-height:1.6}.migration{display:none;margin-bottom:18px;padding:18px;border:1px solid #72582a;border-radius:14px;background:#211b11}.migration.show{display:block}.migration h2{margin:0 0 8px;font-size:19px}.migration p{color:#d6c39f}.conflict{margin-top:14px;padding-top:14px;border-top:1px solid #554528}.choice{display:flex;gap:9px;align-items:flex-start;margin-top:8px;color:#e9edf2;font-size:13px}.choice input{width:auto;margin-top:2px}.choice small{display:block;color:var(--muted);margin-top:3px}.migration button{margin-top:16px;background:var(--amber);border-color:var(--amber);color:#1b1408;font-weight:700}@media(max-width:760px){main{padding-top:32px}header{flex-direction:column}.groups{grid-template-columns:1fr}.fieldHead{flex-direction:column;gap:4px}}
 </style>
 </head>
 <body><main>
 <header><div><h1>全局 API / 模型设置</h1><p>所有相关 Agent 默认继承这里的配置。Agent 页面允许临时覆盖，但重启 Agent 后会自动恢复全局设置。</p></div><a class="button" href="/">返回控制台</a></header>
-<div class="envFile" id="envFile"></div><div class="notice">API Key 只保存到外置盘的 Docker 私有配置文件，不会写入 GitHub，也不会在页面中回显。保存后请重启相关 Agent，使全部进程重新继承全局值。</div>
+<div class="envFile" id="envFile"></div><div class="notice">API Key 只保存到外置盘的 Docker 私有配置文件，不会写入 GitHub，也不会在页面中回显。保存后使用配置组内的重启按钮；它只重启对应 Agent，不会删除任务、配置或业务文件。</div>
 <section class="migration" id="migration"></section>
 <section class="groups" id="groups">正在读取配置…</section>
 <div class="actions"><span class="message" id="message"></span><button class="primary" id="saveButton" onclick="saveSettings()">保存全局配置</button></div>
@@ -712,11 +716,12 @@ AI_SETTINGS_HTML = """<!doctype html>
 const groupsHost=document.querySelector('#groups'),message=document.querySelector('#message'),saveButton=document.querySelector('#saveButton'),envFile=document.querySelector('#envFile'),migrationHost=document.querySelector('#migration');let fields=[],groups=[];
 function esc(value){return String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function fieldHtml(field){const placeholder=field.type==='password'?(field.configured?'已配置；留空保持不变':'请输入 API Key'):'';return `<div class="field"><div class="fieldHead"><span class="label">${esc(field.label)}</span><span class="key">${esc(field.key)}</span></div><input data-key="${esc(field.key)}" type="${field.type==='password'?'password':'text'}" value="${esc(field.value)}" placeholder="${esc(placeholder)}" autocomplete="off">${field.type==='password'&&field.configured?'<div class="configured">已配置</div>':''}</div>`}
-function render(){groupsHost.innerHTML=groups.map(group=>`<section class="panel"><div class="groupHead"><div class="groupTitle">${esc(group.label)}</div><div class="groupDescription">${esc(group.description)}</div></div>${fields.filter(field=>field.group===group.id).map(fieldHtml).join('')}</section>`).join('')}
+function render(){groupsHost.innerHTML=groups.map(group=>`<section class="panel"><div class="groupHead"><div class="groupTitle">${esc(group.label)}</div><div class="groupDescription">${esc(group.description)}</div></div>${fields.filter(field=>field.group===group.id).map(fieldHtml).join('')}<div class="groupActions"><button data-restart-group="${esc(group.id)}" onclick="restartGroup('${esc(group.id)}',this)">${esc(group.restart_label)}</button></div></section>`).join('')}
 async function loadSettings(){const r=await fetch('/api/global-ai-settings');const data=await r.json();if(!r.ok)throw new Error(data.error||'读取失败');fields=data.fields;groups=data.groups;envFile.textContent=`私有配置文件：${data.env_file}`;message.textContent=data.note;render()}
 async function loadMigration(){const r=await fetch('/api/global-ai-migration');const data=await r.json();if(!r.ok)throw new Error(data.error||'迁移状态读取失败');if(data.status!=='pending'){migrationHost.className='migration';return}migrationHost.className='migration show';migrationHost.innerHTML=`<h2>发现旧 Agent 配置冲突</h2><p>${esc(data.message)} 迁移前备份：${esc(data.backup_dir||'')}</p>${data.conflicts.map(item=>`<div class="conflict"><strong>${esc(item.label)}</strong>${item.candidates.map((candidate,index)=>`<label class="choice"><input type="radio" name="migration-${esc(item.field)}" value="${esc(candidate.id)}" ${index===0?'checked':''}><span>${esc(candidate.display_value)}<small>${esc(candidate.source)}</small></span></label>`).join('')}</div>`).join('')}<button onclick="resolveMigration()">应用选择并完成迁移</button>`}
-async function resolveMigration(){const choices={};migrationHost.querySelectorAll('input[type=radio]:checked').forEach(input=>choices[input.name.replace('migration-','')]=input.value);const r=await fetch('/api/global-ai-migration',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({choices})});const data=await r.json();if(!r.ok)throw new Error(data.error||'迁移失败');await Promise.all([loadMigration(),loadSettings()]);message.textContent='旧配置迁移完成。请重启相关 Agent，使其继承迁移后的全局值。'}
-async function saveSettings(){saveButton.disabled=true;message.className='message';message.textContent='正在保存…';try{const updates={};document.querySelectorAll('input[data-key]').forEach(input=>updates[input.dataset.key]=input.value);const r=await fetch('/api/global-ai-settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({settings:updates})});const data=await r.json();if(!r.ok)throw new Error(data.error||'保存失败');fields=data.fields;render();message.textContent='保存成功。重启相关 Agent 后，所有临时覆盖会清空并继承这些全局值。'}catch(error){message.className='message error';message.textContent=error.message}finally{saveButton.disabled=false}}
+async function resolveMigration(){const choices={};migrationHost.querySelectorAll('input[type=radio]:checked').forEach(input=>choices[input.name.replace('migration-','')]=input.value);const r=await fetch('/api/global-ai-migration',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({choices})});const data=await r.json();if(!r.ok)throw new Error(data.error||'迁移失败');await Promise.all([loadMigration(),loadSettings()]);message.textContent='旧配置迁移完成。请点击相应配置组的重启按钮。'}
+async function saveSettings(){saveButton.disabled=true;message.className='message';message.textContent='正在保存…';try{const updates={};document.querySelectorAll('input[data-key]').forEach(input=>updates[input.dataset.key]=input.value);const r=await fetch('/api/global-ai-settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({settings:updates})});const data=await r.json();if(!r.ok)throw new Error(data.error||'保存失败');fields=data.fields;render();message.textContent='保存成功。请点击已修改配置组的重启按钮，使对应 Agent 立即继承全局值。'}catch(error){message.className='message error';message.textContent=error.message}finally{saveButton.disabled=false}}
+async function restartGroup(groupId,button){const group=groups.find(item=>item.id===groupId);if(!group||!confirm(`确定${group.restart_label}吗？正在执行的任务会被中断，但业务文件不会删除。`))return;button.disabled=true;const original=button.textContent;button.textContent='正在重启…';message.className='message';message.textContent=`${group.restart_label}，正在等待恢复健康…`;try{const start=await fetch('/api/ai-agent-restart',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group:groupId})});const started=await start.json();if(!start.ok)throw new Error(started.error||started.message||'重启任务启动失败');for(let attempt=0;attempt<190;attempt++){await new Promise(resolve=>setTimeout(resolve,1000));const r=await fetch('/api/ai-agent-restart',{cache:'no-store'});const data=await r.json();if(!r.ok)throw new Error(data.error||data.message||'重启状态读取失败');if(data.task!=='ai_restart'||data.group!==groupId)continue;if(data.state==='complete'){message.textContent=`${group.restart_label}完成，相关 Agent 已恢复健康并继承全局设置。`;return}if(data.state==='failed'||data.state==='blocked')throw new Error(data.message||'重启失败')}throw new Error('等待 Agent 恢复超时')}catch(error){message.className='message error';message.textContent=error.message}finally{button.disabled=false;button.textContent=original}}
 Promise.all([loadSettings(),loadMigration()]).catch(error=>{groupsHost.textContent=error.message;message.className='message error';message.textContent='配置读取失败'})
 </script></body></html>"""
 
@@ -793,6 +798,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/system-update":
             status, payload = updater_request("/status")
             self.send_json(status, payload)
+        elif path == "/api/ai-agent-restart":
+            status, payload = updater_request("/status")
+            self.send_json(status, payload)
         elif path == "/health":
             self.send_json(200, {"ok": True, "service": "OPC-Console"})
         else:
@@ -813,6 +821,14 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/system-update":
                 status, payload = updater_request("/update", method="POST")
                 self.send_json(status, payload)
+            elif path == "/api/ai-agent-restart":
+                payload = self.read_json()
+                status, result = updater_request(
+                    "/restart-ai-agents",
+                    method="POST",
+                    payload={"group": payload.get("group")},
+                )
+                self.send_json(status, result)
             else:
                 self.send_json(404, {"error": "Not found"})
         except (ValueError, json.JSONDecodeError) as exc:

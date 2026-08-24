@@ -45,6 +45,19 @@ CORE_SERVICES = (
     "auto-publish-pipeline",
 )
 
+AI_RESTART_GROUPS = {
+    "video_analysis": ("script-analysis", "hybrid-script-analysis"),
+    "text": (
+        "script-generation",
+        "script-adaptation",
+        "product-script-rewrite",
+        "hybrid-script-adaptation",
+        "hybrid-script-generation",
+    ),
+    "otu": ("video-generation",),
+    "grok": ("video-generation",),
+}
+
 _state_lock = threading.Lock()
 _update_lock = threading.Lock()
 
@@ -151,6 +164,65 @@ def update_phase(phase: str, message: str, **extra: object) -> None:
     log(message)
 
 
+def ai_restart_services(group: str) -> tuple[str, ...]:
+    try:
+        return AI_RESTART_GROUPS[group]
+    except KeyError as exc:
+        raise ValueError("未知的全局 AI 配置组") from exc
+
+
+def perform_ai_restart(group: str) -> None:
+    services = ai_restart_services(group)
+    try:
+        LOG_FILE.write_text("", encoding="utf-8")
+        write_state(
+            {
+                "state": "running",
+                "task": "ai_restart",
+                "phase": "restart",
+                "message": "正在重启相关 Agent",
+                "group": group,
+                "services": list(services),
+                "started_at": now_iso(),
+                "finished_at": None,
+                "old_commit": None,
+                "new_commit": None,
+                "dirty_paths": [],
+            }
+        )
+        log("正在重启相关 Agent：" + "、".join(services))
+        run(compose_command("restart", *services))
+        update_phase("verify", "正在等待相关 Agent 恢复健康")
+        run(compose_command("up", "-d", "--wait", "--wait-timeout", "180", *services))
+        write_state(
+            {
+                "state": "complete",
+                "task": "ai_restart",
+                "phase": "complete",
+                "message": "相关 Agent 已重启并恢复健康",
+                "group": group,
+                "services": list(services),
+                "finished_at": now_iso(),
+            }
+        )
+        log("相关 Agent 已恢复健康")
+    except Exception as exc:
+        log(f"Agent 重启失败：{exc}")
+        write_state(
+            {
+                "state": "failed",
+                "task": "ai_restart",
+                "phase": "failed",
+                "message": str(exc),
+                "group": group,
+                "services": list(services),
+                "finished_at": now_iso(),
+            }
+        )
+    finally:
+        _update_lock.release()
+
+
 def schedule_reload() -> None:
     def reload_process() -> None:
         os.execv(sys.executable, [sys.executable, "-u", str(Path(__file__).resolve())])
@@ -166,12 +238,15 @@ def perform_update() -> None:
         write_state(
             {
                 "state": "running",
+                "task": "system_update",
                 "phase": "preflight",
                 "message": "正在检查本地代码",
                 "started_at": now_iso(),
                 "finished_at": None,
                 "old_commit": None,
                 "new_commit": None,
+                "group": None,
+                "services": [],
                 "dirty_paths": [],
             }
         )
@@ -272,6 +347,12 @@ class Handler(BaseHTTPRequestHandler):
         expected = ensure_private_files()
         return bool(supplied) and hmac.compare_digest(supplied, expected)
 
+    def read_json(self) -> dict:
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        if length > 65536:
+            raise ValueError("请求内容过大")
+        return json.loads(self.rfile.read(length) or b"{}")
+
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/health":
@@ -284,18 +365,45 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(404, {"error": "Not found"})
 
     def do_POST(self) -> None:
-        if urlparse(self.path).path != "/update":
+        path = urlparse(self.path).path
+        if path not in {"/update", "/restart-ai-agents"}:
             self.send_json(404, {"error": "Not found"})
             return
         if not self.authorized():
             self.send_json(403, {"error": "Forbidden"})
             return
+        group = ""
+        if path == "/restart-ai-agents":
+            try:
+                payload = self.read_json()
+                if not isinstance(payload, dict):
+                    raise ValueError("AI 重启请求格式错误")
+                group = str(payload.get("group") or "").strip()
+                services = ai_restart_services(group)
+            except (ValueError, json.JSONDecodeError) as exc:
+                self.send_json(400, {"error": str(exc)})
+                return
         if not _update_lock.acquire(blocking=False):
             self.send_json(409, read_state())
             return
-        thread = threading.Thread(target=perform_update, daemon=True)
+        if path == "/restart-ai-agents":
+            write_state(
+                {
+                    "state": "running",
+                    "task": "ai_restart",
+                    "phase": "queued",
+                    "message": "Agent 重启任务已开始",
+                    "group": group,
+                    "services": list(services),
+                }
+            )
+            thread = threading.Thread(target=perform_ai_restart, args=(group,), daemon=True)
+            message = "Agent 重启任务已开始"
+        else:
+            thread = threading.Thread(target=perform_update, daemon=True)
+            message = "更新任务已开始"
         thread.start()
-        self.send_json(202, {"state": "running", "message": "更新任务已开始"})
+        self.send_json(202, {"state": "running", "message": message, "group": group or None})
 
     def log_message(self, *_args: object) -> None:
         return

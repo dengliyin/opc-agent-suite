@@ -112,6 +112,12 @@ class ConsoleBoundaryTests(unittest.TestCase):
         self.assertEqual(group_ids, {"video_analysis", "text", "otu", "grok"})
         self.assertIn("/api/global-ai-migration", self.app.AI_SETTINGS_HTML)
         self.assertIn("发现旧 Agent 配置冲突", self.app.AI_SETTINGS_HTML)
+        self.assertIn("/api/ai-agent-restart", self.app.AI_SETTINGS_HTML)
+        restart_labels = {group["id"]: group["restart_label"] for group in self.app.GLOBAL_AI_GROUPS}
+        self.assertEqual(restart_labels["video_analysis"], "重启 9992、10002")
+        self.assertEqual(restart_labels["text"], "重启 9993、9994、9997、9999、10003")
+        self.assertEqual(restart_labels["otu"], "重启 9995")
+        self.assertEqual(restart_labels["grok"], "重启 9995")
 
     def test_saving_global_ai_settings_masks_secrets_and_preserves_other_values(self):
         with tempfile.TemporaryDirectory() as temp_dir:
