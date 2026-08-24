@@ -37,13 +37,11 @@ class ConsoleSystemUpdateTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = load_console_module()
 
-    def test_console_contains_update_button_and_progress_api(self):
-        self.assertIn('onclick="openUpdate()">本地更新</button>', self.app.INDEX_HTML)
-        self.assertIn("应用本地更新", self.app.INDEX_HTML)
-        self.assertNotIn("从 GitHub 获取", self.app.INDEX_HTML)
-        self.assertIn("/api/system-update", self.app.INDEX_HTML)
-        self.assertIn("8888 正在重启，正在等待恢复", self.app.INDEX_HTML)
-        self.assertIn("lines.join('\\n')", self.app.INDEX_HTML)
+    def test_console_does_not_expose_local_update_controls(self):
+        self.assertNotIn("本地更新", self.app.INDEX_HTML)
+        self.assertNotIn("应用本地更新", self.app.INDEX_HTML)
+        self.assertNotIn("/api/system-update", self.app.INDEX_HTML)
+        self.assertNotIn("openUpdate", self.app.INDEX_HTML)
 
     def test_proxy_uses_private_token(self):
         with tempfile.TemporaryDirectory() as temp_dir:

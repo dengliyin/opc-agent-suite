@@ -47,13 +47,13 @@ Windows PowerShell：
 
 启动后打开 [http://127.0.0.1:8888/](http://127.0.0.1:8888/)。
 
-首次启动完成后，日常更新分为两步：先用 GitHub Desktop（或 Git）手动拉取 `main` 最新代码，再打开 8888 点击“本地更新”。独立更新服务不会访问 GitHub，也不需要仓库凭据；它只应用当前本地代码，执行旧配置迁移、重建 Docker，并等待全部服务恢复健康。若代码目录不在 `main`，或存在尚未提交的本地改动，更新会停止并给出提示，不会覆盖、删除或暂存这些改动。
+首次启动完成后，日常更新分为两步：先用 GitHub Desktop（或 Git）手动拉取 `main` 最新代码，再运行对应系统的 `docker_up` 脚本。脚本会迁移旧配置、使用最新代码重建 Docker，并等待全部服务恢复健康。只重启 Docker Desktop 或执行 `docker compose restart` 不会重新构建镜像。
 
-启动脚本和独立更新服务都会扫描旧 Agent 的 API 地址、模型和 API Key，把无冲突且全局尚未配置的值迁移到 `OPC_DOCKER_DATA_ROOT/config/.env`。迁移前会在 `OPC_DOCKER_DATA_ROOT/config/ai-config-backups/` 自动备份；迁移完成后写入一次性标记，后续更新不会重复执行。若旧 Agent 配置彼此冲突，请打开 8888 的“全局 API / 模型”页面选择要保留的值。
+启动脚本会扫描旧 Agent 的 API 地址、模型和 API Key，把无冲突且全局尚未配置的值迁移到 `OPC_DOCKER_DATA_ROOT/config/.env`。迁移前会在 `OPC_DOCKER_DATA_ROOT/config/ai-config-backups/` 自动备份；迁移完成后写入一次性标记，后续更新不会重复执行。若旧 Agent 配置彼此冲突，请打开 8888 的“全局 API / 模型”页面选择要保留的值。
 
 修改全局 API 或模型后，在同一页面点击该配置组的“重启”按钮。系统只重启使用该组配置的 Agent，并等待它们恢复健康；不会删除任务、配置或业务文件。重启会清除 Agent 进程内的一次性覆盖，使其重新继承全局设置。
 
-独立更新服务不开放宿主机端口，只接受 8888 使用私有令牌调用。它需要挂载 Docker Socket 才能重建其他容器，因此不要把更新服务端口暴露到局域网或公网。
+独立 Docker 控制服务不开放宿主机端口，只接受 8888 使用私有令牌调用，用于重启应用全局 AI 配置的对应 Agent。它需要挂载 Docker Socket，因此不要把服务端口暴露到局域网或公网。
 
 停止和重建容器不会删除外置盘中的持久数据。不要执行 `docker compose down -v`，也不要手动删除 `OPC_DOCKER_DATA_ROOT`。
 
