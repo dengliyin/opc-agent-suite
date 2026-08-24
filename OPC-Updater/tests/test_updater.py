@@ -41,6 +41,10 @@ class UpdaterTests(unittest.TestCase):
         self.assertTrue(self.app._update_lock.acquire(blocking=False))
         self.app.perform_update()
 
+    def run_ai_restart(self, group):
+        self.assertTrue(self.app._update_lock.acquire(blocking=False))
+        self.app.perform_ai_restart(group)
+
     def test_dirty_worktree_blocks_before_migration_or_build(self):
         commands = []
 
@@ -98,6 +102,49 @@ class UpdaterTests(unittest.TestCase):
         self.assertEqual(self.app.ensure_private_files(), token)
         self.assertEqual(self.app.read_state()["message"], "testing")
         self.assertEqual(self.app.TOKEN_FILE.stat().st_mode & 0o777, 0o600)
+
+    def test_ai_group_restart_only_restarts_and_waits_for_mapped_services(self):
+        commands = []
+
+        def fake_run(command, check=True):
+            commands.append(command)
+            return self.result(command)
+
+        with mock.patch.object(self.app, "run", side_effect=fake_run):
+            self.run_ai_restart("video_analysis")
+
+        services = self.app.AI_RESTART_GROUPS["video_analysis"]
+        self.assertTrue(
+            any("restart" in command and all(item in command for item in services) for command in commands)
+        )
+        self.assertTrue(
+            any("--wait" in command and all(item in command for item in services) for command in commands)
+        )
+        status = self.app.read_state()
+        self.assertEqual(status["state"], "complete")
+        self.assertEqual(status["group"], "video_analysis")
+        self.assertEqual(status["services"], list(services))
+
+    def test_unknown_ai_restart_group_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "未知"):
+            self.app.ai_restart_services("unknown")
+
+    def test_ai_restart_groups_map_to_only_the_documented_agents(self):
+        self.assertEqual(
+            self.app.AI_RESTART_GROUPS,
+            {
+                "video_analysis": ("script-analysis", "hybrid-script-analysis"),
+                "text": (
+                    "script-generation",
+                    "script-adaptation",
+                    "product-script-rewrite",
+                    "hybrid-script-adaptation",
+                    "hybrid-script-generation",
+                ),
+                "otu": ("video-generation",),
+                "grok": ("video-generation",),
+            },
+        )
 
 
 if __name__ == "__main__":

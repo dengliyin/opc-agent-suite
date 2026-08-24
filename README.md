@@ -51,6 +51,8 @@ Windows PowerShell：
 
 启动脚本和独立更新服务都会扫描旧 Agent 的 API 地址、模型和 API Key，把无冲突且全局尚未配置的值迁移到 `OPC_DOCKER_DATA_ROOT/config/.env`。迁移前会在 `OPC_DOCKER_DATA_ROOT/config/ai-config-backups/` 自动备份；迁移完成后写入一次性标记，后续更新不会重复执行。若旧 Agent 配置彼此冲突，请打开 8888 的“全局 API / 模型”页面选择要保留的值。
 
+修改全局 API 或模型后，在同一页面点击该配置组的“重启”按钮。系统只重启使用该组配置的 Agent，并等待它们恢复健康；不会删除任务、配置或业务文件。重启会清除 Agent 进程内的一次性覆盖，使其重新继承全局设置。
+
 独立更新服务不开放宿主机端口，只接受 8888 使用私有令牌调用。它需要挂载 Docker Socket 才能重建其他容器，因此不要把更新服务端口暴露到局域网或公网。
 
 停止和重建容器不会删除外置盘中的持久数据。不要执行 `docker compose down -v`，也不要手动删除 `OPC_DOCKER_DATA_ROOT`。
