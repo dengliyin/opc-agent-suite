@@ -94,3 +94,18 @@ def test_runtime_id_is_stable_and_separates_parallel_tasks() -> None:
     assert first == retry
     assert first != other_model
     assert first != other_batch
+
+
+def test_cached_catalog_does_not_scan_until_refresh(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("OPC_SCAN_INDEX_ROOT", str(tmp_path))
+    monkeypatch.setattr(web, "script_library_root", lambda _config: tmp_path / "scripts")
+    monkeypatch.setattr(web, "load_local_agent_config", lambda: {})
+    calls = []
+    monkeypatch.setattr(web, "list_product_scripts", lambda _target: calls.append("scan") or {"products": []})
+
+    cached = web.cached_product_scripts("omni")
+    refreshed = web.cached_product_scripts("omni", refresh=True)
+
+    assert cached["scan_index"]["ready"] is False
+    assert refreshed["scan_index"]["ready"] is True
+    assert calls == ["scan"]

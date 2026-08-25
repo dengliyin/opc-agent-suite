@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 import threading
@@ -12,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from opc_shared.global_ai import runtime_override_active, set_runtime_overrides
+from opc_shared.vault_snapshot import cached_or_empty, refresh_snapshot
 
 from product_script_rewrite import core
 
@@ -61,8 +63,13 @@ def safe_path(value: str, config: dict[str, Any] | None = None) -> Path:
     raise ValueError("路径不在产品脚本改写智能体允许的目录内")
 
 
-def state_payload() -> dict[str, Any]:
+def state_payload(refresh: bool = False) -> dict[str, Any]:
     config = core.load_config()
+    products = (
+        refresh_snapshot("product-script-rewrite", "products", lambda: {"items": core.list_products(config)})
+        if refresh
+        else cached_or_empty("product-script-rewrite", "products", lambda: {"items": []})
+    )
     return {
         "model": {
             "deepseek_base_url": config.get("deepseek_base_url", ""),
@@ -72,10 +79,21 @@ def state_payload() -> dict[str, Any]:
             "hot_scripts_root": core.hot_scripts_root(config).as_posix(),
             "product_info_root": core.product_info_root(config).as_posix(),
         },
-        "products": core.list_products(config),
+        "products": products.get("items") or [],
         "has_api_key": bool(core.get_api_key(config)),
         "ai_settings_source": "本 Agent 临时覆盖" if runtime_override_active("text") else "8888 全局设置",
     }
+
+
+def cached_scripts(product: str, refresh: bool = False) -> list[dict[str, Any]]:
+    config = core.load_config()
+    key = hashlib.sha256(product.encode("utf-8")).hexdigest()[:16]
+    payload = (
+        refresh_snapshot("product-script-rewrite-scripts", key, lambda: {"items": core.list_scripts(config, product)})
+        if refresh
+        else cached_or_empty("product-script-rewrite-scripts", key, lambda: {"items": []})
+    )
+    return payload.get("items") or []
 
 
 def update_settings(payload: dict[str, Any]) -> dict[str, Any]:
@@ -326,7 +344,7 @@ HTML = r"""<!doctype html>
       <div class="panelHead"><h2>改写任务与输出</h2><button id="openOutputBtn">打开目录</button></div>
       <div class="panelBody taskBody">
         <label>输出文件名</label><div id="filename" class="filename">选择来源脚本后生成</div>
-        <div class="actions"><button id="runBtn" class="primary" disabled>开始改写</button><button id="refreshBtn">刷新输出</button></div>
+        <div class="actions"><button id="runBtn" class="primary" disabled>开始改写</button><button id="refreshBtn">扫描资料库</button></div>
         <div class="jobBox"><div class="jobTop"><span id="jobText">暂无任务</span><span id="jobTime"></span></div><div id="jobError" class="path error"></div></div>
         <div class="outputHead"><strong>当前脚本改写结果</strong><span id="outputCount" class="path">未选择</span></div>
         <div id="outputList" class="outputList"></div>
@@ -369,8 +387,8 @@ HTML = r"""<!doctype html>
     function sourceName() { return $('sourceProduct').value; }
     function infoPath() { return `${state.paths.product_info_root}/${targetName()}-产品信息.md`; }
 
-    async function loadState() {
-      state = await api('/api/state');
+    async function loadState(scan=false) {
+      state = await api(scan ? '/api/state?refresh=1' : '/api/state');
       $('baseUrl').value = state.model.deepseek_base_url || '';
       $('model').value = state.model.deepseek_model || '';
       $('apiKey').placeholder = state.has_api_key ? '已配置；输入新密钥可替换' : '请输入 API Key';
@@ -382,7 +400,7 @@ HTML = r"""<!doctype html>
       $('infoRoot').textContent = state.paths.product_info_root;
       keepProductsDifferent();
       syncTarget();
-      await loadScripts();
+      await loadScripts(scan);
       await refreshJob();
       await refreshOutputs();
     }
@@ -397,12 +415,12 @@ HTML = r"""<!doctype html>
       $('targetInfoPath').textContent = targetName() ? infoPath() : '';
       updateFilename();
     }
-    async function loadScripts() {
+    async function loadScripts(scan=false) {
       selectedPath = '';
       outputStatus = 'unselected';
       resetPreview();
       const product = sourceName();
-      const data = await api(`/api/scripts?product=${encodeURIComponent(product)}`);
+      const data = await api(`/api/scripts?product=${encodeURIComponent(product)}${scan ? '&refresh=1' : ''}`);
       scripts = data.scripts || [];
       $('search').value = '';
       renderScripts();
@@ -582,7 +600,7 @@ HTML = r"""<!doctype html>
     $('runBtn').addEventListener('click', requestRewrite);
     $('cancelRewriteBtn').addEventListener('click', () => $('overwriteDialog').close());
     $('confirmRewriteBtn').addEventListener('click', () => { $('overwriteDialog').close(); runRewrite(); });
-    $('refreshBtn').addEventListener('click', () => refreshOutputs().catch(error => $('jobError').textContent = error.message));
+    $('refreshBtn').addEventListener('click', () => loadState(true).catch(error => $('jobError').textContent = error.message));
     loadState().catch(error => { $('jobError').textContent = error.message; $('previewText').textContent = error.message; });
   </script>
 </body>
@@ -598,13 +616,17 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if parsed.path == "/":
                 text_response(self, 200, HTML, "text/html; charset=utf-8")
+            elif parsed.path == "/health":
+                json_response(self, 200, {"status": "ok"})
             elif parsed.path == "/api/state":
-                json_response(self, 200, state_payload())
+                query = urllib.parse.parse_qs(parsed.query)
+                json_response(self, 200, state_payload(query.get("refresh", [""])[0] == "1"))
             elif parsed.path == "/api/job":
                 json_response(self, 200, JOB.snapshot())
             elif parsed.path == "/api/scripts":
-                product = urllib.parse.parse_qs(parsed.query).get("product", [""])[0]
-                json_response(self, 200, {"scripts": core.list_scripts(core.load_config(), product)})
+                query = urllib.parse.parse_qs(parsed.query)
+                product = query.get("product", [""])[0]
+                json_response(self, 200, {"scripts": cached_scripts(product, query.get("refresh", [""])[0] == "1")})
             elif parsed.path == "/api/outputs":
                 query = urllib.parse.parse_qs(parsed.query)
                 product = query.get("product", [""])[0]

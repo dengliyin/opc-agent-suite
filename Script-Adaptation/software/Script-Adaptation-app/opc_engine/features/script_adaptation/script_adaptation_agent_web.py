@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from opc_shared.global_ai import load_profile, runtime_override_active, set_runtime_overrides
+from opc_shared.vault_snapshot import cached_or_empty, refresh_snapshot
 
 from opc_engine.core.project_assets import (
     ensure_project_dirs,
@@ -1293,6 +1294,32 @@ def list_adaptation_outputs(target_model: str | None = None) -> dict[str, Any]:
         "root": display_path(active_root),
         "outputs": outputs[:120],
     }
+
+
+def cached_product_scripts(target_model: str | None = None, *, refresh: bool = False) -> dict[str, Any]:
+    target = normalize_target_model(target_model)
+    config = load_local_agent_config()
+    root = script_library_root(config)
+    empty = lambda: {
+        "root": root.as_posix() if root else "",
+        "target_model": target,
+        "total_count": 0,
+        "adapted_count": 0,
+        "invalid_count": 0,
+        "unused_count": 0,
+        "products": [],
+    }
+    if refresh:
+        return refresh_snapshot("script-adaptation", f"scripts-{target}", lambda: list_product_scripts(target))
+    return cached_or_empty("script-adaptation", f"scripts-{target}", empty)
+
+
+def cached_adaptation_outputs(target_model: str | None = None, *, refresh: bool = False) -> dict[str, Any]:
+    target = normalize_target_model(target_model)
+    empty = lambda: {"root": "", "outputs": []}
+    if refresh:
+        return refresh_snapshot("script-adaptation", f"outputs-{target}", lambda: list_adaptation_outputs(target))
+    return cached_or_empty("script-adaptation", f"outputs-{target}", empty)
 
 
 def open_local_path(value: str) -> dict[str, str]:
@@ -2987,10 +3014,10 @@ HTML = r"""<!doctype html>
             <span id="libraryRoot" class="libraryRoot">加载中</span>
             <button class="blue" id="selectAllScriptsBtn">选当前产品</button>
             <button class="blue" id="clearScriptsBtn">清空</button>
-            <button class="blue" id="refreshScriptsBtn">刷新</button>
+            <button class="blue" id="refreshScriptsBtn">扫描资料库</button>
           </div>
           <div id="products" class="products">
-            <div class="muted">正在扫描脚本目录</div>
+            <div class="muted">正在读取上次扫描索引</div>
           </div>
         </div>
         <div class="selectedScriptInfo">
@@ -3024,7 +3051,7 @@ HTML = r"""<!doctype html>
             <div class="outputHeaderTop">
               <div class="outputTitle">输出文件</div>
               <div class="outputActions">
-                <button onclick="refreshOutputs()">刷新</button>
+                <button onclick="refreshOutputs(true)">扫描输出目录</button>
                 <button onclick="openOutputRoot()">打开输出区</button>
               </div>
             </div>
@@ -3306,9 +3333,13 @@ HTML = r"""<!doctype html>
       `;
     }
 
-    async function refreshScripts() {
-      const data = await api(`/api/scripts?target_model=${encodeURIComponent(currentTargetModel())}`);
+    async function refreshScripts(scan=false) {
+      const suffix = scan ? '&refresh=1' : '';
+      const data = await api(`/api/scripts?target_model=${encodeURIComponent(currentTargetModel())}${suffix}`);
       renderProducts(data);
+      if (!data.scan_index?.ready) {
+        renderChecks([{level:'warn', message:'脚本索引尚未建立', detail:'页面启动不会自动扫描资料库，请点击“扫描资料库”。'}]);
+      }
     }
 
     async function importServerScript(encodedPath) {
@@ -3398,7 +3429,7 @@ HTML = r"""<!doctype html>
 
     function setupProductScriptList() {
       $('refreshScriptsBtn').addEventListener('click', () => {
-        refreshScripts().catch(err => {
+        refreshScripts(true).catch(err => {
           renderChecks([{level:'error', message:'脚本库刷新失败', detail:err.message}]);
         });
       });
@@ -3790,13 +3821,14 @@ HTML = r"""<!doctype html>
       if (!data.running && pollTimer) {
         clearInterval(pollTimer);
         pollTimer = null;
-        await refreshScripts();
-        await refreshOutputs();
+        await refreshScripts(true);
+        await refreshOutputs(true);
       }
     }
 
-    async function refreshOutputs() {
-      const data = await api(`/api/outputs?target_model=${encodeURIComponent(currentTargetModel())}`);
+    async function refreshOutputs(scan=false) {
+      const suffix = scan ? '&refresh=1' : '';
+      const data = await api(`/api/outputs?target_model=${encodeURIComponent(currentTargetModel())}${suffix}`);
       outputRoot = data.root || '';
       $('outputRoot').textContent = outputRoot ? `输出区：${outputRoot}` : '输出区未确定';
       renderOutputs(data.outputs || []);
@@ -3876,14 +3908,18 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if parsed.path == "/":
                 text_response(self, 200, HTML, "text/html; charset=utf-8")
+            elif parsed.path == "/health":
+                json_response(self, 200, {"status": "ok"})
             elif parsed.path == "/api/state":
                 json_response(self, 200, settings_for_client())
             elif parsed.path == "/api/job":
                 json_response(self, 200, JOB.snapshot())
             elif parsed.path == "/api/outputs":
-                json_response(self, 200, list_adaptation_outputs(target_model_from_query(parsed)))
+                query = urllib.parse.parse_qs(parsed.query)
+                json_response(self, 200, cached_adaptation_outputs(target_model_from_query(parsed), refresh=query.get("refresh", [""])[0] == "1"))
             elif parsed.path == "/api/scripts":
-                json_response(self, 200, list_product_scripts(target_model_from_query(parsed)))
+                query = urllib.parse.parse_qs(parsed.query)
+                json_response(self, 200, cached_product_scripts(target_model_from_query(parsed), refresh=query.get("refresh", [""])[0] == "1"))
             elif parsed.path == "/api/file":
                 query = urllib.parse.parse_qs(parsed.query)
                 raw_path = query.get("path", [""])[0]

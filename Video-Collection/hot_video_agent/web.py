@@ -177,10 +177,7 @@ def local_project_options() -> list[dict[str, str]]:
 
 
 def product_info_options() -> list[dict[str, str]]:
-    try:
-        return scan_product_info_options() or product_info_options_from_index()
-    except OSError:
-        return product_info_options_from_index()
+    return product_info_options_from_index()
 
 
 def scan_product_info_options() -> list[dict[str, str]]:
@@ -1380,6 +1377,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if parsed.path in {"/", "/collect"}:
                 text_response(self, 200, HTML, "text/html; charset=utf-8")
+            elif parsed.path == "/health":
+                json_response(self, 200, {"status": "ok"})
             elif parsed.path == "/api/state":
                 json_response(self, 200, config_for_client())
             elif parsed.path == "/api/inspect":

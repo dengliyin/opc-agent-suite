@@ -7,7 +7,9 @@ import subprocess
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
+
+from opc_shared.vault_snapshot import cached_or_empty, refresh_snapshot
 
 from .domain import (
     COUNTRY_DEFAULT_LANGUAGES,
@@ -153,7 +155,7 @@ def public_task(task: dict) -> dict:
 
 INDEX_HTML = r"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>10005 · 自动发布流水线</title>
 <style>:root{color-scheme:dark;--bg:#0b0d10;--panel:#151a21;--line:#2b3440;--text:#f4f7fa;--muted:#9ca7b4;--blue:#72a8ff;--green:#63d29b;--red:#ff8e8e}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#192331,#0b0d10 45%);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:1080px;margin:auto;padding:42px 22px 80px}header{display:flex;justify-content:space-between;gap:20px;align-items:start;margin-bottom:24px}h1{font-size:38px;margin:0 0 8px}p,.muted{color:var(--muted)}a,button{border:1px solid var(--line);border-radius:10px;background:#202834;color:var(--text);padding:10px 14px;text-decoration:none;font:inherit;cursor:pointer}button.primary{background:#edf3fa;color:#111820;border-color:#edf3fa}button:disabled{opacity:.5}.grid{display:grid;grid-template-columns:1fr 1fr;gap:15px}.panel{border:1px solid var(--line);border-radius:17px;background:linear-gradient(145deg,#181e26,#11161c);padding:20px}.wide{grid-column:1/-1}.title{font-size:18px;font-weight:720;margin-bottom:14px}.field{margin:12px 0}label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}select,input{width:100%;border:1px solid var(--line);border-radius:9px;background:#0d1218;color:var(--text);padding:10px}.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}.accounts{display:grid;gap:8px;max-height:260px;overflow:auto}.account{display:flex;align-items:center;gap:9px;padding:10px;border:1px solid var(--line);border-radius:10px}.account input{width:auto}.order{color:var(--blue);font-weight:700}.summary{padding:14px;border:1px solid var(--line);border-radius:11px;background:#0d1218;line-height:1.7}.message{margin-top:12px;color:var(--muted)}.message.error{color:var(--red)}.tasks{display:grid;gap:10px}.task{padding:14px;border:1px solid var(--line);border-radius:11px;background:#0d1218}.taskHead{display:flex;justify-content:space-between;gap:12px}.status{color:var(--green)}pre{white-space:pre-wrap;color:var(--muted);font-size:12px;max-height:180px;overflow:auto}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}@media(max-width:760px){.grid,.row{grid-template-columns:1fr}.wide{grid-column:auto}header{flex-direction:column}}</style></head>
-<body><main><header><div><h1>10005 · 自动发布流水线</h1><p>独立完成脚本裂变、适配、片段产出、合成与串行发布，不要求9993–9998处于启动状态。</p></div><a href="http://127.0.0.1:8888/">返回集合控制台</a></header>
+<body><main><header><div><h1>10005 · 自动发布流水线</h1><p>独立完成脚本裂变、适配、片段产出、合成与串行发布，不要求9993–9998处于启动状态。</p></div><div class="actions"><button id="scanCatalog">扫描资料库</button><a href="http://127.0.0.1:8888/">返回集合控制台</a></div></header>
 <section class="grid"><div class="panel wide"><div class="title">1 · 选择已复刻脚本</div><div class="field"><label>复刻脚本</label><select id="script"></select></div><div class="row"><div class="field"><label>识别到的产品标题库</label><select id="product"></select></div><div class="field"><label>产品参考图</label><select id="image"></select></div></div></div>
 <div class="panel wide"><div class="title">2 · 优先使用已有成品</div><p class="muted">同一复刻脚本由10005留下的备用成片会自动勾选；手动Agent生成的同产品、同国家成片需要你确认后勾选。</p><div id="existing" class="accounts"></div></div>
 <div class="panel"><div class="title">3 · 市场与模型</div><div class="row"><div class="field"><label>国家/地区（由复刻脚本自动识别）</label><input id="country" readonly></div><div class="field"><label>目标语言（自动匹配，也可改选）</label><select id="language"><option>英语</option><option>法语</option><option>德语</option><option>西班牙语</option><option>意大利语</option><option>葡萄牙语</option><option>越南语</option><option>菲律宾语</option><option>泰语</option><option>马来语</option><option>孟加拉语</option><option>尼泊尔语</option><option>印尼语</option></select></div></div><div class="row"><div class="field"><label>视频模型</label><select id="model"><option value="omni">Omni</option><option value="grok">Grok</option></select></div><div class="field"><label>片段生成并发数</label><input id="concurrency" type="number" min="1" max="20" value="3"></div></div><div class="field"><label>字幕模式</label><select id="caption"><option value="none">无字幕</option><option value="karaoke">卡拉OK字幕</option></select></div></div>
@@ -169,11 +171,11 @@ function renderExisting(){const product=$('product').value,country=$('country').
 function renderAccounts(){const country=$('country').value;$('accounts').innerHTML=catalog.profiles.filter(p=>p.country===country).map(p=>`<label class="account"><input type="checkbox" value="${esc(p.id)}" ${order.includes(p.id)?'checked':''}><span class="order">${order.includes(p.id)?order.indexOf(p.id)+1:''}</span><span>${esc(p.name)}</span></label>`).join('')||'<span class="muted">该国家没有可用发布账号。</span>';$('accounts').querySelectorAll('input').forEach(input=>input.onchange=()=>{if(input.checked&&!order.includes(input.value))order.push(input.value);if(!input.checked)order=order.filter(x=>x!==input.value);renderAccounts();renderSummary()})}
 function renderSummary(){const n=order.length,need=n*3,budget=Math.ceil(need*1.5),used=Math.min(existing.length,budget),generate=Math.max(0,budget-used);$('summary').innerHTML=`账号：${n}个<br>发布配额：${need}条 · 150%候选预算：${budget}条<br>优先复用已有成片：${used}条 · 计划新产出：${generate}条<br>账号顺序：${order.map(id=>catalog.profiles.find(p=>p.id===id)?.name||id).map(esc).join(' → ')||'尚未选择'}<br>视频间隔：10秒 · 串行执行`}
 function timing(){const auto=$('auto').value==='yes';$('timing').hidden=!auto;$('scheduleField').hidden=!auto||$('startMode').value!=='scheduled'}
-async function loadCatalog(){const r=await fetch('/api/catalog');const d=await r.json();if(!r.ok)throw Error(d.error||'目录读取失败');catalog=d;fill($('script'),d.scripts,x=>x.path,x=>`${x.name} · ${x.product_name}`);fill($('product'),d.libraries,x=>x.code||x.key,x=>`${x.code||x.key} · ${x.name}`);fill($('image'),d.images,x=>x.path,x=>x.name);$('script').onchange=scriptChanged;$('product').onchange=()=>{existing=[];renderExisting();renderSummary()};scriptChanged()}
+async function loadCatalog(scan=false){const r=await fetch(scan?'/api/catalog?refresh=1':'/api/catalog');const d=await r.json();if(!r.ok)throw Error(d.error||'目录读取失败');catalog=d;fill($('script'),d.scripts,x=>x.path,x=>`${x.name} · ${x.product_name}`);fill($('product'),d.libraries,x=>x.code||x.key,x=>`${x.code||x.key} · ${x.name}`);fill($('image'),d.images,x=>x.path,x=>x.name);$('script').onchange=scriptChanged;$('product').onchange=()=>{existing=[];renderExisting();renderSummary()};scriptChanged()}
 async function createTask(){const button=$('create');button.disabled=true;$('message').className='message';$('message').textContent='正在校验并创建任务…';try{const payload={clone_path:$('script').value,product_code:$('product').value,target_language:$('language').value,video_model:$('model').value,reference_image:$('image').value,concurrency:Number($('concurrency').value),caption_mode:$('caption').value,profile_ids:order,existing_video_paths:existing,auto_publish:$('auto').value==='yes',start_mode:$('startMode').value,scheduled_at:$('scheduled').value};const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const d=await r.json();if(!r.ok)throw Error(d.error||'创建失败');$('message').textContent=`任务 ${d.id} 已创建并开始执行。`;await loadTasks()}catch(e){$('message').className='message error';$('message').textContent=e.message}finally{button.disabled=false}}
 async function taskAction(id,action,payload={}){const r=await fetch(`/api/tasks/${id}/${action}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const d=await r.json();if(!r.ok)alert(d.error||'操作失败');loadTasks()}
 async function loadTasks(){const r=await fetch('/api/tasks');const d=await r.json();$('tasks').innerHTML=(d.tasks||[]).map(t=>`<article class="task"><div class="taskHead"><strong>${esc(t.id)} · ${esc(t.summary.product)}</strong><span class="status">${esc(t.status)} / ${esc(t.stage)}</span></div><div class="muted">${esc(t.summary.country)} · ${esc(t.summary.model)} · 发布${t.summary.publish_count}条 · 候选预算${t.summary.candidate_budget}条 · 新产出${t.summary.generation_count}条</div>${t.error?`<div class="message error">${esc(t.error)}</div>`:''}<div class="actions">${t.status==='failed'?`<button onclick="taskAction('${t.id}','retry')">从失败阶段继续</button>`:''}${t.status==='publish_ready'?`<button onclick="taskAction('${t.id}','publish',{start_mode:'immediate'})">立即发布</button>`:''}${t.status==='needs_review'?`<button onclick="taskAction('${t.id}','review',{published:true})">确认已发布并继续</button><button onclick="taskAction('${t.id}','review',{published:false})">确认未发布并重试</button>`:''}</div><pre>${esc((t.logs||[]).slice(-8).map(x=>x.message).join('\n'))}</pre></article>`).join('')||'<span class="muted">暂无任务。</span>'}
-$('auto').onchange=timing;$('startMode').onchange=timing;$('create').onclick=createTask;timing();Promise.all([loadCatalog(),loadTasks()]).catch(e=>{$('message').className='message error';$('message').textContent=e.message});setInterval(loadTasks,4000);</script></body></html>"""
+$('auto').onchange=timing;$('startMode').onchange=timing;$('create').onclick=createTask;$('scanCatalog').onclick=()=>loadCatalog(true).catch(e=>{$('message').className='message error';$('message').textContent=e.message});timing();Promise.all([loadCatalog(),loadTasks()]).catch(e=>{$('message').className='message error';$('message').textContent=e.message});setInterval(loadTasks,4000);</script></body></html>"""
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -190,7 +192,8 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
 
     def do_GET(self) -> None:
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         try:
             if path == "/":
                 body = INDEX_HTML.encode("utf-8")
@@ -199,8 +202,20 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
+            elif path == "/health":
+                self.send_json(200, {"status": "ok"})
             elif path == "/api/catalog":
-                self.send_json(200, catalog_payload())
+                refresh = parse_qs(parsed.query).get("refresh", [""])[0] == "1"
+                payload = (
+                    refresh_snapshot("auto-publish-pipeline", "catalog", catalog_payload)
+                    if refresh
+                    else cached_or_empty(
+                        "auto-publish-pipeline",
+                        "catalog",
+                        lambda: {"scripts": [], "images": [], "profiles": [], "videos": [], "reusable_videos": [], "libraries": [], "countries": [], "warnings": [], "clone_root": str(CLONE_ROOT), "reference_root": str(REFERENCE_ROOT)},
+                    )
+                )
+                self.send_json(200, payload)
             elif path == "/api/tasks":
                 self.send_json(200, {"tasks": [public_task(task) for task in STORE.list()]})
             elif path == "/api/state":

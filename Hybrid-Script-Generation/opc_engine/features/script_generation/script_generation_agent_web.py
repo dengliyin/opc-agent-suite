@@ -20,6 +20,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from opc_shared.global_ai import load_profile, runtime_override_active, set_runtime_overrides
+from opc_shared.vault_snapshot import cached_or_empty, refresh_snapshot
 
 from opc_engine.features.script_generation.generate_product_script import (
     CONFIG_DIR,
@@ -320,7 +321,17 @@ def library_payload(config: dict[str, Any] | None = None) -> dict[str, Any]:
     }
 
 
-def state_payload() -> dict[str, Any]:
+def cached_library_payload(config: dict[str, Any], refresh: bool = False) -> dict[str, Any]:
+    if refresh:
+        return refresh_snapshot("hybrid-script-generation", "library", lambda: library_payload(config))
+    return cached_or_empty(
+        "hybrid-script-generation",
+        "library",
+        lambda: {"paths": {}, "products": [], "references": []},
+    )
+
+
+def state_payload(refresh_library: bool = False) -> dict[str, Any]:
     config = load_script_generation_config()
     inputs = read_json_config(LOCAL_INPUTS_PATH)
     model = read_json_config(SHARED_MODEL_SETTINGS_PATH)
@@ -391,7 +402,7 @@ def state_payload() -> dict[str, Any]:
             "mutation_prompt": read_text(mutation_prompt_path),
             "knowledge": read_text(mistake_path) if mistake_path else "",
         },
-        "library": library_payload(config),
+        "library": cached_library_payload(config, refresh_library),
         "status": {
             "has_api_key": bool(get_api_key(config) or os.environ.get("MODELMESH_API_KEY") or os.environ.get("GEMINI_API_KEY")),
             "product_project_ready": product_project_ready(config),
@@ -613,6 +624,12 @@ def list_script_outputs() -> dict[str, Any]:
         "roots": [display_path(root) for root in roots],
         "outputs": outputs[:120],
     }
+
+
+def cached_script_outputs(refresh: bool = False) -> dict[str, Any]:
+    if refresh:
+        return refresh_snapshot("hybrid-script-generation", "outputs", list_script_outputs)
+    return cached_or_empty("hybrid-script-generation", "outputs", lambda: {"root": "", "roots": [], "outputs": []})
 
 
 class ThreadWriter(io.TextIOBase):
@@ -1663,7 +1680,7 @@ HTML_PAGE = r"""<!doctype html>
           <h2>解析脚本列表</h2>
           <div class="bar">
             <span class="chip" id="scriptCountChip">0 个脚本</span>
-            <button id="refreshScriptsBtn">刷新</button>
+            <button id="refreshScriptsBtn">扫描资料库</button>
           </div>
         </div>
         <div id="selectedScriptMeta" class="meta" style="margin-bottom:8px;">请先选择产品，再按“类型 → 产品”选择解析脚本。</div>
@@ -1684,7 +1701,7 @@ HTML_PAGE = r"""<!doctype html>
           <div class="bar" style="justify-content:space-between;">
             <h2>输出文件</h2>
             <div class="bar">
-              <button id="refreshOutputsBtn">刷新</button>
+              <button id="refreshOutputsBtn">扫描输出目录</button>
               <button id="openOutputRootBtn">打开输出区</button>
             </div>
           </div>
@@ -2149,9 +2166,9 @@ HTML_PAGE = r"""<!doctype html>
       }
     }
 
-    async function refreshOutputs() {
+    async function refreshOutputs(scan=false) {
       try {
-        const data = await api('/api/outputs');
+        const data = await api(scan ? '/api/outputs?refresh=1' : '/api/outputs');
         outputRoot = data.root || '';
         $('outputRoot').textContent = outputRoot ? `输出区：${outputRoot}` : '输出区未确定';
         renderOutputs(data.outputs || []);
@@ -2233,10 +2250,10 @@ HTML_PAGE = r"""<!doctype html>
     $('saveBtn').onclick = saveConfig;
     $('dryRunBtn').onclick = () => startRun(true);
     $('runBtn').onclick = () => startRun(false);
-    $('refreshOutputsBtn').onclick = refreshOutputs;
+    $('refreshOutputsBtn').onclick = () => refreshOutputs(true);
     $('openOutputRootBtn').onclick = openOutputRoot;
     $('openReferenceBtn').onclick = openSelectedReference;
-    $('refreshScriptsBtn').onclick = renderReferenceList;
+    $('refreshScriptsBtn').onclick = async () => renderState(await api('/api/config?refresh=1'));
     $('openPromptBtn').onclick = () => openConfiguredFile('prompt');
     $('openMutationPromptBtn').onclick = () => openConfiguredFile('mutation_prompt');
     $('openMistakeBookBtn').onclick = () => openConfiguredFile('mistake_book');
@@ -2268,12 +2285,16 @@ class ScriptGenerationWebHandler(BaseHTTPRequestHandler):
         try:
             if parsed.path in {"/", "/script"}:
                 text_response(self, 200, HTML_PAGE.replace("__SCRIPT_OUTPUT_SOURCE_ROOT__", SCRIPT_OUTPUT_SOURCE_ROOT.as_posix()))
+            elif parsed.path == "/health":
+                json_response(self, 200, {"status": "ok"})
             elif parsed.path == "/api/config":
-                json_response(self, 200, state_payload())
+                query = urllib.parse.parse_qs(parsed.query)
+                json_response(self, 200, state_payload(query.get("refresh", [""])[0] == "1"))
             elif parsed.path == "/api/job":
                 json_response(self, 200, JOB.snapshot())
             elif parsed.path == "/api/outputs":
-                json_response(self, 200, list_script_outputs())
+                query = urllib.parse.parse_qs(parsed.query)
+                json_response(self, 200, cached_script_outputs(query.get("refresh", [""])[0] == "1"))
             else:
                 json_response(self, 404, {"error": "Not found"})
         except Exception as exc:  # noqa: BLE001

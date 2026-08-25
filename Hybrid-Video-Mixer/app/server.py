@@ -9,6 +9,8 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from opc_shared.vault_snapshot import cached_or_empty, refresh_snapshot
+
 try:
     from app.mixer import (
         VIDEO_EXTS,
@@ -227,12 +229,19 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path.startswith("/static/"):
             self.serve_static(parsed.path.removeprefix("/static/"))
             return
-        if parsed.path == "/api/health":
+        if parsed.path in {"/health", "/api/health"}:
             self.send_json({"ok": True, "agent": "AI＋实拍混剪智能体", "port": self.server.server_port})
             return
         if parsed.path == "/api/library":
             try:
-                self.send_json({"ok": True, **scan_library()})
+                query = urllib.parse.parse_qs(parsed.query)
+                refresh = query.get("refresh", [""])[0] == "1"
+                payload = (
+                    refresh_snapshot("hybrid-video-mixer", "library", scan_library)
+                    if refresh
+                    else cached_or_empty("hybrid-video-mixer", "library", lambda: {"products": [], "paths": {}})
+                )
+                self.send_json({"ok": True, **payload})
             except Exception as exc:
                 self.send_json({"ok": False, "error": str(exc)}, 500)
             return

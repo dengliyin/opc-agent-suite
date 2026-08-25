@@ -138,23 +138,7 @@ def build_services() -> dict[str, dict]:
     for service_id, service in services.items():
         service["url"] = public_urls[service_id]
         service["health_url"] = urls[service_id]
-    health_paths = {
-        "collect": "/api/state",
-        "analyze": "/api/status",
-        "script": "/api/outputs",
-        "adapt": "/api/outputs?target_model=veo",
-        "assemble": "/health",
-        "finished": "/api/state",
-        "rewrite": "/api/state",
-        "compose": "/api/state",
-        "hybrid_adapt": "/api/scripts?target_model=omni",
-        "hybrid_mix": "/api/library",
-        "hybrid_collect": "/api/state",
-        "hybrid_analyze": "/api/status",
-        "hybrid_script": "/api/outputs",
-        "hybrid_voice": "/api/library",
-        "auto_publish": "/api/state",
-    }
+    health_paths = {service_id: "/health" for service_id in services}
     for service_id, service in services.items():
         service["health_path"] = health_paths[service_id]
     return services

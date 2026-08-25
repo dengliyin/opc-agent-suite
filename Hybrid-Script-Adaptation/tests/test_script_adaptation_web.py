@@ -240,3 +240,16 @@ class HybridAgentConfigurationTests(unittest.TestCase):
             "缺少 ## 每段生成提示词",
         )
         self.assertEqual(web.validation_retry_feedback("HTTP 500"), "")
+
+
+def test_cached_catalog_does_not_scan_until_refresh(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("OPC_SCAN_INDEX_ROOT", str(tmp_path))
+    calls = []
+    monkeypatch.setattr(web, "list_product_scripts", lambda _target: calls.append("scan") or {"products": []})
+
+    cached = web.cached_product_scripts("omni")
+    refreshed = web.cached_product_scripts("omni", refresh=True)
+
+    assert cached["scan_index"]["ready"] is False
+    assert refreshed["scan_index"]["ready"] is True
+    assert calls == ["scan"]

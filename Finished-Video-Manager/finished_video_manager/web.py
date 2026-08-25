@@ -20,6 +20,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from opc_shared.vault_snapshot import cached_or_empty, refresh_snapshot
+
 from .publish_queue import PublishQueue
 
 
@@ -2310,6 +2312,28 @@ def state_for_client() -> dict[str, Any]:
     }
 
 
+def cached_state_for_client(refresh: bool = False) -> dict[str, Any]:
+    if refresh:
+        return refresh_snapshot("finished-video-manager", "state", state_for_client)
+    return cached_or_empty(
+        "finished-video-manager",
+        "state",
+        lambda: {
+            "finished_video_root": FINISHED_VIDEO_ROOT.as_posix(),
+            "title_library_root": TITLE_LIBRARY_ROOT.as_posix(),
+            "video_count": 0,
+            "product_count": 0,
+            "library_count": 0,
+            "countries": [],
+            "products": [],
+            "videos": [],
+            "publish_config": load_publish_config(),
+            "publish_records": [],
+            "warnings": [],
+        },
+    )
+
+
 def get_publish_queue() -> PublishQueue:
     if PUBLISH_QUEUE is None:
         raise RuntimeError("发布队列尚未启动")
@@ -2438,7 +2462,7 @@ APP_HEADER_HTML = r"""<div class="appHeaderActions">
       <a class="appHeaderControl" href="/product-id">商品映射库</a>
       <a class="appHeaderControl" href="/Daily-KPIs">每日 KPI</a>
       <a id="queueBadge" class="appHeaderControl" href="/queue">发布队列 0</a>
-      <button class="appHeaderControl" type="button" onclick="refreshCurrentPage()">刷新</button>
+      <button class="appHeaderControl" type="button" onclick="refreshCurrentPage()">扫描资料库</button>
     </div>"""
 
 APP_HEADER_STYLE = r"""<style>
@@ -2505,7 +2529,7 @@ APP_HEADER_SCRIPT = r"""<script>
       };
       const loader = window[loaders[window.location.pathname] || ''];
       try {
-        if (typeof loader === 'function') await loader();
+        if (typeof loader === 'function') await loader(true);
       } finally {
         await loadAppHeader();
       }
@@ -2984,8 +3008,8 @@ HTML = r"""<!doctype html>
     let queuedVideoPaths = new Set();
     let currentPage = 1;
 
-    async function loadState() {
-      const res = await fetch('/api/state');
+    async function loadState(scan = false) {
+      const res = await fetch(scan ? '/api/state?refresh=1' : '/api/state');
       state = await res.json();
       if (!res.ok || state.error) throw new Error(state.error || '读取成品管理数据失败');
       document.getElementById('videoBadge').textContent = `视频 ${state.video_count}`;
@@ -3441,7 +3465,7 @@ HTML = r"""<!doctype html>
       }
       if (selectedVideo === id) selectedVideo = '';
       setPublishStatus(`已删除: ${video.name}`, 'ok');
-      await loadState();
+      await loadState(true);
     }
 
     async function deleteSelectedVideos() {
@@ -3462,7 +3486,7 @@ HTML = r"""<!doctype html>
         const payload = await res.json();
         if (!res.ok || payload.error) {
           setPublishStatus(`批量删除中断：${video.name}，${payload.error || '删除失败'}`, 'error');
-          await loadState();
+          await loadState(true);
           return;
         }
         deleted += 1;
@@ -3470,7 +3494,7 @@ HTML = r"""<!doctype html>
       selectedVideo = '';
       selectedVideoOrder = [];
       setPublishStatus(`已批量删除 ${deleted} 个视频。`, 'ok');
-      await loadState();
+      await loadState(true);
     }
 
     function captionPoolForVideo(video, profile) {
@@ -4392,8 +4416,11 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/favicon.ico":
                 self.send_response(204)
                 self.end_headers()
+            elif parsed.path == "/health":
+                json_response(self, 200, {"status": "ok"})
             elif parsed.path == "/api/state":
-                json_response(self, 200, state_for_client())
+                query = urllib.parse.parse_qs(parsed.query)
+                json_response(self, 200, cached_state_for_client(query.get("refresh", [""])[0] == "1"))
             elif parsed.path == "/api/product-ids":
                 json_response(self, 200, product_ids_payload())
             elif parsed.path == "/api/records":

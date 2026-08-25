@@ -309,12 +309,12 @@ async function api(url, options) {
   return data;
 }
 
-async function loadLibrary(preserveSelection = false) {
+async function loadLibrary(preserveSelection = false, scan = false) {
   const previousProduct = preserveSelection ? els.product.value : "";
   const previousMarket = preserveSelection ? els.market.value : "";
   els.refreshButton.disabled = true;
   try {
-    const data = await api("/api/library");
+    const data = await api(scan ? "/api/library?refresh=1" : "/api/library");
     state.library = data;
     const s = data.summary;
     els.summary.textContent = `产品 ${s.products} · 国家 ${s.markets} · 可生产国家 ${s.ready_markets} · 可用钩子 ${s.available_hooks}/${s.hooks} · CTA ${s.ctas} · 音频 ${s.audio} · 展示可用 ${s.available_display}/${s.display} · 使用可用 ${s.available_usage}/${s.usage}`;
@@ -357,7 +357,7 @@ async function deleteHookPaths(paths) {
     state.plan = null;
     state.selectedHookPaths.clear();
     els.renderButton.disabled = true;
-    await loadLibrary(true);
+    await loadLibrary(true, true);
     els.message.className = "message";
     els.message.textContent = `已删除 ${result.deleted_count} 个钩子视频。`;
   } catch (error) {
@@ -435,10 +435,10 @@ async function pollTask() {
       state.planPhase = "idle";
       state.planError = "";
       els.renderButton.disabled = true;
-      await loadLibrary(true);
+      await loadLibrary(true, true);
       await loadOutputs();
     } else if (task.status === "failed" && previousStatus !== "failed") {
-      await loadLibrary(true);
+      await loadLibrary(true, true);
     }
   } catch (error) {
     els.taskMessage.textContent = error.message;
@@ -463,7 +463,7 @@ els.includeCta.addEventListener("change", updateReady);
 els.randomDeduplication.addEventListener("change", updateDeduplicationMode);
 els.deduplicationOptions.forEach(input => input.addEventListener("change", updateReady));
 els.useSubtitles.addEventListener("change", updateReady);
-els.refreshButton.addEventListener("click", () => loadLibrary(true));
+els.refreshButton.addEventListener("click", () => loadLibrary(true, true));
 els.selectAllHooksButton.addEventListener("click", () => {
   visibleHookItems().forEach(hook => state.selectedHookPaths.add(hook.path));
   renderHookPreview();

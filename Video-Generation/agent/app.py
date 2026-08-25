@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import hashlib
 import threading
 import time
 from pathlib import Path
@@ -12,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from opc_shared.global_ai import runtime_override_active, set_runtime_overrides
+from opc_shared.vault_snapshot import cached_or_empty, refresh_snapshot
 
 from .config import ENV_PATH, SETTINGS_PATH, Settings, load_hybrid_omni_settings, load_settings, mask_secrets, update_env_values
 from .exporter import (
@@ -756,23 +758,49 @@ def _reload_runtime_settings() -> None:
     _clear_catalog_cache()
 
 
-def _catalog_payload(current: Settings) -> Dict[str, Any]:
-    cache_key = current.api_base_path
+def _catalog_snapshot_key(current: Settings) -> str:
+    identity = "\n".join(
+        str(value or "")
+        for value in (
+            current.api_base_path,
+            current.script_root,
+            current.completed_script_root,
+            current.reference_root,
+            current.video_output_root,
+        )
+    )
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+
+
+def _catalog_payload(current: Settings, *, refresh: bool = False) -> Dict[str, Any]:
+    cache_key = _catalog_snapshot_key(current)
     with _catalog_cache_lock:
         now = time.monotonic()
         cached = _catalog_cache.get(cache_key)
-        if cached is not None and now - cached[0] < CATALOG_CACHE_TTL_SECONDS:
+        if not refresh and cached is not None and now - cached[0] < CATALOG_CACHE_TTL_SECONDS:
             return cached[1]
+
+    def build() -> Dict[str, Any]:
         try:
             scripts = scan_scripts(current, include_archived=current.workflow == "standard")
-            payload = {
+            return {
                 "summary": summarize_catalog(current, scripts),
                 "scripts": [script_to_dict(current, script) for script in scripts],
             }
         except Exception as exc:
             raise HTTPException(status_code=500, detail=_safe(str(exc)))
+
+    if refresh:
+        payload = refresh_snapshot("video-generation", cache_key, build)
+    else:
+        payload = cached_or_empty(
+            "video-generation",
+            cache_key,
+            lambda: {"summary": summarize_catalog(current, []), "scripts": []},
+        )
+    with _catalog_cache_lock:
         _catalog_cache[cache_key] = (time.monotonic(), payload)
-        return payload
+    return payload
 
 
 def _clear_catalog_cache() -> None:
@@ -1076,18 +1104,18 @@ def get_hybrid_omni_config() -> Dict[str, Any]:
 
 @app.get("/api/catalog")
 @app.get("/omni/api/catalog")
-def get_omni_catalog() -> Dict[str, Any]:
-    return _catalog_payload(omni_settings)
+def get_omni_catalog(refresh: bool = False) -> Dict[str, Any]:
+    return _catalog_payload(omni_settings, refresh=refresh)
 
 
 @app.get("/grok/api/catalog")
-def get_grok_catalog() -> Dict[str, Any]:
-    return _catalog_payload(grok_settings)
+def get_grok_catalog(refresh: bool = False) -> Dict[str, Any]:
+    return _catalog_payload(grok_settings, refresh=refresh)
 
 
 @app.get("/hybrid-omni/api/catalog")
-def get_hybrid_omni_catalog() -> Dict[str, Any]:
-    return _catalog_payload(hybrid_omni_settings)
+def get_hybrid_omni_catalog(refresh: bool = False) -> Dict[str, Any]:
+    return _catalog_payload(hybrid_omni_settings, refresh=refresh)
 
 
 

@@ -175,9 +175,10 @@ def test_health_is_lightweight(monkeypatch):
     assert response.json() == {"status": "ok"}
 
 
-def test_catalog_payload_is_cached(monkeypatch):
+def test_catalog_does_not_scan_until_explicit_refresh(monkeypatch, tmp_path):
     calls = []
     app_module._clear_catalog_cache()
+    monkeypatch.setenv("OPC_SCAN_INDEX_ROOT", str(tmp_path))
     monkeypatch.setattr(app_module, "CATALOG_CACHE_TTL_SECONDS", 60)
     monkeypatch.setattr(
         app_module,
@@ -187,9 +188,12 @@ def test_catalog_payload_is_cached(monkeypatch):
     client = TestClient(app_module.app)
 
     first = client.get("/api/catalog")
+    refreshed = client.get("/api/catalog?refresh=true")
     second = client.get("/api/catalog")
 
     assert first.status_code == 200
+    assert first.json()["scan_index"]["ready"] is False
+    assert refreshed.status_code == 200
     assert second.status_code == 200
     assert calls == ["scan"]
     app_module._clear_catalog_cache()

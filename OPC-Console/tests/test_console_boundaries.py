@@ -37,6 +37,9 @@ class ConsoleBoundaryTests(unittest.TestCase):
                 self.assertTrue(service["health_path"].startswith("/"))
                 self.assertNotEqual(service["health_path"], "/")
 
+    def test_all_agent_health_checks_are_lightweight(self):
+        self.assertTrue(all(service["health_path"] == "/health" for service in self.app.SERVICES.values()))
+
     def test_service_can_use_internal_health_url_and_public_browser_url(self):
         with mock.patch.dict(
             self.app.os.environ,
@@ -66,12 +69,11 @@ class ConsoleBoundaryTests(unittest.TestCase):
             self.assertTrue(self.app.service_running(self.app.SERVICES["hybrid_adapt"]))
 
         request = urlopen.call_args.args[0]
-        self.assertIn("api/scripts?target_model=omni", request.full_url)
+        self.assertTrue(request.full_url.endswith("/health"))
 
     def test_command_line_healthcheck_uses_business_probe_paths(self):
         healthcheck = (WORKSPACE_ROOT / "scripts" / "docker_health.sh").read_text(encoding="utf-8")
-        self.assertIn('"api/scripts?target_model=omni"', healthcheck)
-        self.assertIn('"health"', healthcheck)
+        self.assertEqual(healthcheck.count('"health"'), 16)
         self.assertIn('[[ "$status" =~ ^2 ]]', healthcheck)
 
     def test_console_cards_are_navigation_only(self):

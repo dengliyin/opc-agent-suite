@@ -45,10 +45,11 @@ async function api(path, options = {}) {
   return response.json();
 }
 
-async function refreshAll() {
+async function refreshAll(scan = false) {
+  const catalogPath = scan ? "/catalog?refresh=true" : "/catalog";
   const [config, catalog, jobs, globalJobs] = await Promise.all([
     api("/config"),
-    api("/catalog"),
+    api(catalogPath),
     api("/jobs"),
     loadGlobalJobs(),
   ]);
@@ -60,6 +61,10 @@ async function refreshAll() {
   state.lastCatalogRefreshAt = Date.now();
   state.lastGlobalStatusAt = Date.now();
   render();
+  if (!catalog.scan_index?.ready) {
+    const summary = $("#summaryLine");
+    if (summary) summary.textContent = "尚未扫描资料库，请点击“扫描资料库”";
+  }
 }
 
 function render() {
@@ -623,7 +628,7 @@ async function handleArtifactDeleteClick(event) {
       method: "DELETE",
       body: JSON.stringify({ path }),
     });
-    await refreshAll();
+    await refreshAll(true);
   } catch (error) {
     alert(`删除失败：${error.message}`);
     button.disabled = false;
@@ -1090,7 +1095,7 @@ async function runStage(stage) {
       body: JSON.stringify({ stage, overwrite, script_paths: scriptPaths, script_concurrency: selectedScriptConcurrency(), reference_images: referenceImages }),
     });
     state.activeJobId = job.id;
-    await refreshAll();
+    await refreshAll(true);
   } catch (error) {
     alert(`启动失败：${error.message}`);
   } finally {
@@ -1111,7 +1116,7 @@ async function cancelActiveJob() {
       method: "POST",
       body: JSON.stringify({ job_id: active.id }),
     });
-    await refreshAll();
+    await refreshAll(true);
   } catch (error) {
     alert(`停止失败：${error.message}`);
   }
@@ -1152,7 +1157,7 @@ async function exportSelectedCompleted() {
     const skippedText = result.skipped?.length ? `，跳过 ${result.skipped.length} 个` : "";
     alert(`${actionLabel}完成：${result.exported?.length || 0} 个${skippedText}\n归档目录：${result.export_root}`);
     state.selectedScriptPaths.clear();
-    await refreshAll();
+    await refreshAll(true);
   } catch (error) {
     alert(`${actionLabel}失败：${error.message}`);
   } finally {
@@ -1185,7 +1190,7 @@ async function restoreSelectedArchived() {
     alert(`恢复完成：${result.restored?.length || 0} 个${skippedText}`);
     state.selectedScriptPaths.clear();
     state.showArchived = false;
-    await refreshAll();
+    await refreshAll(true);
   } catch (error) {
     alert(`恢复失败：${error.message}`);
   } finally {
@@ -1226,7 +1231,7 @@ async function deleteSelectedScripts() {
     });
     alert(`移除完成：${result.scripts_deleted || 0} 个脚本，共删除 ${result.files_deleted || 0} 个附属文件；上游适配记录已保留`);
     state.selectedScriptPaths.clear();
-    await refreshAll();
+    await refreshAll(true);
   } catch (error) {
     alert(`删除失败：${error.message}`);
   } finally {
@@ -1249,7 +1254,7 @@ async function pollJobs() {
     const latest = state.jobs[0];
     const active = activeRunningJob();
     if (active && Date.now() - state.lastCatalogRefreshAt > 30000) {
-      state.catalog = await api("/catalog");
+      state.catalog = await api("/catalog?refresh=true");
       state.lastCatalogRefreshAt = Date.now();
       renderCatalogDuringPolling();
       renderSegments();
@@ -1259,7 +1264,7 @@ async function pollJobs() {
     const terminalKey = terminalJobKey(latest);
     if (terminalKey && terminalKey !== state.lastTerminalCatalogJobKey) {
       state.lastTerminalCatalogJobKey = terminalKey;
-      state.catalog = await api("/catalog");
+      state.catalog = await api("/catalog?refresh=true");
       state.lastCatalogRefreshAt = Date.now();
       renderCatalogDuringPolling();
       renderSegments();
@@ -1352,7 +1357,7 @@ function jobStatusLabel(job) {
   return queuedAhead ? `排队中 · 前方 ${queuedAhead} 个` : "排队中 · 即将执行";
 }
 
-$("#refreshButton").addEventListener("click", refreshAll);
+$("#refreshButton").addEventListener("click", () => refreshAll(true));
 $("#selectAllScriptsButton").addEventListener("click", () => {
   const scripts = visibleCatalogScripts(state.catalog?.scripts || []);
   scripts.filter(isScriptSelectable).forEach((script) => state.selectedScriptPaths.add(script.md_path));

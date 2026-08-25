@@ -16,6 +16,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from opc_shared.global_ai import load_profile, runtime_override_active, set_runtime_overrides
+from opc_shared.vault_snapshot import cached_or_empty, refresh_snapshot
 
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
@@ -541,6 +542,18 @@ def list_scripts_by_product(script_dir=None):
     return sorted(groups.values(), key=lambda item: (-item["count"], item["product"]))
 
 
+def cached_scripts_by_product(script_dir=None, refresh=False):
+    if script_dir is None:
+        _, script_dir = local_paths()
+    resolved = Path(script_dir).resolve()
+    key = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:16]
+    if refresh:
+        payload = refresh_snapshot("hybrid-script-analysis", key, lambda: {"groups": list_scripts_by_product(resolved)})
+    else:
+        payload = cached_or_empty("hybrid-script-analysis", key, lambda: {"groups": []})
+    return payload.get("groups") or []
+
+
 def cleanup_non_markdown_outputs(output_dir):
     for file_path in output_dir.iterdir():
         if file_path.is_file() and file_path.suffix.lower() != ".md":
@@ -819,6 +832,9 @@ class AgentHandler(SimpleHTTPRequestHandler):
         path = parsed.path
         query = parse_qs(parsed.query)
         try:
+            if path == "/health":
+                self.send_json({"status": "ok"})
+                return
             if path == "/api/status":
                 default_video_dir, default_script_dir = local_paths()
                 self.send_json(
@@ -830,7 +846,7 @@ class AgentHandler(SimpleHTTPRequestHandler):
                             "settings": file_info(SETTINGS_PATH),
                         },
                         "uploads": list_uploads(),
-                        "scripts_by_product": list_scripts_by_product(),
+                        "scripts_by_product": cached_scripts_by_product(),
                         "queue_defaults": {
                             "video_dir": str(default_video_dir),
                             "script_dir": str(default_script_dir),
@@ -862,7 +878,7 @@ class AgentHandler(SimpleHTTPRequestHandler):
                 if not job:
                     self.send_json({"error": "任务不存在"}, 404)
                     return
-                job["scripts_by_product"] = list_scripts_by_product()
+                job["scripts_by_product"] = cached_scripts_by_product()
                 self.send_json(job)
                 return
             if path == "/api/file":
@@ -905,6 +921,7 @@ class AgentHandler(SimpleHTTPRequestHandler):
                 video_dir = resolve_existing_path(payload.get("video_dir"), default_video_dir, "视频目录")
                 script_dir = resolve_existing_path(payload.get("script_dir"), default_script_dir, "脚本目录")
                 scan = scan_teardown_queue(video_dir, script_dir)
+                cached_scripts_by_product(script_dir, refresh=True)
                 LATEST_SCAN_ID = scan["id"]
                 self.send_json(scan)
                 return

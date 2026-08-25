@@ -9,6 +9,8 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from opc_shared.vault_snapshot import cached_or_empty, refresh_snapshot
+
 from audio_agent.core import find_document, generate_entries, runtime_paths, scan_library
 
 
@@ -90,14 +92,21 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path == "/health":
-            try:
-                runtime_paths()
-                self.send_json({"ok": True, "status": task_snapshot()["status"]})
-            except Exception as exc:
-                self.send_json({"ok": False, "error": str(exc)}, 503)
+            self.send_json({"ok": True, "status": task_snapshot()["status"]})
             return
         if parsed.path == "/api/library":
-            self.send_json(scan_library())
+            query = urllib.parse.parse_qs(parsed.query)
+            refresh = query.get("refresh", [""])[0] == "1"
+            payload = (
+                refresh_snapshot("hybrid-audio-generation", "library", scan_library)
+                if refresh
+                else cached_or_empty(
+                    "hybrid-audio-generation",
+                    "library",
+                    lambda: {"copy_root": "", "audio_root": "", "speed": 1.2, "voices": [], "documents": []},
+                )
+            )
+            self.send_json(payload)
             return
         if parsed.path == "/api/status":
             self.send_json(task_snapshot())

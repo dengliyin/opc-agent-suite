@@ -9,7 +9,7 @@ SESSION_NAME="Script-Analysis-app"
 if /usr/bin/python3 - <<'PY' >/dev/null 2>&1
 import json
 import urllib.request
-with urllib.request.urlopen("http://127.0.0.1:9992/api/status", timeout=3) as response:
+with urllib.request.urlopen("http://127.0.0.1:9992/health", timeout=3) as response:
     data = json.load(response)
 if not str(data.get("skill_root", "")).endswith("Script-Analysis"):
     raise SystemExit(1)

@@ -45,8 +45,8 @@ function renderEntries(){
 }
 function updateButton(){generateButton.disabled=!state.selected.size||!voiceSelect.value||state.taskStatus==="running";}
 function renderAll(){renderMarkets();renderVoices();renderEntries();$("#pathNote").textContent=`输出：${state.library.audio_root}/${state.document?.product||"<产品名>"}/`;}
-async function loadLibrary(){
-  const response=await fetch("/api/library");
+async function loadLibrary(scan=false){
+  const response=await fetch(scan?"/api/library?refresh=1":"/api/library");
   if(!response.ok)throw new Error("文案扫描失败");
   state.library=await response.json();
   const previous=state.document?.id;
@@ -70,12 +70,12 @@ async function pollStatus(){
   $("#progress").className=`progress ${task.status}`;
   updateButton();
   if(task.status==="running"){setTimeout(pollStatus,1000);}
-  else if(task.status==="completed"){state.selected.clear();await loadLibrary();}
+  else if(task.status==="completed"){state.selected.clear();await loadLibrary(true);}
 }
 documentSelect.addEventListener("change",()=>{state.document=state.library.documents.find(doc=>doc.id===documentSelect.value);state.market="";state.selected.clear();renderAll();});
 marketSelect.addEventListener("change",()=>{state.market=marketSelect.value;state.selected.clear();renderAll();});
 voiceSelect.addEventListener("change",updateButton);
-$("#refreshButton").addEventListener("click",()=>loadLibrary().catch(error=>alert(error.message)));
+$("#refreshButton").addEventListener("click",()=>loadLibrary(true).catch(error=>alert(error.message)));
 $("#selectAllButton").addEventListener("click",()=>{currentEntries().filter(entry=>!entry.generated||$("#overwriteInput").checked).forEach(entry=>state.selected.add(entry.id));renderEntries();});
 $("#clearButton").addEventListener("click",()=>{state.selected.clear();renderEntries();});
 generateButton.addEventListener("click",()=>startGeneration().catch(error=>alert(error.message)));

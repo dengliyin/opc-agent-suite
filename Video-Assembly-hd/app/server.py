@@ -399,6 +399,8 @@ class Handler(BaseHTTPRequestHandler):
                 if STATIC_ROOT.resolve() not in target.parents:
                     raise ValueError("静态资源路径无效")
                 self._file(target)
+            elif parsed.path == "/health":
+                self._json(200, {"status": "ok"})
             elif parsed.path == "/api/state":
                 report = read_report()
                 checks = runtime_checks()
@@ -474,11 +476,6 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=9998)
     args = parser.parse_args()
-    if not core.REPORT_PATH.exists():
-        try:
-            scan_now()
-        except RuntimeError:
-            pass
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"片段合成智能体：{args.host}:{args.port}", flush=True)
     try:
