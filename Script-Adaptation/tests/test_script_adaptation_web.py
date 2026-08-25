@@ -173,3 +173,114 @@ def test_incremental_scan_reuses_unchanged_adapted_script(monkeypatch, tmp_path:
     assert payload["scan_state"]["cold_reused"] == 1
     assert payload["scan_state"]["scanned"] == 1
     assert payload["adapted_count"] == 2
+
+
+def test_adaptation_batches_allow_any_total_and_cap_each_batch_at_three() -> None:
+    batches = web.split_adaptation_batches(list(range(8)))
+
+    assert [len(batch) for batch in batches] == [3, 3, 2]
+    assert web.next_retry_batch_size(3) == 2
+    assert web.next_retry_batch_size(2) == 1
+    assert web.next_retry_batch_size(1) == 1
+
+
+def test_openai_adaptation_payload_disables_thinking() -> None:
+    payload = web.workflow.build_openai_text_payload("prompt", "deepseek-v4-pro", 32768, "disabled")
+
+    assert payload["thinking"] == {"type": "disabled"}
+    assert payload["max_tokens"] == 32768
+
+
+def test_run_text_model_caps_adaptation_output_at_32k(monkeypatch) -> None:
+    captured = {}
+    monkeypatch.setattr(web.workflow, "get_api_key", lambda _config: "secret")
+
+    def fake_post(_url, _headers, payload, _timeout):
+        captured.update(payload)
+        return 200, {"choices": [{"message": {"content": "ok"}}]}
+
+    monkeypatch.setattr(web.workflow, "post_json", fake_post)
+    text, _raw, _style = web.workflow.run_text_model(
+        "prompt",
+        {
+            "modelmesh_base_url": "https://api.deepseek.com",
+            "script_adaptation_text_model": "deepseek-v4-pro",
+            "video_analysis_max_output_tokens": 98304,
+        },
+        "测试",
+    )
+
+    assert text == "ok"
+    assert captured["max_tokens"] == 32768
+    assert captured["thinking"] == {"type": "disabled"}
+
+
+def test_prompt_injects_only_current_language_and_compact_product_facts() -> None:
+    prompt = web.workflow.build_adaptation_prompt(
+        {
+            "script_adaptation_prompt": "OMNI ONLY",
+            "script_adaptation_target_language": "法语",
+            "product_profile": {
+                "product_name": "Demo",
+                "top_selling_points": "事实A",
+                "_说明": "不应发送",
+            },
+        },
+        "# 镜头 1 (00:00.000 - 00:05.000)\n[音频文案] Bonjour",
+        "omni",
+        10,
+        "",
+    )
+
+    assert "本次仅使用 法语" in prompt
+    assert "事实A" in prompt
+    assert "不应发送" not in prompt
+    assert "孟加拉语" not in prompt
+    assert "马来语" not in prompt
+
+
+def test_existing_valid_output_reuses_matching_fingerprint(tmp_path: Path) -> None:
+    source = tmp_path / "source.md"
+    output = tmp_path / "output.md"
+    source.write_text("source", encoding="utf-8")
+    output.write_text("adapted", encoding="utf-8")
+
+    assert web.reusable_adaptation_output(
+        output,
+        {"valid": True},
+        {"status": "completed", "request_fingerprint": "same"},
+        "same",
+        source.as_posix(),
+    )
+    assert not web.reusable_adaptation_output(
+        output,
+        {"valid": True},
+        {"status": "completed", "request_fingerprint": "old"},
+        "new",
+        source.as_posix(),
+    )
+
+
+def test_local_repair_applies_only_exact_replacements() -> None:
+    updated = web.apply_repair_replacements(
+        "Segment 1\n错误动作\nSegment 2\n保持内容",
+        [{"old": "错误动作", "new": "正确动作"}],
+    )
+
+    assert updated == "Segment 1\n正确动作\nSegment 2\n保持内容"
+
+
+def test_repair_request_uses_local_excerpt_and_writes_patch(monkeypatch, tmp_path: Path) -> None:
+    path = tmp_path / "adapted.md"
+    path.write_text("开头\n" + ("稳定内容\n" * 2000) + "错误动作\n", encoding="utf-8")
+    captured = {}
+
+    def fake_model(prompt, _config, _label):
+        captured["prompt"] = prompt
+        return '{"replacements":[{"old":"错误动作","new":"正确动作"}]}', {}, "openai"
+
+    monkeypatch.setattr(web.workflow, "run_text_model", fake_model)
+    web.repair_adaptation_output(path, {}, "错误动作不符合要求")
+
+    assert len(captured["prompt"]) < len("开头\n" + ("稳定内容\n" * 2000) + "错误动作\n")
+    assert path.read_text(encoding="utf-8").endswith("正确动作\n")

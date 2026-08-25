@@ -503,10 +503,10 @@ class GenerateProductScriptTests(unittest.TestCase):
 
 * **[主体]**：一个30岁的意大利真人男性。
 """
-        repaired = """### 镜头 1 (00:00.000 - 00:04.000)
-
-* **[主体]**：一个头顶稀疏、穿意大利家居服的人体骨骼模型。
-"""
+        repaired = json.dumps(
+            {"001": {"主体": "一个头顶稀疏、穿意大利家居服的人体骨骼模型"}},
+            ensure_ascii=False,
+        )
         config = {}
         args = argparse.Namespace(backend="api")
 
@@ -693,6 +693,115 @@ class GenerateProductScriptTests(unittest.TestCase):
                 generate_product_script.main()
 
             require_project.assert_not_called()
+
+    def test_product_fact_card_keeps_business_facts_and_drops_assets(self):
+        manual = """# 产品
+
+## 产品图片
+很长的图片说明
+
+## 核心卖点
+卖点一
+
+## 合规红线
+不得宣称治疗
+
+## 参考来源
+外部链接
+"""
+        card = generate_product_script.compact_product_fact_card(manual)
+        self.assertIn("核心卖点", card)
+        self.assertIn("合规红线", card)
+        self.assertNotIn("产品图片", card)
+        self.assertNotIn("外部链接", card)
+
+    def test_target_language_rule_only_contains_selected_language(self):
+        rule = generate_product_script.target_language_rule({"script_target_language": "法语"})
+        self.assertIn("French", rule)
+        self.assertNotIn("Bengali", rule)
+        self.assertNotIn("Bahasa Malaysia", rule)
+
+    def test_deepseek_payload_modes_and_mutation_output_limit(self):
+        enabled = generate_product_script.build_openai_payload("clone", 24000, "enabled")
+        disabled = generate_product_script.build_openai_payload(
+            "mutation", generate_product_script.DEFAULT_MUTATION_MAX_OUTPUT_TOKENS, "disabled"
+        )
+        self.assertEqual(enabled["thinking"], {"type": "enabled"})
+        self.assertEqual(disabled["thinking"], {"type": "disabled"})
+        self.assertEqual(disabled["max_tokens"], 96 * 1024)
+
+    def test_existing_clone_is_reused_without_model_call(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            reference = root / "US-author-1234567890123456789.md"
+            reference.write_text("### 镜头 1 (00:00.000 - 00:01.000)\n", encoding="utf-8")
+            output_dir = root / "outputs"
+            config = {
+                "script_reference_script_path": str(reference),
+                "script_product_document_path": str(root / "产品-产品信息.md"),
+            }
+            clone_path = generate_product_script.clone_output_path_for_reference(
+                config, reference, str(output_dir)
+            )
+            clone_path.parent.mkdir(parents=True)
+            clone_path.write_text("existing clone\n", encoding="utf-8")
+            args = argparse.Namespace(dry_run=False, output_dir=str(output_dir), enable_mutation=False)
+
+            with patch.object(generate_product_script, "generate_validated_clone") as generate_clone:
+                text, raw, endpoint, _field = generate_product_script.run_script_pipeline(config, args)
+
+            generate_clone.assert_not_called()
+            self.assertEqual(text, "existing clone")
+            self.assertTrue(raw["reused_existing_clone"])
+            self.assertEqual(endpoint, "reused")
+
+    def test_mutation_batches_three_then_halves_and_keeps_valid_items(self):
+        args = argparse.Namespace(backend="api", mutation_variants=3, mutation_batch_size=3)
+        config = {"script_mutation_attempts_per_variant": 3}
+
+        def variant(number):
+            return (
+                f"### 变体 #{number}\n\n### 镜头 1 (00:00.000 - 00:01.000)\n\n"
+                f"* **[主体]**：人物 {number}\n" + ("有效内容。" * 250)
+            )
+
+        prompts = []
+
+        def build_prompt(_config, _source, count, batch_start=1, **_kwargs):
+            prompts.append((batch_start, count))
+            return f"batch {batch_start} {count}"
+
+        with (
+            patch.object(generate_product_script, "build_mutation_prompt", side_effect=build_prompt),
+            patch.object(
+                generate_product_script,
+                "call_text_model",
+                side_effect=[
+                    RuntimeError("batch failed"),
+                    (variant(1) + "\n\n" + variant(2), {"id": "retry-12"}, "openai", "content"),
+                    (variant(3), {"id": "retry-3"}, "openai", "content"),
+                ],
+            ) as call_model,
+            patch.object(
+                generate_product_script,
+                "repair_script_subject_type",
+                side_effect=lambda _c, _a, text, _r, _n: (text, {"timeline_warnings": []}),
+            ),
+            patch.object(
+                generate_product_script,
+                "repair_script_audio",
+                side_effect=lambda _c, _a, text, _r, _n: (text, {"timeline_warnings": []}),
+            ),
+        ):
+            _text, raw, _endpoint, _field = generate_product_script.mutate_script_source(
+                config, args, variant(0)
+            )
+
+        self.assertEqual(prompts, [(1, 3), (1, 2), (3, 1)])
+        self.assertEqual(call_model.call_count, 3)
+        self.assertEqual(raw["mutation_variant_numbers"], [1, 2, 3])
+        self.assertFalse(raw["partial_success"])
+        self.assertTrue(all(call.kwargs.get("request_kind") == "mutation" for call in call_model.call_args_list))
 
 
 if __name__ == "__main__":

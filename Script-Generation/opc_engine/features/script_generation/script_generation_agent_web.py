@@ -1866,7 +1866,7 @@ HTML_PAGE = r"""<!doctype html>
       const hint = $('mutationSourceHint');
       const path = expectedClonePath();
       if (!$('enableMutation').checked) {
-        hint.innerHTML = '未勾选裂变：重新复刻并覆盖当前脚本、当前国家/地区对应的原复刻稿；勾选后则基于复刻稿生成独立裂变文件。';
+        hint.innerHTML = '未勾选裂变：已有复刻稿会直接复用，不再重复调用模型；勾选后则基于复刻稿生成独立裂变文件，每批最多 3 条。';
         return;
       }
       if (!path) {

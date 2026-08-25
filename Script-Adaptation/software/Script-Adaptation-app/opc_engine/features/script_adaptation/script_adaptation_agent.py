@@ -393,6 +393,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--execute", action="store_true", help="真正执行阶段；默认只巡检和生成计划")
     parser.add_argument("--script-file", help="本次直接使用的成品脚本文件路径，仅用于 adapt 阶段")
     parser.add_argument("--target-model", choices=("omni", "grok"), help="本次脚本适配使用的视频模型")
+    parser.add_argument("--target-language", help="本次适配只使用的目标语言；留空时从脚本文件名国家代码推断")
     parser.add_argument("--output-stem", help="本次适配输出的固定文件名，不含扩展名")
     parser.add_argument("--script-stdin", action="store_true", help="从 stdin 读取成品脚本文本并保存到当前产品项目后适配")
     parser.add_argument("--json", action="store_true", help="以 JSON 输出巡检结果")
@@ -434,6 +435,8 @@ def main() -> int:
         overrides["script_adaptation_input_path"] = str(script_path or args.script_file)
     if args.target_model:
         overrides["script_adaptation_target_model"] = args.target_model
+    if args.target_language:
+        overrides["script_adaptation_target_language"] = args.target_language
     if args.output_stem:
         overrides["script_adaptation_output_stem"] = args.output_stem
     if args.script_stdin:

@@ -213,6 +213,7 @@ class PipelineRunner:
                 "opc_engine.features.script_adaptation.script_adaptation_agent",
                 "--stage", "adapt", "--execute", "--script-file", variant,
                 "--target-model", spec["video_model"], "--output-stem", stem,
+                "--target-language", spec["target_language"],
             ]
             try:
                 self._command(task_id, command, root)

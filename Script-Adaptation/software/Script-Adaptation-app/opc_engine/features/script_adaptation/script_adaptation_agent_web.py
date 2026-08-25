@@ -47,7 +47,9 @@ class JobCancelled(RuntimeError):
 HOST = "127.0.0.1"
 DEFAULT_PORT = 9994
 ADAPTATION_QC_MAX_ATTEMPTS = 3
-ADAPTATION_MAX_CONCURRENCY = 5
+ADAPTATION_BATCH_SIZE = 3
+ADAPTATION_MAX_CONCURRENCY = 3
+ADAPTATION_REPAIR_CONTEXT_CHARS = 8000
 ADAPTATION_STATUS_LOG_NAME = "_adaptation_status_log.json"
 ADAPTATION_STATUS_LOG_LOCK = threading.Lock()
 ADAPTATION_TARGET_PROFILES = {
@@ -56,6 +58,15 @@ ADAPTATION_TARGET_PROFILES = {
     "grok": {"label": "Grok", "segment_seconds": 30, "min_segment_seconds": 6, "segment_label": "6-30 秒"},
 }
 INVALID_ADAPTATION_STATES = {"json_missing", "contract_mismatch", "markdown_invalid"}
+
+
+def split_adaptation_batches(items: list[Any], batch_size: int = ADAPTATION_BATCH_SIZE) -> list[list[Any]]:
+    size = max(1, min(int(batch_size or 1), ADAPTATION_BATCH_SIZE))
+    return [items[index:index + size] for index in range(0, len(items), size)]
+
+
+def next_retry_batch_size(current_size: int) -> int:
+    return max(1, (max(1, int(current_size)) + 1) // 2)
 
 
 def normalize_target_model(value: Any) -> str:
@@ -670,6 +681,121 @@ def write_adaptation_status(output_dir: Path, output_filename: str, record: dict
         tmp_path.replace(output_dir / ADAPTATION_STATUS_LOG_NAME)
 
 
+def adaptation_request_fingerprint(
+    config: dict[str, Any],
+    script_text: str,
+    target_model: str,
+    segment_seconds: Any,
+) -> str:
+    identity = {
+        "script": str(script_text or ""),
+        "target_model": normalize_target_model(target_model),
+        "segment_seconds": segment_seconds_for_target(target_model, segment_seconds),
+        "target_language": workflow.adaptation_target_language(
+            config,
+            config.get("script_adaptation_input_path"),
+        ),
+        "notes": str(config.get("script_adaptation_notes") or ""),
+        "prompt": workflow.get_script_adaptation_prompt(config),
+        "product_fact_card": workflow.adaptation_product_fact_card(config),
+    }
+    return hashlib.sha256(json.dumps(identity, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def reusable_adaptation_output(
+    output_path: Path,
+    validation: dict[str, Any],
+    status_record: dict[str, Any],
+    request_fingerprint: str,
+    source_path: str,
+) -> bool:
+    if not validation.get("valid") or not output_path.exists():
+        return False
+    saved_fingerprint = str(status_record.get("request_fingerprint") or "")
+    if saved_fingerprint:
+        return saved_fingerprint == request_fingerprint
+    source = Path(str(source_path or "")).expanduser()
+    if source.exists() and source.is_file():
+        return output_path.stat().st_mtime_ns >= source.stat().st_mtime_ns
+    return str(status_record.get("status") or "") == "completed"
+
+
+def repair_context_excerpt(content: str, validation_message: str, max_chars: int = ADAPTATION_REPAIR_CONTEXT_CHARS) -> str:
+    text = str(content or "")
+    if len(text) <= max_chars:
+        return text
+    anchors = []
+    for number in re.findall(r"(?:Segment|片段|分镜)\s*0*(\d+)", str(validation_message or ""), flags=re.I):
+        match = re.search(rf"(?mi)^#{{1,4}}\s*(?:Segment|片段|分镜)\s*0*{int(number)}\b", text)
+        if match:
+            anchors.append(match.start())
+    pieces = [text[:2000], text[-2000:]]
+    for anchor in anchors[:2]:
+        pieces.append(text[max(0, anchor - 1000):anchor + 2000])
+    excerpt = "\n\n[...仅保留与错误相关的局部上下文...]\n\n".join(pieces)
+    return excerpt[:max_chars]
+
+
+def parse_repair_replacements(response_text: str) -> list[dict[str, str]]:
+    candidates = [str(response_text or "").strip()]
+    candidates.extend(workflow.balanced_json_candidates(response_text))
+    for candidate in candidates:
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", candidate.strip(), flags=re.I | re.S)
+        try:
+            payload = json.loads(cleaned)
+        except json.JSONDecodeError:
+            continue
+        replacements = payload.get("replacements") if isinstance(payload, dict) else None
+        if not isinstance(replacements, list):
+            continue
+        normalized = []
+        for item in replacements:
+            if not isinstance(item, dict):
+                continue
+            old = str(item.get("old") or "")
+            new = str(item.get("new") or "")
+            if old and old != new:
+                normalized.append({"old": old, "new": new})
+        if normalized:
+            return normalized
+    raise RuntimeError("局部修复没有返回可应用的 JSON replacements")
+
+
+def apply_repair_replacements(content: str, replacements: list[dict[str, str]]) -> str:
+    updated = str(content or "")
+    applied = 0
+    for replacement in replacements:
+        old = replacement["old"]
+        if old not in updated:
+            continue
+        updated = updated.replace(old, replacement["new"], 1)
+        applied += 1
+    if not applied:
+        raise RuntimeError("局部修复补丁与当前文件不匹配")
+    return updated
+
+
+def repair_adaptation_output(path: Path, config: dict[str, Any], validation_message: str) -> None:
+    content = path.read_text(encoding="utf-8", errors="ignore")
+    excerpt = repair_context_excerpt(content, validation_message)
+    prompt = f"""你正在修复一个视频脚本适配结果。只修复质检指出的局部错误，不得重写全文。
+
+质检错误：
+{validation_message}
+
+相关局部上下文：
+{excerpt}
+
+只返回 JSON：
+{{"replacements":[{{"old":"当前文本中的精确原文","new":"替换后的局部文本"}}]}}
+
+规则：old 必须逐字存在于上下文；每个 replacement 只覆盖最小必要片段；不要返回完整适配文档。
+"""
+    repaired_text, _raw_response, _endpoint_style = workflow.run_text_model(prompt, config, "脚本适配局部修复")
+    replacements = parse_repair_replacements(repaired_text)
+    path.write_text(apply_repair_replacements(content, replacements).rstrip() + "\n", encoding="utf-8")
+
+
 def quarantine_failed_output(path: Path, attempt: int, message: str) -> Path | None:
     if not path.exists() or not path.is_file():
         return None
@@ -1218,8 +1344,16 @@ def update_settings(payload: dict[str, Any]) -> dict[str, Any]:
         },
     )
 
-    if "video_analysis_max_output_tokens" in payload:
-        model["video_analysis_max_output_tokens"] = int(payload.get("video_analysis_max_output_tokens") or 32768)
+    if "video_analysis_max_output_tokens" in payload or "script_adaptation_max_output_tokens" in payload:
+        requested_tokens = int(
+            payload.get("script_adaptation_max_output_tokens")
+            or payload.get("video_analysis_max_output_tokens")
+            or workflow.DEFAULT_ADAPTATION_MAX_OUTPUT_TOKENS
+        )
+        model["script_adaptation_max_output_tokens"] = min(
+            requested_tokens,
+            workflow.MAX_ADAPTATION_MAX_OUTPUT_TOKENS,
+        )
 
     for key in ("script_adaptation_target_model",):
         if key in payload:
@@ -1243,6 +1377,7 @@ def build_overrides(payload: dict[str, Any]) -> dict[str, Any]:
         "script_adaptation_text_model",
         "modelmesh_base_url",
         "video_analysis_model",
+        "script_adaptation_target_language",
     ):
         value = payload.get(key)
         if value is not None:
@@ -1254,6 +1389,8 @@ def build_overrides(payload: dict[str, Any]) -> dict[str, Any]:
             payload.get("script_adaptation_segment_seconds"),
         )
     overrides["script_adaptation_notes"] = ""
+    if "script_adaptation_force_regenerate" in payload:
+        overrides["script_adaptation_force_regenerate"] = bool(payload.get("script_adaptation_force_regenerate"))
     return overrides
 
 
@@ -1951,6 +2088,13 @@ class AgentWebJob:
             config.get("script_adaptation_segment_seconds"),
         )
         parsed_name = workflow.parse_script_filename(script_filename)
+        if not str(config.get("script_adaptation_target_language") or "").strip():
+            inferred_language = workflow.COUNTRY_DEFAULT_LANGUAGES.get(
+                str(parsed_name.get("country") or "").upper(),
+                "",
+            )
+            if inferred_language:
+                overrides["script_adaptation_target_language"] = inferred_language
         source_id = adaptation_output_stem(config, script_filename, target_model)
         source_anchor = script["source_path"] or script_filename
         product_folder = workflow.product_folder_from_script(config, source_anchor)
@@ -1963,6 +2107,50 @@ class AgentWebJob:
         output_config = {**config, **overrides}
         output_dir = workflow.output_dir_for_stage("adapt", output_config, script_path)
         expected_md = output_dir / f"{source_id}.md"
+        status_log = read_adaptation_status_log(output_dir)
+        previous_status = adaptation_status_record_for_script(
+            expected_md,
+            script_filename,
+            script.get("source_path", ""),
+            status_log=status_log,
+        )
+        request_fingerprint = adaptation_request_fingerprint(
+            output_config,
+            script_text,
+            target_model,
+            output_config.get("script_adaptation_segment_seconds"),
+        )
+        existing_validation = adaptation_output_validation(
+            expected_md,
+            target_model,
+            script_path,
+            output_config.get("script_adaptation_segment_seconds"),
+        )
+        if not bool(output_config.get("script_adaptation_force_regenerate")) and reusable_adaptation_output(
+            expected_md,
+            existing_validation,
+            previous_status,
+            request_fingerprint,
+            script.get("source_path", ""),
+        ):
+            write_adaptation_status(
+                output_dir,
+                expected_md.name,
+                {
+                    **previous_status,
+                    "status": "completed",
+                    "source_filename": script_filename,
+                    "source_path": script.get("source_path", ""),
+                    "output_path": expected_md.as_posix(),
+                    "target_model": target_model,
+                    "request_fingerprint": request_fingerprint,
+                    "reused": True,
+                    "message": "复用已有适配结果，未调用模型",
+                },
+            )
+            print(f"[{index}/{total}] 已复用已有适配结果，未调用模型: {expected_md.name}")
+            return script_path, [output_payload(expected_md)]
+
         task_status = "running" if attempt == 1 else "retrying"
         base_status_record = {
             "status": task_status,
@@ -1985,6 +2173,7 @@ class AgentWebJob:
             "variant_index": parsed_name.get("variant_index", ""),
             "has_country_format": bool(parsed_name.get("has_country_format")),
             "target_model": target_model,
+            "request_fingerprint": request_fingerprint,
             "attempt": attempt,
             "max_attempts": ADAPTATION_QC_MAX_ATTEMPTS,
             "message": adaptation_status_label(task_status),
@@ -1996,7 +2185,12 @@ class AgentWebJob:
         print(f"[{index}/{total}] 已导入 Markdown: {script_filename}")
         print(f"[{index}/{total}] 脚本已保存: {display_path(script_path)}")
         print(f"[{index}/{total}] 输出目录: {display_path(output_dir)}")
-        print(f"[{index}/{total}] 开始调用脚本适配智能体...")
+        repair_only = (
+            attempt > 1
+            and expected_md.exists()
+            and str(previous_status.get("validation_state") or "") in INVALID_ADAPTATION_STATES
+        )
+        print(f"[{index}/{total}] 开始{'局部修复' if repair_only else '调用脚本适配智能体'}...")
         if self.is_cancelled():
             write_adaptation_status(
                 output_dir,
@@ -2009,7 +2203,14 @@ class AgentWebJob:
             )
             raise JobCancelled("用户终止任务")
         try:
-            workflow.run_adapt(output_config)
+            if repair_only:
+                repair_adaptation_output(
+                    expected_md,
+                    output_config,
+                    str(previous_status.get("validation_message") or previous_status.get("message") or "输出质检未通过"),
+                )
+            else:
+                workflow.run_adapt(output_config)
         except BaseException as exc:
             cancelled = self.is_cancelled()
             write_adaptation_status(
@@ -2045,7 +2246,11 @@ class AgentWebJob:
         )
         if not output_validation["valid"]:
             validation_message = str(output_validation["message"])
-            quarantined = quarantine_failed_output(expected_md, attempt, validation_message)
+            quarantined = (
+                quarantine_failed_output(expected_md, attempt, validation_message)
+                if attempt >= ADAPTATION_QC_MAX_ATTEMPTS
+                else None
+            )
             quarantine_note = f"；失败产物已隔离: {display_path(quarantined)}" if quarantined else ""
             write_adaptation_status(
                 output_dir,
@@ -2082,6 +2287,7 @@ class AgentWebJob:
                 **base_status_record,
                 "status": "completed",
                 "message": "输出质检通过",
+                "reused": False,
                 "validation_state": output_validation["state"],
                 "validation_message": output_validation["message"],
             },
@@ -2097,84 +2303,85 @@ class AgentWebJob:
         if task_count <= 0:
             print("[任务] 没有可执行脚本，已跳过")
             return
-        concurrency = max(1, min(ADAPTATION_MAX_CONCURRENCY, task_count))
-        print(f"[任务] 开始适配：共 {task_count} 个任务；并发 {concurrency} 路；质检不通过将自动重试，最多 {max_attempts} 次")
+        print(
+            f"[任务] 开始适配：共 {task_count} 个任务；每批最多 {ADAPTATION_BATCH_SIZE} 个；"
+            f"只重试失败脚本，失败批次按 3→2→1 缩小；最多 {max_attempts} 次"
+        )
 
-        def run_script_with_retry(index: int, script: dict[str, str]) -> dict[str, Any]:
+        def run_script_once(index: int, script: dict[str, str], attempt: int) -> dict[str, Any]:
             STDOUT_ROUTER.register(self)
             STDERR_ROUTER.register(self)
             agent = ScriptAdaptationAgent()
-            success = False
             try:
-                for attempt in range(1, max_attempts + 1):
-                    if self.is_cancelled():
-                        self.update_task(index, "cancelled", attempt=attempt - 1, error="用户终止任务")
-                        return {"success": False, "cancelled": True, "outputs": [], "script_path": ""}
-                    task_status = "running" if attempt == 1 else "retrying"
-                    self.update_task(index, task_status, attempt=attempt, error="")
-                    try:
-                        script_path, changed_payloads = self.run_single_adaptation_attempt(
-                            agent,
-                            payload,
-                            script,
-                            index,
-                            len(self.tasks),
-                            attempt,
-                        )
-                        if self.is_cancelled():
-                            self.update_task(index, "cancelled", output_paths=[], error="用户终止任务", attempt=attempt)
-                            return {"success": False, "cancelled": True, "outputs": [], "script_path": ""}
-                        self.update_task(
-                            index,
-                            "completed",
-                            output_paths=[item["path"] for item in changed_payloads],
-                            error="",
-                            attempt=attempt,
-                        )
-                        success = True
-                        return {
-                            "success": True,
-                            "script_path": display_path(script_path),
-                            "outputs": changed_payloads,
-                        }
-                    except JobCancelled as exc:
-                        message = str(exc) or "用户终止任务"
-                        print(f"[任务 {index}] 已终止: {message}")
-                        self.update_task(index, "cancelled", error=message, attempt=attempt)
-                        return {"success": False, "cancelled": True, "error": message, "outputs": [], "script_path": ""}
-                    except BaseException as exc:  # noqa: BLE001 - keep batch progress visible.
-                        message = str(exc)
-                        if self.is_cancelled():
-                            print(f"[任务 {index}] 已终止: 用户终止任务")
-                            self.update_task(index, "cancelled", error="用户终止任务", attempt=attempt)
-                            return {"success": False, "cancelled": True, "error": "用户终止任务", "outputs": [], "script_path": ""}
-                        print(f"[任务 {index}] 第 {attempt}/{max_attempts} 次适配失败: {message}")
-                        if is_non_retryable_model_error(message):
-                            reason = "模型接口返回不可重试错误，已终止剩余批量任务"
-                            print(f"[任务 {index}] {reason}: {message}")
-                            self.cancel_waiting_tasks(batch_id, reason)
-                            self.update_task(index, "failed", error=message, attempt=attempt)
-                            return {"success": False, "fatal": True, "error": message, "outputs": [], "script_path": ""}
-                        if attempt < max_attempts:
-                            print(f"[任务 {index}] 自动重新触发该脚本适配")
-                            self.update_task(index, "retrying", attempt=attempt, error=message)
-                            continue
-                        print(f"[任务 {index}] 适配失败，已达到最大重试次数: {message}")
-                        self.update_task(index, "failed", error=message, attempt=attempt)
-                        return {"success": False, "error": message, "outputs": [], "script_path": ""}
-                return {"success": success, "outputs": [], "script_path": ""}
+                if self.is_cancelled():
+                    self.update_task(index, "cancelled", attempt=attempt - 1, error="用户终止任务")
+                    return {"index": index, "script": script, "success": False, "cancelled": True}
+                self.update_task(index, "running" if attempt == 1 else "retrying", attempt=attempt, error="")
+                script_path, changed_payloads = self.run_single_adaptation_attempt(
+                    agent, payload, script, index, len(self.tasks), attempt,
+                )
+                if self.is_cancelled():
+                    self.update_task(index, "cancelled", output_paths=[], error="用户终止任务", attempt=attempt)
+                    return {"index": index, "script": script, "success": False, "cancelled": True}
+                self.update_task(
+                    index,
+                    "completed",
+                    output_paths=[item["path"] for item in changed_payloads],
+                    error="",
+                    attempt=attempt,
+                )
+                return {
+                    "index": index,
+                    "script": script,
+                    "success": True,
+                    "script_path": display_path(script_path),
+                    "outputs": changed_payloads,
+                }
+            except JobCancelled as exc:
+                message = str(exc) or "用户终止任务"
+                self.update_task(index, "cancelled", error=message, attempt=attempt)
+                return {"index": index, "script": script, "success": False, "cancelled": True, "error": message}
+            except BaseException as exc:  # noqa: BLE001 - keep batch progress visible.
+                message = str(exc)
+                fatal = is_non_retryable_model_error(message)
+                print(f"[任务 {index}] 第 {attempt}/{max_attempts} 次适配失败: {message}")
+                if fatal:
+                    self.cancel_waiting_tasks(batch_id, "模型接口返回不可重试错误，已终止剩余批量任务")
+                self.update_task(index, "failed" if fatal or attempt >= max_attempts else "retrying", error=message, attempt=attempt)
+                return {"index": index, "script": script, "success": False, "fatal": fatal, "error": message}
             finally:
                 STDOUT_ROUTER.unregister()
                 STDERR_ROUTER.unregister()
 
         results: list[dict[str, Any]] = []
-        with ThreadPoolExecutor(max_workers=concurrency) as executor:
-            futures = [
-                executor.submit(run_script_with_retry, index, script)
-                for index, script in indexed_scripts
-            ]
-            for future in as_completed(futures):
-                results.append(future.result())
+        for initial_batch in split_adaptation_batches(indexed_scripts):
+            pending = initial_batch
+            wave_size = min(ADAPTATION_BATCH_SIZE, len(pending))
+            for attempt in range(1, max_attempts + 1):
+                if not pending or self.is_cancelled():
+                    break
+                attempt_results: list[dict[str, Any]] = []
+                for wave in split_adaptation_batches(pending, wave_size):
+                    if self.is_cancelled():
+                        break
+                    with ThreadPoolExecutor(max_workers=min(wave_size, len(wave))) as executor:
+                        futures = [executor.submit(run_script_once, index, script, attempt) for index, script in wave]
+                        for future in as_completed(futures):
+                            attempt_results.append(future.result())
+                results.extend(result for result in attempt_results if result.get("success") or result.get("cancelled"))
+                if any(result.get("fatal") for result in attempt_results):
+                    pending = []
+                    break
+                pending = [
+                    (int(result["index"]), result["script"])
+                    for result in attempt_results
+                    if not result.get("success") and not result.get("cancelled")
+                ]
+                if pending and attempt < max_attempts:
+                    wave_size = next_retry_batch_size(wave_size)
+                    print(f"[任务] 仅重试 {len(pending)} 个失败脚本；下一批最多 {wave_size} 个")
+            if self.is_cancelled():
+                break
 
         for result in results:
             if result.get("success"):

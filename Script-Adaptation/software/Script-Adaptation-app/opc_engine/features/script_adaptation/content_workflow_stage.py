@@ -41,6 +41,20 @@ DEFAULT_SCRIPT_ADAPTATION_PROMPT_CONFIG_PATH = "workflow_configs/script_adaptati
 LEGACY_SCRIPT_ADAPTATION_PROMPT_PATH = ROOT / "knowledge_base" / "script_adaptation_prompt.md"
 LEGACY_SCRIPT_ADAPTATION_PROMPT_CONFIG_PATH = "knowledge_base/script_adaptation_prompt.md"
 METRICS_TABLE_SUFFIXES = {".csv", ".xlsx", ".xlsm"}
+DEFAULT_ADAPTATION_MAX_OUTPUT_TOKENS = 32768
+MAX_ADAPTATION_MAX_OUTPUT_TOKENS = 32768
+COUNTRY_DEFAULT_LANGUAGES = {
+    "US": "英语", "UK": "英语", "GB": "英语", "IE": "英语", "CA": "英语", "AU": "英语",
+    "FR": "法语", "ES": "西班牙语", "MX": "西班牙语", "DE": "德语", "IT": "意大利语", "VN": "越南语",
+    "PH": "菲律宾语", "BR": "葡萄牙语", "TH": "泰语", "MY": "马来语", "BD": "孟加拉语", "NP": "尼泊尔语", "ID": "印尼语",
+}
+PRODUCT_FACT_SECTION_KEYWORDS = (
+    "产品信息", "基本信息", "核心功能", "产品功能", "核心卖点", "卖点", "技术参数", "规格参数",
+    "产品属性", "核心功效", "核心成分", "适用人群", "目标人群", "适用场景", "使用流程", "关键约束", "合规",
+)
+PRODUCT_FACT_EXCLUDED_SECTIONS = (
+    "产品图片", "产品底图", "参考图", "品牌账号", "可用内容资产", "参考来源", "prompt 模板",
+)
 
 
 def log(message):
@@ -100,6 +114,63 @@ def get_script_adaptation_prompt(config):
     if not prompt_path.exists() and LEGACY_SCRIPT_ADAPTATION_PROMPT_PATH.exists():
         return read_text(LEGACY_SCRIPT_ADAPTATION_PROMPT_PATH)
     return read_text(prompt_path)
+
+
+def compact_product_fact_card(text, max_chars=3000):
+    """Keep only product facts that may constrain adaptation."""
+    source = str(text or "").strip()
+    if not source:
+        return ""
+    section_matches = list(re.finditer(r"^##\s+(.+?)\s*$", source, flags=re.MULTILINE))
+    if not section_matches:
+        return source[:max_chars].rstrip()
+    selected = []
+    for index, match in enumerate(section_matches):
+        title = match.group(1).strip().lower()
+        if any(excluded.lower() in title for excluded in PRODUCT_FACT_EXCLUDED_SECTIONS):
+            continue
+        if not any(keyword.lower() in title for keyword in PRODUCT_FACT_SECTION_KEYWORDS):
+            continue
+        end = section_matches[index + 1].start() if index + 1 < len(section_matches) else len(source)
+        selected.append(source[match.start():end].strip())
+    card = "\n\n".join(selected).strip()
+    if len(card) <= max_chars:
+        return card
+    clipped = card[:max_chars].rsplit("\n", 1)[0].rstrip()
+    return clipped + "\n\n[事实卡已截断；不得推测未提供的产品事实。]"
+
+
+def adaptation_product_fact_card(config):
+    for key in ("script_product_document_path", "product_profile_path"):
+        path = resolve_optional_path(config.get(key))
+        if path:
+            card = compact_product_fact_card(read_text(path))
+            if card:
+                return card
+    profile = config.get("product_profile")
+    if isinstance(profile, dict):
+        lines = [f"- {key}: {value}" for key, value in profile.items() if not str(key).startswith("_") and str(value).strip()]
+        return compact_product_fact_card("## 产品信息\n" + "\n".join(lines))
+    return ""
+
+
+def adaptation_target_language(config, input_path=None):
+    explicit = str(
+        config.get("script_adaptation_target_language")
+        or config.get("script_target_language")
+        or ""
+    ).strip()
+    if explicit and explicit not in {"不改变原脚本", "跟随原脚本", "保持原脚本", "不变"}:
+        return explicit
+    parsed = parse_script_filename(Path(input_path).name if input_path else "")
+    return COUNTRY_DEFAULT_LANGUAGES.get(str(parsed.get("country") or "").upper(), "")
+
+
+def adaptation_language_rule(language):
+    target = str(language or "").strip()
+    if not target:
+        return "仅保留源脚本中的原文语言，不翻译、不新增其他语言。"
+    return f"本次仅使用 {target}；口播、字幕和屏幕文字不得混入其他语言。"
 
 
 def safe_name(value):
@@ -1138,7 +1209,7 @@ def build_local_adaptation_scaffold(input_path, source_text, target_model, segme
     return "\n".join(lines), segments
 
 
-def build_adaptation_prompt(config, source_text, target_model, segment_seconds, notes):
+def build_adaptation_prompt(config, source_text, target_model, segment_seconds, notes, input_path=None):
     prompt_template = get_script_adaptation_prompt(config)
     target_key = str(target_model).lower()
     is_markdown_segment_model = target_key in {"omni", "grok"}
@@ -1162,6 +1233,9 @@ def build_adaptation_prompt(config, source_text, target_model, segment_seconds, 
             "所有 Segment 标题时长相加必须接近原视频总时长，不能明显放大总时长。\n"
             f"如果原片总时长不超过 {segment_seconds}s，优先输出 1 个 Segment；超过 {segment_seconds}s 时按该上限自然拆分，优先使用更少、更完整的长片段。\n"
         )
+    language_rule = adaptation_language_rule(adaptation_target_language(config, input_path))
+    product_fact_card = adaptation_product_fact_card(config)
+    product_context = f"\n产品精简事实卡：\n{product_fact_card}\n" if product_fact_card else ""
     return f"""{prompt_template}
 
 ---
@@ -1176,6 +1250,10 @@ def build_adaptation_prompt(config, source_text, target_model, segment_seconds, 
 
 适配备注：
 {notes or "无"}
+
+本次语言规则：
+{language_rule}
+{product_context}
 {segment_count_note}
 
 ---
@@ -1206,8 +1284,8 @@ def is_openai_compatible_text_api(base_url, model):
     return "deepseek" in text or "/chat/completions" in text
 
 
-def build_openai_text_payload(prompt, model, max_output_tokens):
-    return {
+def build_openai_text_payload(prompt, model, max_output_tokens, thinking_mode=""):
+    payload = {
         "model": model,
         "messages": [
             {
@@ -1218,6 +1296,9 @@ def build_openai_text_payload(prompt, model, max_output_tokens):
         "temperature": 0.45,
         "max_tokens": max_output_tokens,
     }
+    if thinking_mode in {"enabled", "disabled"}:
+        payload["thinking"] = {"type": thinking_mode}
+    return payload
 
 
 def extract_openai_text(response):
@@ -1246,7 +1327,12 @@ def run_text_model(prompt, config, label):
         or DEFAULT_MODEL
     )
     base_url = str(config.get("modelmesh_base_url") or DEFAULT_BASE_URL).strip()
-    max_output_tokens = int(config.get("video_analysis_max_output_tokens", 32768) or 32768)
+    configured_max_tokens = int(
+        config.get("script_adaptation_max_output_tokens")
+        or config.get("video_analysis_max_output_tokens")
+        or DEFAULT_ADAPTATION_MAX_OUTPUT_TOKENS
+    )
+    max_output_tokens = max(1024, min(configured_max_tokens, MAX_ADAPTATION_MAX_OUTPUT_TOKENS))
     openai_compatible = is_openai_compatible_text_api(base_url, model)
     headers = {"Content-Type": "application/json"}
     if openai_compatible:
@@ -1259,7 +1345,8 @@ def run_text_model(prompt, config, label):
     if openai_compatible:
         url = f"{base_url.rstrip('/')}/chat/completions"
         log(f"接口: {url}")
-        payload = build_openai_text_payload(prompt, model, max_output_tokens)
+        thinking_mode = "disabled" if "deepseek" in f"{base_url} {model}".lower() else ""
+        payload = build_openai_text_payload(prompt, model, max_output_tokens, thinking_mode)
         status, response = post_json(url, headers, payload, 240)
         if 200 <= status < 300:
             return extract_openai_text(response), response, "openai-chat-completions"
@@ -1314,7 +1401,7 @@ def run_adapt(config):
     }
 
     if source_text and prompt_template:
-        adaptation_prompt = build_adaptation_prompt(config, source_text, target_model, segment_seconds, notes)
+        adaptation_prompt = build_adaptation_prompt(config, source_text, target_model, segment_seconds, notes, input_path)
         adapted_text, raw_response, endpoint_style = run_text_model(adaptation_prompt, config, "脚本适配")
         segments = split_script_into_segments(source_text, max_segments=80)
         if target_model.lower() in {"omni", "grok"}:

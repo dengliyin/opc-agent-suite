@@ -9,7 +9,8 @@
     "modelmesh_base_url": "https://api.deepseek.com",
     "video_analysis_model": "deepseek-v4-pro",
     "script_adaptation_text_model": "deepseek-v4-pro",
-    "video_analysis_max_output_tokens": 32768
+    "video_analysis_max_output_tokens": 32768,
+    "script_adaptation_max_output_tokens": 32768
   },
   "adaptation": {
     "_说明": "脚本适配任务参数。target_model 用于提示词变量，segment_seconds 是每段视频生成时长上限。",

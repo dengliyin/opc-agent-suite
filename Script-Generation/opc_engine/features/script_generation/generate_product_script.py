@@ -14,7 +14,6 @@ import tempfile
 import threading
 import time
 import uuid
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
 from opc_shared.global_ai import load_profile
@@ -74,8 +73,10 @@ DEFAULT_CONTENT_KNOWLEDGE_PATH = Path(
 DEFAULT_CONTENT_KNOWLEDGE_CONFIG_PATH = DEFAULT_CONTENT_KNOWLEDGE_PATH.as_posix()
 DEFAULT_TIMEOUT = 120
 DEFAULT_MAX_OUTPUT_TOKENS = 24000
+DEFAULT_MUTATION_MAX_OUTPUT_TOKENS = 96 * 1024
 DEFAULT_MUTATION_VARIANTS = 3
-DEFAULT_MUTATION_BATCH_SIZE = 2
+DEFAULT_MUTATION_BATCH_SIZE = 3
+MAX_MUTATION_BATCH_SIZE = 3
 MUTATION_RUN_TS_FORMAT = "%Y%m%d-%H%M%S"
 API_CONCURRENCY_STATE_PATH = Path(
     os.environ.get("KESAI_API_CONCURRENCY_STATE_PATH", "/tmp/kesai_script_generation_api_slots.json")
@@ -232,6 +233,15 @@ PRODUCT_FIELD_LABELS = {
     "material_type_suggestions": "适配素材类型建议",
     "notes": "补充备注",
 }
+
+PRODUCT_FACT_SECTION_KEYWORDS = (
+    "产品信息", "基本信息", "核心功能", "产品功能", "核心卖点", "卖点", "技术参数", "规格参数",
+    "产品属性", "核心功效", "核心成分", "适用人群", "目标人群", "适用场景", "使用流程", "使用体验",
+    "市场定位", "多市场目标", "关键约束", "合规", "容易犯的错误", "待确认", "范围", "香型",
+)
+PRODUCT_FACT_EXCLUDED_SECTIONS = (
+    "产品图片", "产品底图", "图生视频参考图", "品牌账号", "可用内容资产", "参考来源", "关联", "prompt 模板",
+)
 
 
 def log(message):
@@ -530,6 +540,41 @@ def get_product_manual(config):
     return product_profile_to_markdown(config.get("product_profile", {}))
 
 
+def compact_product_fact_card(product_manual, max_chars=5000):
+    """Keep only business facts needed by generation, without another model call."""
+    text = str(product_manual or "").strip()
+    if not text:
+        return "未填写产品信息。"
+
+    section_matches = list(re.finditer(r"^##\s+(.+?)\s*$", text, flags=re.MULTILINE))
+    if not section_matches:
+        return text[:max_chars].rstrip()
+
+    prefix = text[:section_matches[0].start()].strip()
+    selected = [prefix] if prefix else []
+    for index, match in enumerate(section_matches):
+        title = match.group(1).strip()
+        title_key = title.lower()
+        if any(excluded.lower() in title_key for excluded in PRODUCT_FACT_EXCLUDED_SECTIONS):
+            continue
+        if not any(keyword.lower() in title_key for keyword in PRODUCT_FACT_SECTION_KEYWORDS):
+            continue
+        end = section_matches[index + 1].start() if index + 1 < len(section_matches) else len(text)
+        section = text[match.start():end].strip()
+        if section:
+            selected.append(section)
+
+    card = "\n\n".join(selected).strip() or text
+    if len(card) <= max_chars:
+        return card
+    clipped = card[:max_chars].rsplit("\n", 1)[0].rstrip()
+    return clipped + "\n\n[事实卡已按长度截断；不得推测未提供的产品事实。]"
+
+
+def get_product_fact_card(config):
+    return compact_product_fact_card(get_product_manual(config))
+
+
 def get_reference_path(config):
     preferred_keys = REFERENCE_PATH_KEYS
     if "脚本" in str(config.get("script_reference_kind", "") or ""):
@@ -758,6 +803,33 @@ def normalized_target_language(config):
     return target_language
 
 
+def target_language_rule(config, reference_label="母稿"):
+    target_language = normalized_target_language(config)
+    if preserves_original_script(target_language):
+        return f"未单独指定；请跟随{reference_label}中的目标语言。"
+
+    base = (
+        f"口播、字幕、贴纸文案和屏幕文字必须使用 {target_language}；"
+        "中文只可作为括号内翻译对照。"
+    )
+    language_key = target_language.lower()
+    if "american english" in language_key:
+        return base + "使用美国市场自然表达和美式拼写。"
+    if "british english" in language_key:
+        return base + "使用英国市场自然表达和英式拼写。"
+    if "irish english" in language_key:
+        return base + "使用爱尔兰市场自然表达，并倾向英式拼写。"
+    if "孟加拉" in target_language or "bengali" in language_key or "bangla" in language_key:
+        return base + "使用 Bengali / Bangla，优先孟加拉文字，不得用 Malay、印尼语或英语替代。"
+    if "马来" in target_language or "malay" in language_key or "bahasa" in language_key:
+        return base + "使用 Malay / Bahasa Malaysia，不得用 Bengali、Nepali、Hindi 或英语替代。"
+    if "尼泊尔" in target_language or "nepali" in language_key:
+        return base + "使用 Nepali，优先天城文，不得用 Malay、Bengali 或英语替代。"
+    if "法语" in target_language or "french" in language_key or "français" in language_key:
+        return base + "使用 French / Français，不得用西班牙语、德语或原脚本语言替代。"
+    return base
+
+
 def mutation_variant_count(config, args=None):
     configured = getattr(args, "mutation_variants", 0) if args is not None else 0
     if not configured:
@@ -777,16 +849,7 @@ def mutation_batch_size(config, args=None):
         size = int(configured)
     except (TypeError, ValueError):
         size = DEFAULT_MUTATION_BATCH_SIZE
-    return max(1, min(5, size))
-
-
-def mutation_request_concurrency(config, args=None):
-    configured = os.environ.get("KESAI_SCRIPT_MUTATION_CONCURRENCY") or config.get("script_mutation_request_concurrency")
-    try:
-        value = int(configured)
-    except (TypeError, ValueError):
-        value = max_api_concurrency(config)
-    return max(1, min(max_api_concurrency(config), value))
+    return max(1, min(MAX_MUTATION_BATCH_SIZE, size))
 
 
 def should_run_mutation(config, args=None):
@@ -813,7 +876,7 @@ def build_generation_prompt(config):
     use_generation_prompt = parse_bool(config.get("script_use_generation_prompt", True))
     prompt_template = get_prompt_template(config) if use_generation_prompt else ""
     content_knowledge = get_content_knowledge_base(config)
-    product_manual = get_product_manual(config)
+    product_manual = get_product_fact_card(config)
     competitor_reference = read_text_file(reference_path)
 
     country = str(config.get("script_country", "") or "").strip()
@@ -828,18 +891,11 @@ def build_generation_prompt(config):
         if not preserves_original_script(country)
         else f"未单独指定；请跟随{reference_label}中的国家/地区语境。"
     )
-    language_instruction = (
-        f"本次脚本的口播、字幕、贴纸文案、屏幕文字和音频交付说明必须使用 {target_language}；中文翻译可作为对照保留。"
-        f"如果目标语言包含 American English，必须使用美国市场自然表达和美式拼写；如果包含 British English，必须使用英国市场自然表达和英式拼写；如果包含 Irish English，必须使用爱尔兰市场自然表达并倾向英式拼写。"
-        f"如果目标语言是“孟加拉语”，必须使用 Bengali / Bangla（优先孟加拉文字），不得使用 Malay、Bahasa Malaysia、印尼语或英语替代。"
-        f"如果目标语言是“法语”，必须使用 French / Français，不得使用 Spanish / Español / 德语或原脚本语言替代。"
-        if not preserves_original_script(target_language)
-        else f"未单独指定；请跟随{reference_label}中的目标语言。"
-    )
+    language_instruction = target_language_rule(config, reference_label)
 
     variables = f"""# 系统自动导入变量（由页面结构化参数和本地文件生成）
 
-产品手册信息：
+产品精简事实卡：
 {product_manual}
 
 错题本：
@@ -891,33 +947,21 @@ def build_generation_prompt(config):
 
 # 本次额外约束
 
-- 你正在做的是“脚本产出”：把竞品爆款视频的底层逻辑、情绪节奏、转场力度和话术杀伤力，复刻成适配我方产品的新带货视频脚本。
-- 必须同时参考“{prompt_inputs_text}”；其中参考爆款内容是唯一案例来源，错题本只用于避免重复历史错误、错误卖点、错误表达、合规风险和不适合本产品的转化角度。
-- 当参考爆款内容是竞品脚本时，必须先拆出它的镜头节奏、痛点递进、情绪强度、卖点进入顺序和 CTA 位置；人物数量、角色功能、年龄段、动作路径、镜头语言、光线、贴纸位置、特效、BGM 和每个镜头的时间码都是锁定项。
-- 竞品里的旧产品、旧痛点、旧机制只有在与“产品手册信息”不一致或不合规时才替换；替换范围仅限产品占位、音频文案、字幕和贴纸文案中的产品信息。若“国家/地区”指定了具体市场，还必须把人物外观、服装审美、场景陈设和消费语境本地化到该市场，但不得改变镜头功能、动作路径或重写整条画面结构。
-- 必须严格遵守“国家/地区、目标语言”两个结构化变量；这些变量优先级高于参考脚本。国家/地区指定具体市场时，[主体]、[在场景中]、[画面风格/氛围] 和本地化表达必须服务于该市场；目标语言指定具体语言时，所有口播、字幕、贴纸文案和屏幕文字必须使用该语言。视频总时长和逐镜时间码必须与参考脚本完全一致。
-- 如果目标语言是孟加拉语，台词列必须输出 Bengali / Bangla 文案；字幕列可以放中文翻译对照。不得用 Malay/Bahasa 代替 Bengali。
-- 如果目标语言是法语，台词列必须输出 French / Français 文案；字幕列可以放中文翻译对照。不得用 Spanish / Español、德语或原脚本语言代替法语。
-- 每个镜头必须把声音描述与真实台词分开：**[声音/语气]** 只写声音、情绪和语速，**[音频文案]** 只写实际会被朗读的真实目标语言台词；中文翻译对照只能放在该条音频文案最后一个括号里。
-- SFX、笑声、喘息声、摩擦声、揉搓声、泼水声、环境声和动作声音不是口播，必须写入 **[环境音/音效]**，绝对不能写进 **[音频文案]**；只有人物或旁白真正说出的目标语言台词才能进入音频文案。
-- 真实口播按 TikTok 快节奏匹配镜头时间码：拉丁字母语言建议不超过 3.2 词/秒、硬上限 3.8 词/秒；中文/日文/韩文建议不超过 5.5 字/秒、硬上限 6.5 字/秒。建议值到硬上限之间允许保留，只有超过硬上限才必须缩短；所有容量向上取整。
-- 必须逐镜头继承参考稿的有声/静音结构：参考稿对应镜头没有真实 **[音频文案]** 时，该镜头不得新增口播，也不要输出 **[声音/语气]**、**[音频文案]**、**[音频交付模式]**；标注“无口播”“无声”“仅有环境音/动作音效”同样属于静音镜头。背景音乐、环境音和字幕仍按参考稿保留。
-- 主体类型是不可变的核心视觉资产：参考稿中的骷髅人、人体骨骼模型、机器人、动物拟人、玩偶、怪物或无人物动画绝对不能改成真人；本地化只允许调整服装、配饰、发型、场景陈设和表达习惯。
-- 贴纸必须最小改动：保留参考脚本里的贴纸数量、位置、颜色、层级、按钮/箭头/CTA 结构和出现镜头；贴纸文案不要重新创作，只允许把旧产品词、冲突卖点或合规风险词替换成我方产品对应表达。目标语言贴纸不得出现中外文混写，中文只能放在括号里的翻译对照。
-- 拍摄设备、固定方式、支撑物、垫靠物和摆放位置只用于推导镜头视角；输出脚本时只能写成自拍视角、固定机位、低角度、平视、俯拍、仰拍、轻微手持晃动等抽象镜头语言，不得写入可见场景、动作、道具、细节或倒影。
-- 不要输出拆解报告，不要解释你怎么思考，直接输出可拍摄脚本。
-- 每个镜头都必须保留完整的画面、动作、光线、音效、音频文案、中文翻译和语速。
+- 以“{prompt_inputs_text}”为唯一输入边界；产品事实以精简事实卡为准，错题本只用于规避历史错误。
+- 结构化的国家/地区、目标语言和参考时间轴优先级最高；不要输出分析过程。
+- 复刻规则、字段格式、镜头锁定、音频、贴纸、主体类型和合规要求只执行上方提示词中的对应规则，不重复扩写。
 """
 
 
 def build_mutation_prompt(config, generated_script, variant_count, batch_start=1, total_variant_count=None, reference_context=""):
     prompt_template = get_mutation_prompt_template(config)
-    product_manual = get_product_manual(config)
+    product_manual = get_product_fact_card(config)
     content_knowledge = get_content_knowledge_base(config)
     reference_label = get_reference_label(config)
     reference_path = get_reference_path(config)
     country = str(config.get("script_country", "") or "").strip()
     target_language = normalized_target_language(config)
+    language_rule = target_language_rule(config, "母稿")
     timecode_rule = "必须保持原脚本每个镜头的时间码、镜头编号、景别/机位逻辑、情绪强度、视觉奇观底层逻辑、叙事推进顺序和 CTA 位置。"
 
     total_variant_count = total_variant_count or variant_count
@@ -935,7 +979,7 @@ def build_mutation_prompt(config, generated_script, variant_count, batch_start=1
 本批次编号：
 请只输出第 {batch_start} 到第 {batch_end} 个变体；这是总计 {total_variant_count} 个裂变脚本中的一个分批请求。
 
-产品手册信息：
+产品精简事实卡：
 {product_manual}
 
 错题本：
@@ -978,25 +1022,11 @@ def build_mutation_prompt(config, generated_script, variant_count, batch_start=1
 # 本次额外约束
 
 - 输出必须是“改写后的结果”，不要要求用户再提供原脚本，也不要输出和执行无关的说明。
-- 只裂变“裂变主输入”；“辅助参考上下文”只能用于理解，不得混入最终脚本正文。
+- 只裂变“裂变主输入”；不再附带或重复发送原参考脚本。
 - {timecode_rule}
-- 裂变阶段必须以裂变提示词和错题本为边界；只允许改提示词允许改的外观、场景、道具、光线、抽象机位角度和局部表演包装，不得改产品事实、核心卖点、承诺、目标语言和 CTA 位置。
-- 如果“目标语言变量”不是“不改变原脚本”，所有裂变脚本的口播、字幕、贴纸文案、屏幕文字和音频交付说明必须使用该目标语言；不得回退到原脚本语言。
-- 如果“目标语言变量”为“孟加拉语”，台词列必须输出 Bengali / Bangla 文案；字幕列可以放中文翻译对照。不得使用 Malay、Bahasa Malaysia、印尼语或英语替代。
-- 如果“目标语言变量”为“马来语”，台词列必须输出 Malay / Bahasa Malaysia 文案；不得使用 Bengali、Bangla、Nepali、Hindi、天城文或英语替代。
-- 如果“目标语言变量”为“尼泊尔语”，台词列必须输出 Nepali 文案（优先天城文）；不得使用 Malay、Bengali、Bangla、印尼语或英语替代。
-- 如果“目标语言变量”为“法语”，台词列必须输出 French / Français 文案；不得使用 Spanish / Español、德语或原脚本语言替代。
-- 如果“目标语言变量”包含 American English，必须使用美国市场自然表达和美式拼写；如果包含 British English，必须使用英国市场自然表达和英式拼写；如果包含 Irish English，必须使用爱尔兰市场自然表达并倾向英式拼写。
+- 裂变阶段以裂变提示词、精简事实卡和错题本为唯一规则边界；重复规则只执行上方提示词中的版本。
+- 当前语言规则：{language_rule}
 - 如果“国家/地区变量”不是“不改变原脚本”，人物外观、服装审美、场景陈设、道具、消费语境和本地化表达必须服务于该国家/地区；不得回到母版原国家语境。
-- 每个镜头必须把声音描述与真实台词分开：**[声音/语气]** 只写声音、情绪和语速，**[音频文案]** 只写实际会被朗读的真实目标语言台词；中文翻译对照只能放在该条音频文案最后一个括号里。
-- SFX、笑声、喘息声、摩擦声、揉搓声、泼水声、环境声和动作声音不是口播，必须写入 **[环境音/音效]**，绝对不能写进 **[音频文案]**；母版只有非语言音效的镜头不得新增人物口播或旁白。
-- 真实口播按 TikTok 快节奏匹配镜头时间码：拉丁字母语言建议不超过 3.2 词/秒、硬上限 3.8 词/秒；中文/日文/韩文建议不超过 5.5 字/秒、硬上限 6.5 字/秒。建议值到硬上限之间允许保留，只有超过硬上限才必须缩短；所有容量向上取整。
-- 必须逐镜头继承母版的有声/静音结构：母版对应镜头没有真实 **[音频文案]** 时，该变体镜头不得新增口播，也不要输出 **[声音/语气]**、**[音频文案]**、**[音频交付模式]**；标注“无口播”“无声”“仅有环境音/动作音效”同样属于静音镜头。背景音乐、环境音和字幕仍按母版保留。
-- 必须锁定母版主体的物种、材质和生命形态：骷髅人、人体骨骼模型、机器人、动物拟人、玩偶、怪物或无人物动画不得裂变成真人；只能变化服装、配饰、发型、场景和局部造型。
-- 贴纸必须最小改动：保留母版脚本里的贴纸数量、位置、颜色、层级、按钮/箭头/CTA 结构和出现镜头；贴纸文案只做必要产品词、合规词或目标语言修正，不得重新创作整句，不得出现中外文混写。
-- 拍摄设备、固定方式、支撑物、垫靠物和摆放位置只用于推导镜头视角；输出脚本时只能写成自拍视角、固定机位、低角度、平视、俯拍、仰拍、轻微手持晃动等抽象镜头语言，不得写入可见场景、动作、道具、细节或倒影。
-- 每个变体都要视觉差异明显，不能只是把“浴室”换成“卧室”这种轻微改词。
-- 阶段三必须输出完整 AI 视频生产级提示词，沿用原脚本的镜头格式。
 - 必须输出完整脚本正文，不得写“继续生成”“篇幅限制”“剩余变体遵循相同格式”等占位说明。
 - 每个变体必须用独立标题开头，格式为：### 变体 #{batch_start}、### 变体 #{batch_start + 1}，依次到 ### 变体 #{batch_end}。
 """
@@ -1017,13 +1047,16 @@ def build_payload(prompt, max_output_tokens):
     }
 
 
-def build_openai_payload(prompt, max_output_tokens):
-    return {
+def build_openai_payload(prompt, max_output_tokens, thinking_mode=""):
+    payload = {
         "model": "",
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.65,
         "max_tokens": max_output_tokens,
     }
+    if thinking_mode in {"enabled", "disabled"}:
+        payload["thinking"] = {"type": thinking_mode}
+    return payload
 
 
 def extract_openai_text(response):
@@ -1055,6 +1088,10 @@ def openai_endpoint_variants(base_url):
 def should_use_openai_compatible_api(base_url, model):
     text = f"{base_url} {model}".lower()
     return any(marker in text for marker in ("deepseek", "openai", "chat/completions"))
+
+
+def supports_deepseek_thinking(base_url, model):
+    return "deepseek" in f"{base_url} {model}".lower()
 
 
 def obsidian_cli_command(config, args=None):
@@ -1168,7 +1205,7 @@ def call_obsidian_cli(config, args, prompt, task_name, extra_log=""):
         return _call_obsidian_cli_unlimited(config, args, prompt, task_name, extra_log)
 
 
-def _call_text_model_unlimited(config, args, prompt, task_name, extra_log=""):
+def _call_text_model_unlimited(config, args, prompt, task_name, extra_log="", request_kind="clone"):
     api_key = get_api_key(config)
     if not api_key:
         raise SystemExit(
@@ -1178,8 +1215,13 @@ def _call_text_model_unlimited(config, args, prompt, task_name, extra_log=""):
     model = args.model or config.get("script_generation_model") or config.get("video_analysis_model") or DEFAULT_MODEL
     base_url = args.base_url or config.get("modelmesh_base_url") or DEFAULT_BASE_URL
     timeout = args.timeout or int(config.get("script_generation_timeout") or DEFAULT_TIMEOUT)
-    max_output_tokens = args.max_output_tokens or int(
+    configured_max_tokens = args.max_output_tokens or int(
         config.get("script_generation_max_output_tokens") or DEFAULT_MAX_OUTPUT_TOKENS
+    )
+    max_output_tokens = (
+        int(config.get("script_mutation_max_output_tokens") or DEFAULT_MUTATION_MAX_OUTPUT_TOKENS)
+        if request_kind == "mutation"
+        else configured_max_tokens
     )
 
     if should_use_openai_compatible_api(base_url, model):
@@ -1197,7 +1239,10 @@ def _call_text_model_unlimited(config, args, prompt, task_name, extra_log=""):
         last_error = None
         for url, endpoint_style in openai_endpoint_variants(base_url):
             log(f"尝试接口格式: {endpoint_style}")
-            payload = build_openai_payload(prompt, max_output_tokens)
+            thinking_mode = ""
+            if supports_deepseek_thinking(base_url, model):
+                thinking_mode = "enabled" if request_kind == "clone" else "disabled"
+            payload = build_openai_payload(prompt, max_output_tokens, thinking_mode)
             payload["model"] = model
             status, response = post_json(url, headers, payload, timeout)
             if 200 <= status < 300:
@@ -1235,9 +1280,9 @@ def _call_text_model_unlimited(config, args, prompt, task_name, extra_log=""):
     raise RuntimeError(f"所有 Gemini 原生接口尝试均失败: {json.dumps(last_error, ensure_ascii=False)[:1200]}")
 
 
-def call_text_model(config, args, prompt, task_name, extra_log=""):
+def call_text_model(config, args, prompt, task_name, extra_log="", request_kind="clone"):
     with global_api_slot(task_name, config):
-        return _call_text_model_unlimited(config, args, prompt, task_name, extra_log)
+        return _call_text_model_unlimited(config, args, prompt, task_name, extra_log, request_kind)
 
 
 def generate_script(config, args):
@@ -1761,30 +1806,113 @@ def require_audio_fit(text):
     return issues
 
 
+def extract_shot_blocks(script_text, shot_keys):
+    wanted = {str(key).zfill(3) for key in shot_keys}
+    blocks = {}
+    current_key = None
+    current_lines = []
+    shot_index = 0
+    for line in str(script_text or "").splitlines():
+        stripped = line.strip()
+        is_heading = bool(
+            re.search(r"(?:镜头|Shot|SHOT)\s*#?\s*\d{1,3}", stripped)
+            or re.match(r"^\s*(?:#{1,6}\s*)?\d{1,3}[\.、\s-]", stripped)
+        )
+        if is_heading:
+            if current_key in wanted:
+                blocks[current_key] = "\n".join(current_lines).strip()
+            shot_index += 1
+            current_key = extract_shot_key(stripped, shot_index)
+            current_lines = [line]
+        elif current_key:
+            current_lines.append(line)
+    if current_key in wanted:
+        blocks[current_key] = "\n".join(current_lines).strip()
+    return blocks
+
+
 def build_subject_type_repair_prompt(script_text, issues):
+    shot_blocks = extract_shot_blocks(script_text, [issue["shot_key"] for issue in issues])
     requirements = [
         (
             f'- 镜头 {issue["shot_key"]}：主体类型必须保持为 {issue["reference_type"]}；'
-            f'参考主体为“{issue["reference_subject"]}”'
+            f'参考主体为“{issue["reference_subject"]}”；当前镜头为：\n{shot_blocks.get(issue["shot_key"], "")}'
         )
         for issue in issues
     ]
-    return f"""你是短视频脚本主体一致性校对器。请修正下面脚本中被错误改变的主体类型。
+    return f"""你是短视频脚本主体一致性校对器。只返回需要替换的局部字段 JSON。
 
 必须遵守：
 1. 骷髅人、人体骨骼模型、机器人、动物拟人、玩偶、怪物和无人物动画都属于母版核心视觉资产，绝对不能改成真人。
-2. 只纠正列出镜头的主体类型，并同步修正这些镜头中与错误主体冲突的动作和细节描述。
+2. 每个镜头只可返回 `主体`、`做什么动作`、`细节` 三个字段；没有冲突的字段不要返回。
 3. 可以本地化服装、配饰和场景，但不得改变主体的物种、材质、生命形态或“无人物”状态。
 4. 不得修改镜头数量、镜头编号、时间码、产品事实、卖点顺序、音频文案或 CTA。
-5. 直接返回完整 Markdown 脚本，不解释。
+5. 只返回合法 JSON，不要代码围栏、完整 Markdown 或解释。
+
+返回格式示例：
+{{"001": {{"主体": "一个穿家居服的人体骨骼模型", "做什么动作": "骨骼模型抬手指向产品"}}}}
 
 必须纠正：
 {chr(10).join(requirements)}
-
-待修正脚本：
-
-{script_text}
 """
+
+
+def parse_subject_repair_updates(text):
+    content = re.sub(r"^```(?:json)?\s*|\s*```$", "", str(text or "").strip(), flags=re.I)
+    start, end = content.find("{"), content.rfind("}")
+    if start < 0 or end <= start:
+        return {}
+    try:
+        payload = json.loads(content[start:end + 1])
+    except json.JSONDecodeError:
+        return {}
+    if isinstance(payload, dict) and isinstance(payload.get("updates"), dict):
+        payload = payload["updates"]
+    if not isinstance(payload, dict):
+        return {}
+    allowed_fields = {"主体", "做什么动作", "细节"}
+    updates = {}
+    for key, fields in payload.items():
+        match = re.search(r"\d{1,3}", str(key))
+        if not match or not isinstance(fields, dict):
+            continue
+        shot_key = match.group(0).zfill(3)
+        clean_fields = {
+            str(field): str(value).strip()
+            for field, value in fields.items()
+            if str(field) in allowed_fields and str(value).strip()
+        }
+        if clean_fields:
+            updates[shot_key] = clean_fields
+    return updates
+
+
+def apply_subject_repair_updates(script_text, updates):
+    output = []
+    current_key = None
+    shot_index = 0
+    applied = set()
+    for line in str(script_text or "").splitlines():
+        stripped = line.strip()
+        if re.search(r"(?:镜头|Shot|SHOT)\s*#?\s*\d{1,3}", stripped) or re.match(
+            r"^\s*(?:#{1,6}\s*)?\d{1,3}[\.、\s-]", stripped
+        ):
+            shot_index += 1
+            current_key = extract_shot_key(stripped, shot_index)
+            output.append(line)
+            continue
+        field_name = markdown_field_name(line)
+        replacement = (updates.get(current_key) or {}).get(field_name)
+        if replacement:
+            prefix_match = re.match(
+                r"^(?P<prefix>\s*(?:[-*]\s*)?(?:\*\*)?[【\[][^】\]]+[】\]](?:\*\*)?\s*[:：]?\s*)",
+                line,
+            )
+            output.append((prefix_match.group("prefix") if prefix_match else f"[{field_name}] ") + replacement)
+            applied.add((current_key, field_name))
+        else:
+            output.append(line)
+    return "\n".join(output), sorted(applied)
 
 
 def repair_script_subject_type(config, args, script_text, reference_text, task_name):
@@ -1801,13 +1929,15 @@ def repair_script_subject_type(config, args, script_text, reference_text, task_n
     prompt = build_subject_type_repair_prompt(corrected_text, issues)
     backend = script_generation_backend(config, args)
     if backend in {"obsidian", "obsidian_cli"}:
-        repaired_text, repair_raw, endpoint_style, field_style = call_obsidian_cli(
+        repair_response, repair_raw, endpoint_style, field_style = call_obsidian_cli(
             config, args, prompt, task_name, f"待纠正镜头: {len(issues)}"
         )
     else:
-        repaired_text, repair_raw, endpoint_style, field_style = call_text_model(
-            config, args, prompt, task_name, f"待纠正镜头: {len(issues)}"
+        repair_response, repair_raw, endpoint_style, field_style = call_text_model(
+            config, args, prompt, task_name, f"待纠正镜头: {len(issues)}", request_kind="repair"
         )
+    updates = parse_subject_repair_updates(repair_response)
+    repaired_text, applied_fields = apply_subject_repair_updates(corrected_text, updates)
     repaired_text, repair_timeline_warnings = enforce_output_timeline(config, reference_text, repaired_text)
     remaining_issues = validate_subject_type_lock(reference_text, repaired_text)
     if remaining_issues:
@@ -1820,6 +1950,7 @@ def repair_script_subject_type(config, args, script_text, reference_text, task_n
         "timeline_warnings": timeline_warnings + repair_timeline_warnings,
         "endpoint_style": endpoint_style,
         "field_style": field_style,
+        "applied_fields": applied_fields,
         "raw": repair_raw,
     }
 
@@ -1981,7 +2112,7 @@ def repair_script_audio(config, args, script_text, reference_text, task_name):
             )
         else:
             repair_response, repair_raw, endpoint_style, field_style = call_text_model(
-                config, args, prompt, attempt_name, f"待缩写镜头: {len(issues)}"
+                config, args, prompt, attempt_name, f"待缩写镜头: {len(issues)}", request_kind="repair"
             )
         updates = parse_audio_repair_updates(repair_response)
         repaired_text, applied_shots = apply_audio_repair_updates(current_text, updates)
@@ -2083,153 +2214,154 @@ def mutate_generated_script(config, args, generated_script):
 def mutate_script_source(config, args, generated_script, reference_context=""):
     variant_count = mutation_variant_count(config, args)
     backend = script_generation_backend(config, args)
-    request_concurrency = mutation_request_concurrency(config, args)
+    batch_size = mutation_batch_size(config, args)
     collected_variants = {}
     raw_batches = []
     validation_warnings = []
     endpoint_styles = []
     field_styles = []
-    max_attempts_per_variant = max(1, int(config.get("script_mutation_attempts_per_variant") or 2))
+    max_attempts_per_variant = max(1, int(config.get("script_mutation_attempts_per_variant") or 3))
     log(
-        f"裂变并发模式: 目标 {variant_count} 条，"
-        f"每条脚本 1 个 API 请求，本组并发 {request_concurrency}，全局 API 并发上限 {max_api_concurrency(config)}"
+        f"裂变批处理模式: 目标 {variant_count} 条，每批最多 {batch_size} 条；"
+        "批量失败时自动减半，只补缺失或失败编号"
     )
 
-    def request_one_variant(variant_number, attempt_number):
+    def request_batch(variant_numbers, attempt_number):
+        batch_start = variant_numbers[0]
         prompt = build_mutation_prompt(
             config,
             generated_script,
-            1,
-            batch_start=variant_number,
+            len(variant_numbers),
+            batch_start=batch_start,
             total_variant_count=variant_count,
             reference_context=reference_context,
         )
-        log(f"裂变第 {variant_number} 条上下文长度: {len(prompt)} 字符")
-        extra_log = f"裂变变体数: 1（总数 {variant_count}，已完成 {len(collected_variants)}）"
+        number_text = ", ".join(str(number) for number in variant_numbers)
+        log(f"裂变编号 {number_text} 上下文长度: {len(prompt)} 字符")
+        extra_log = f"本批编号: {number_text}（总数 {variant_count}，已完成 {len(collected_variants)}）"
         batch_started_at = time.time()
         if backend in {"obsidian", "obsidian_cli"}:
             batch_text, batch_raw, endpoint_style, field_style = call_obsidian_cli(
-                config, args, prompt, f"脚本裂变第 {variant_number} 条", extra_log
+                config, args, prompt, f"脚本裂变编号 {number_text}", extra_log
             )
         else:
             batch_text, batch_raw, endpoint_style, field_style = call_text_model(
-                config, args, prompt, f"脚本裂变第 {variant_number} 条", extra_log
+                config, args, prompt, f"脚本裂变编号 {number_text}", extra_log, request_kind="mutation"
             )
         batch_elapsed = time.time() - batch_started_at
 
-        variants = [
-            normalize_audio_translation_positions(variant)
-            for variant in split_mutation_variants(batch_text)
-            if not is_placeholder_mutation_variant(variant)
-            and variant_matches_target_language(config, variant)
-        ]
-        variant = variants[0] if variants else ""
-        batch_validation_warnings = []
-        subject_repair_metadata = {}
-        audio_repair_metadata = {}
-        if variant:
-            variant, subject_repair_metadata = repair_script_subject_type(
-                config,
-                args,
-                variant,
-                generated_script,
-                f"裂变第 {variant_number} 条主体类型纠正",
-            )
-            variant, audio_repair_metadata = repair_script_audio(
-                config,
-                args,
-                variant,
-                generated_script,
-                f"裂变第 {variant_number} 条音频缩写",
-            )
-            for metadata in (subject_repair_metadata, audio_repair_metadata):
-                for warning in metadata.get("timeline_warnings", []):
-                    if warning not in batch_validation_warnings:
-                        batch_validation_warnings.append(warning)
+        received = {}
+        unnamed = []
+        for variant in split_mutation_variants(batch_text):
+            variant = normalize_audio_translation_positions(variant)
+            if is_placeholder_mutation_variant(variant) or not variant_matches_target_language(config, variant):
+                continue
+            heading = re.search(r"^\s*#{1,6}\s*变体\s*#?\s*(\d+)", variant, flags=re.MULTILINE)
+            if heading:
+                number = int(heading.group(1))
+                if number in variant_numbers and number not in received:
+                    received[number] = variant
+            else:
+                unnamed.append(variant)
+        for number, variant in zip((number for number in variant_numbers if number not in received), unnamed):
+            received[number] = variant
+
         return {
-            "variant_number": variant_number,
+            "variant_numbers": variant_numbers,
             "attempt": attempt_number,
-            "variant": variant,
-            "requested_variant_count": 1,
-            "received_variant_count": 1 if variant else 0,
-            "validation_warnings": batch_validation_warnings,
-            "subject_type_repair": subject_repair_metadata,
-            "audio_fit_repair": audio_repair_metadata,
+            "variants": received,
+            "requested_variant_count": len(variant_numbers),
+            "received_variant_count": len(received),
             "raw": batch_raw,
             "endpoint_style": endpoint_style,
             "field_style": field_style,
             "elapsed": batch_elapsed,
         }
 
-    attempts = {number: 0 for number in range(1, variant_count + 1)}
-    futures = {}
-    completed_count = 0
-    with ThreadPoolExecutor(max_workers=request_concurrency) as executor:
-        for variant_number in range(1, variant_count + 1):
-            attempts[variant_number] += 1
-            future = executor.submit(request_one_variant, variant_number, attempts[variant_number])
-            futures[future] = variant_number
+    def split_batches(numbers, size):
+        groups = []
+        current = []
+        for number in numbers:
+            if current and (number != current[-1] + 1 or len(current) >= size):
+                groups.append(current)
+                current = []
+            current.append(number)
+        if current:
+            groups.append(current)
+        return groups
 
-        while futures:
-            done, _pending = wait(futures, return_when=FIRST_COMPLETED)
-            for future in done:
-                variant_number = futures.pop(future)
-                try:
-                    result = future.result()
-                except Exception as error:
-                    result = {
-                        "variant_number": variant_number,
-                        "attempt": attempts[variant_number],
-                        "variant": "",
-                        "requested_variant_count": 1,
-                        "received_variant_count": 0,
-                        "validation_warnings": [],
-                        "raw": {"error": str(error)},
-                        "endpoint_style": backend,
-                        "field_style": "error",
-                        "elapsed": 0,
-                    }
-                    log(f"裂变第 {variant_number} 条失败: {error}")
+    queue = [(numbers, 1) for numbers in split_batches(list(range(1, variant_count + 1)), batch_size)]
+    while queue:
+        variant_numbers, attempt = queue.pop(0)
+        number_text = ", ".join(str(number) for number in variant_numbers)
+        try:
+            result = request_batch(variant_numbers, attempt)
+        except Exception as error:
+            result = {
+                "variant_numbers": variant_numbers,
+                "attempt": attempt,
+                "variants": {},
+                "requested_variant_count": len(variant_numbers),
+                "received_variant_count": 0,
+                "raw": {"error": str(error)},
+                "endpoint_style": backend,
+                "field_style": "error",
+                "elapsed": 0,
+            }
+            log(f"裂变编号 {number_text} 请求失败: {error}")
 
-                if result["variant"]:
-                    collected_variants[variant_number] = result["variant"]
-                    completed_count = len(collected_variants)
-                    validation_warnings.extend(result["validation_warnings"])
-                    for warning in result["validation_warnings"]:
-                        log(warning)
-                    endpoint_styles.append(result["endpoint_style"])
-                    field_styles.append(result["field_style"])
-                    raw_batches.append(
-                        {
-                            "attempt": result["attempt"],
-                            "variant_number": variant_number,
-                            "requested_variant_count": 1,
-                            "received_variant_count": 1,
-                            "validation_warnings": result["validation_warnings"],
-                            "subject_type_repair": result["subject_type_repair"],
-                            "audio_fit_repair": result["audio_fit_repair"],
-                            "raw": result["raw"],
-                        }
-                    )
-                    log(
-                        f"裂变第 {variant_number} 条完成: 收到 1 个，"
-                        f"累计 {completed_count}/{variant_count}，耗时 {result['elapsed']:.1f}s"
-                    )
-                elif attempts[variant_number] < max_attempts_per_variant:
-                    attempts[variant_number] += 1
-                    log(f"裂变第 {variant_number} 条未收到有效结果，重新排队第 {attempts[variant_number]} 次")
-                    futures[executor.submit(request_one_variant, variant_number, attempts[variant_number])] = variant_number
-                else:
-                    raw_batches.append(
-                        {
-                            "attempt": result["attempt"],
-                            "variant_number": variant_number,
-                            "requested_variant_count": 1,
-                            "received_variant_count": 0,
-                            "validation_warnings": [],
-                            "raw": result["raw"],
-                        }
-                    )
+        accepted_numbers = []
+        rejected = {}
+        repair_metadata = {}
+        for variant_number, variant in result["variants"].items():
+            if variant_number in collected_variants:
+                continue
+            try:
+                variant, subject_metadata = repair_script_subject_type(
+                    config, args, variant, generated_script, f"裂变第 {variant_number} 条主体类型纠正"
+                )
+                variant, audio_metadata = repair_script_audio(
+                    config, args, variant, generated_script, f"裂变第 {variant_number} 条音频缩写"
+                )
+                item_warnings = []
+                for metadata in (subject_metadata, audio_metadata):
+                    for warning in metadata.get("timeline_warnings", []):
+                        if warning not in item_warnings:
+                            item_warnings.append(warning)
+                collected_variants[variant_number] = variant
+                accepted_numbers.append(variant_number)
+                validation_warnings.extend(item_warnings)
+                repair_metadata[str(variant_number)] = {
+                    "subject_type_repair": subject_metadata,
+                    "audio_fit_repair": audio_metadata,
+                    "validation_warnings": item_warnings,
+                }
+                log(f"裂变第 {variant_number} 条校验通过，已保留；累计 {len(collected_variants)}/{variant_count}")
+            except Exception as error:
+                rejected[variant_number] = str(error)
+                log(f"裂变第 {variant_number} 条校验失败: {error}")
+
+        endpoint_styles.append(result["endpoint_style"])
+        field_styles.append(result["field_style"])
+        missing = [number for number in variant_numbers if number not in collected_variants]
+        raw_batches.append(
+            {
+                "attempt": attempt,
+                "variant_numbers": variant_numbers,
+                "requested_variant_count": len(variant_numbers),
+                "received_variant_count": result["received_variant_count"],
+                "accepted_variant_numbers": accepted_numbers,
+                "missing_variant_numbers": missing,
+                "rejected": rejected,
+                "repairs": repair_metadata,
+                "raw": result["raw"],
+            }
+        )
+        if missing and attempt < max_attempts_per_variant:
+            retry_size = max(1, math.ceil(len(variant_numbers) / 2))
+            retry_batches = split_batches(missing, retry_size)
+            log(f"裂变编号 {', '.join(map(str, missing))} 将按每批最多 {retry_size} 条重试")
+            queue.extend((numbers, attempt + 1) for numbers in retry_batches)
 
     missing_variant_numbers = [number for number in range(1, variant_count + 1) if number not in collected_variants]
     if not collected_variants:
@@ -2245,7 +2377,13 @@ def mutate_script_source(config, args, generated_script, reference_context=""):
 
     ordered_variant_numbers = [number for number in range(1, variant_count + 1) if number in collected_variants]
     ordered_variants = [collected_variants[number] for number in ordered_variant_numbers]
-    raw_batches = sorted(raw_batches, key=lambda item: (int(item.get("variant_number") or 0), int(item.get("attempt") or 0)))
+    raw_batches = sorted(
+        raw_batches,
+        key=lambda item: (
+            int((item.get("variant_numbers") or [0])[0]),
+            int(item.get("attempt") or 0),
+        ),
+    )
     combined_text = "\n\n".join(ordered_variants)
     raw_response = {
         "backend": backend,
@@ -2292,6 +2430,22 @@ def run_script_pipeline(config, args):
         }
         return mutation_text, raw_bundle, f"mutation:{mutation_endpoint}", mutation_field
 
+    if not args.dry_run and not parse_bool(config.get("script_force_regenerate")):
+        clone_path = clone_output_path_for_reference(
+            config,
+            get_reference_path(config),
+            getattr(args, "output_dir", ""),
+        )
+        if clone_path.is_file():
+            existing_text = clone_path.read_text(encoding="utf-8").strip()
+            if existing_text:
+                raw_path = clone_path.with_suffix(".raw.json")
+                existing_raw = read_json_config(raw_path) if raw_path.is_file() else {}
+                existing_raw["reused_existing_clone"] = True
+                existing_raw["reused_clone_path"] = str(clone_path)
+                log(f"复刻稿已存在，默认复用且不调用 API: {clone_path}")
+                return existing_text, existing_raw, "reused", "markdown"
+
     generated_text, generated_raw, endpoint_style, field_style = generate_validated_clone(config, args)
     if args.dry_run:
         return generated_text, generated_raw, endpoint_style, field_style
@@ -2316,7 +2470,7 @@ def parse_args():
     parser.add_argument("--mutation-source", default="", help="直接指定已存在的复刻-*.md作为裂变母稿；不会自动重新复刻")
     parser.add_argument("--product-name", default="", help="直接裂变时用于输出文件名的产品名称")
     parser.add_argument("--mutation-variants", type=int, default=0, help=f"裂变变体数，默认 {DEFAULT_MUTATION_VARIANTS}")
-    parser.add_argument("--mutation-batch-size", type=int, default=0, help=f"每批裂变条数，默认 {DEFAULT_MUTATION_BATCH_SIZE}，最大 5")
+    parser.add_argument("--mutation-batch-size", type=int, default=0, help=f"每批裂变条数，默认 {DEFAULT_MUTATION_BATCH_SIZE}，最大 {MAX_MUTATION_BATCH_SIZE}")
     parser.add_argument("--timeout", type=int, default=0, help=f"单次请求超时时间，秒，默认 {DEFAULT_TIMEOUT}")
     parser.add_argument("--max-output-tokens", type=int, default=0, help=f"最大输出 token，默认 {DEFAULT_MAX_OUTPUT_TOKENS}")
     parser.add_argument("--dry-run", action="store_true", help="只组装提示词并检查参数，不调用模型")
@@ -2491,8 +2645,7 @@ def mutation_source_choice(config):
 
 def mutation_input_source(config, args):
     clone_path, clone_text = ensure_clone_source_for_mutation(config, args)
-    reference_context = "" if getattr(args, "mutation_source", "") else read_text_file(get_reference_path(config))
-    return "复刻稿", clone_path, clone_text.strip(), reference_context
+    return "复刻稿", clone_path, clone_text.strip(), ""
 
 
 def script_output_stage_name(raw_response):

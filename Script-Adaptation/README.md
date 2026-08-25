@@ -71,6 +71,16 @@ http://127.0.0.1:8788
 bash scripts/validate_app.sh
 ```
 
+## Token And Retry Policy
+
+- Existing valid adaptations are reused by default when the source script, target model, prompt, language, facts, and segment settings have not changed.
+- Veo, Omni, and Grok load only their own prompt file. Only the current target-language rule is injected.
+- Optional product context is reduced locally to a compact fact card; the full product document is not duplicated in the request.
+- Adaptation and repair requests disable DeepSeek thinking mode and cap output at 32K tokens.
+- Any number of selected scripts is accepted. Work is scheduled in batches of at most three, for example five scripts run as `3 + 2`.
+- Valid scripts are retained immediately. Only failed scripts are retried, with retry batches shrinking from three to two to one.
+- Once a model response exists, quality-control failures use exact local JSON replacements instead of asking the model to rewrite the full adaptation.
+
 ## Repository Safety
 
 The repository intentionally excludes runtime data and private configuration:

@@ -77,7 +77,7 @@ python3 -m opc_engine.features.script_generation.generate_product_script \
 $OPC_VAULT_ROOT/wiki/视频/纯AI视频/03产品脚本/<产品名>/
 ```
 
-每次生成保存 Markdown 和原始模型响应 JSON。未勾选裂变时，同一参考脚本和国家版本会重新复刻并覆盖原复刻 Markdown 与 raw JSON；裂变结果仍自动追加 `_002`、`_003`，不会覆盖已有裂变脚本。
+每次生成保存 Markdown 和原始模型响应 JSON。未勾选裂变时，同一参考脚本和国家版本已有复刻稿会默认复用，不再重复调用模型；裂变结果自动追加 `_002`、`_003`，不会覆盖已有裂变脚本。裂变请求每批最多 3 条，失败时按更小批次只补缺失编号。
 
 ## 代码边界
 
