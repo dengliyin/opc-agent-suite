@@ -6,11 +6,12 @@ import re
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable, TypeVar
 
 
 _LOCKS: dict[Path, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()
+_Source = TypeVar("_Source")
 
 
 def snapshot_root() -> Path:
@@ -85,6 +86,43 @@ def refresh_snapshot(namespace: str, key: str, builder: Callable[[], dict[str, A
         "updated_at": str(snapshot.get("updated_at") or ""),
     }
     return result
+
+
+def incremental_records(
+    previous_items: Iterable[dict[str, Any]],
+    sources: Iterable[_Source],
+    *,
+    source_key: Callable[[_Source], str],
+    source_signature: Callable[[_Source], str],
+    build_record: Callable[[_Source], dict[str, Any] | None],
+    is_cold: Callable[[dict[str, Any]], bool],
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    previous = {
+        str(item.get("scan_key") or ""): item
+        for item in previous_items
+        if isinstance(item, dict) and str(item.get("scan_key") or "")
+    }
+    records: list[dict[str, Any]] = []
+    reused = 0
+    scanned = 0
+    for source in sources:
+        key = source_key(source)
+        signature = source_signature(source)
+        cached = previous.get(key)
+        if cached and cached.get("scan_signature") == signature and cached.get("temperature") == "cold":
+            records.append(dict(cached))
+            reused += 1
+            continue
+        record = build_record(source)
+        if record is None:
+            continue
+        record = dict(record)
+        record["scan_key"] = key
+        record["scan_signature"] = signature
+        record["temperature"] = "cold" if is_cold(record) else "hot"
+        records.append(record)
+        scanned += 1
+    return records, {"scanned": scanned, "cold_reused": reused, "total": len(records)}
 
 
 def _safe_name(value: str) -> str:

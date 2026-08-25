@@ -29,3 +29,24 @@ def test_refresh_is_atomic_and_reused(monkeypatch, tmp_path):
     path = vault_snapshot.snapshot_path("agent", "catalog")
     assert json.loads(path.read_text(encoding="utf-8"))["payload"] == {"items": ["a"]}
     assert list(path.parent.glob("*.tmp")) == []
+
+
+def test_incremental_records_reuses_unchanged_cold_items_and_rebuilds_hot_items():
+    previous = [
+        {"scan_key": "cold", "scan_signature": "1", "temperature": "cold", "done": True},
+        {"scan_key": "hot", "scan_signature": "1", "temperature": "hot", "done": False},
+    ]
+    built = []
+
+    records, stats = vault_snapshot.incremental_records(
+        previous,
+        [("cold", "1", True), ("hot", "1", True), ("new", "2", False)],
+        source_key=lambda source: source[0],
+        source_signature=lambda source: source[1],
+        build_record=lambda source: built.append(source[0]) or {"done": source[2]},
+        is_cold=lambda record: bool(record["done"]),
+    )
+
+    assert built == ["hot", "new"]
+    assert [record["temperature"] for record in records] == ["cold", "cold", "hot"]
+    assert stats == {"scanned": 2, "cold_reused": 1, "total": 3}

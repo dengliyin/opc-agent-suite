@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from opc_shared.global_ai import runtime_override_active, set_runtime_overrides
-from opc_shared.vault_snapshot import cached_or_empty, refresh_snapshot
+from opc_shared.vault_snapshot import cached_or_empty, incremental_records, load_snapshot, refresh_snapshot
 
 from .config import ENV_PATH, SETTINGS_PATH, Settings, load_hybrid_omni_settings, load_settings, mask_secrets, update_env_values
 from .exporter import (
@@ -22,7 +22,19 @@ from .exporter import (
     restore_exported_scripts,
     restore_hybrid_deliveries,
 )
-from .files import character_image_path, scan_scripts, script_to_dict, storyboard_image_path, summarize_catalog, suppress_script, video_output_path
+from .files import (
+    ScriptCandidate,
+    character_image_path,
+    discover_active_script_candidates,
+    load_script_candidate,
+    read_export_marker,
+    scan_scripts,
+    script_to_dict,
+    storyboard_image_path,
+    summarize_catalog,
+    suppress_script,
+    video_output_path,
+)
 from .product_lock import storyboard_meta_path
 from .tasks import JobManager, VALID_STAGES
 
@@ -772,7 +784,156 @@ def _catalog_snapshot_key(current: Settings) -> str:
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
 
 
-def _catalog_payload(current: Settings, *, refresh: bool = False) -> Dict[str, Any]:
+def _candidate_signature(current: Settings, candidate: ScriptCandidate) -> str:
+    stat = candidate.md_path.stat()
+    reference_signatures = []
+    for path in candidate.reference_images:
+        try:
+            reference_stat = path.stat()
+            reference_signatures.append(f"{path}:{reference_stat.st_mtime_ns}:{reference_stat.st_size}")
+        except OSError:
+            reference_signatures.append(f"{path}:missing")
+    identity = "\n".join(
+        str(value or "")
+        for value in (
+            candidate.md_path,
+            stat.st_mtime_ns,
+            stat.st_size,
+            *reference_signatures,
+            current.provider,
+            current.workflow,
+            current.image_size,
+            current.video_size,
+            current.grok_image_aspect_ratio,
+            current.grok_image_resolution,
+            current.grok_video_aspect_ratio,
+            current.grok_video_resolution,
+            current.grok_video_duration,
+            current.character_image_size,
+            current.character_image_aspect_ratio,
+            current.character_image_resolution,
+            current.storyboard_image_size,
+            current.storyboard_image_aspect_ratio,
+            current.storyboard_image_resolution,
+            current.function_video_size,
+            current.function_video_aspect_ratio,
+            current.function_video_resolution,
+            current.function_video_duration,
+        )
+    )
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+def _catalog_summary_from_records(records: List[Dict[str, Any]]) -> Dict[str, int]:
+    products = {str(record.get("product_name") or "") for record in records if record.get("product_name")}
+    segments = [segment for record in records for segment in record.get("segments", [])]
+    exported = [record for record in records if record.get("exported")]
+    return {
+        "products": len(products),
+        "scripts": len(records),
+        "segments": len(segments),
+        "missing_references": sum(1 for record in records if not record.get("reference_images")),
+        "video_scripts": sum(1 for record in records if record.get("has_video")),
+        "complete_scripts": sum(1 for record in records if record.get("full_mode_complete")),
+        "full_mode_completed_scripts": sum(1 for record in records if record.get("full_mode_complete")),
+        "exported_scripts": len(exported),
+        "cleaned_exported_scripts": sum(1 for record in exported if record.get("media_cleaned")),
+    }
+
+
+def _archive_active_paths(records: List[Dict[str, Any]]) -> List[str]:
+    active_paths: set[str] = set()
+    for record in records:
+        if not record.get("exported"):
+            continue
+        md_path = str(record.get("md_path") or "")
+        marker = read_export_marker(Path(md_path)) if md_path else {}
+        active_path = str(marker.get("active_md_path") or "").strip()
+        if active_path:
+            active_paths.add(str(Path(active_path).expanduser().resolve()))
+    return sorted(active_paths)
+
+
+def _full_catalog_payload(current: Settings) -> Dict[str, Any]:
+    scripts = scan_scripts(current, include_archived=current.workflow == "standard")
+    records = [script_to_dict(current, script) for script in scripts]
+    for script, record in zip(scripts, records):
+        record["scan_key"] = str(script.md_path.resolve())
+        record["scan_signature"] = _candidate_signature(
+            current,
+            ScriptCandidate(
+                product_name=script.product_name,
+                product_dir=script.product_dir,
+                md_path=script.md_path,
+                reference_image=script.reference_image,
+                reference_images=tuple(script.reference_images),
+                batch_id=script.batch_id,
+                batch_label=script.batch_label,
+                batch_source=script.batch_source,
+                source_script=script.source_script,
+                created_at=script.created_at,
+                upstream_script_path=script.upstream_script_path,
+                script_type=script.script_type,
+            ),
+        )
+        record["temperature"] = "cold" if record.get("complete") or record.get("exported") else "hot"
+    archive_paths = _archive_active_paths(records) if current.workflow == "standard" else []
+    return {
+        "summary": _catalog_summary_from_records(records),
+        "scripts": records,
+        "scan_state": {
+            "schema_version": 2,
+            "mode": "full",
+            "scanned": len(records),
+            "cold_reused": 0,
+            "hot": sum(1 for record in records if record.get("temperature") == "hot"),
+            "cold": sum(1 for record in records if record.get("temperature") == "cold"),
+            "archive_active_paths": archive_paths,
+        },
+    }
+
+
+def _incremental_catalog_payload(current: Settings, cache_key: str) -> Dict[str, Any]:
+    snapshot = load_snapshot("video-generation", cache_key)
+    previous = snapshot.get("payload", {}) if snapshot else {}
+    scan_state = previous.get("scan_state", {})
+    if scan_state.get("schema_version") != 2:
+        payload = _full_catalog_payload(current)
+        payload["scan_state"]["mode"] = "migration_full"
+        return payload
+    archived_records = [record for record in previous.get("scripts", []) if record.get("exported") and current.workflow == "standard"]
+    archive_paths = list(scan_state.get("archive_active_paths") or [])
+    candidates = discover_active_script_candidates(current, archive_paths)
+    previous_active = [record for record in previous.get("scripts", []) if not record.get("exported") or current.workflow != "standard"]
+
+    def build(candidate: ScriptCandidate) -> Dict[str, Any] | None:
+        script = load_script_candidate(candidate)
+        return script_to_dict(current, script) if script else None
+
+    active_records, stats = incremental_records(
+        previous_active,
+        candidates,
+        source_key=lambda candidate: str(candidate.md_path.resolve()),
+        source_signature=lambda candidate: _candidate_signature(current, candidate),
+        build_record=build,
+        is_cold=lambda record: bool(record.get("complete") or record.get("exported")),
+    )
+    records = [*active_records, *archived_records]
+    return {
+        "summary": _catalog_summary_from_records(records),
+        "scripts": records,
+        "scan_state": {
+            "schema_version": 2,
+            "mode": "incremental",
+            **stats,
+            "hot": sum(1 for record in records if record.get("temperature") == "hot"),
+            "cold": sum(1 for record in records if record.get("temperature") == "cold"),
+            "archive_active_paths": archive_paths,
+        },
+    }
+
+
+def _catalog_payload(current: Settings, *, refresh: bool = False, full: bool = False) -> Dict[str, Any]:
     cache_key = _catalog_snapshot_key(current)
     with _catalog_cache_lock:
         now = time.monotonic()
@@ -782,11 +943,7 @@ def _catalog_payload(current: Settings, *, refresh: bool = False) -> Dict[str, A
 
     def build() -> Dict[str, Any]:
         try:
-            scripts = scan_scripts(current, include_archived=current.workflow == "standard")
-            return {
-                "summary": summarize_catalog(current, scripts),
-                "scripts": [script_to_dict(current, script) for script in scripts],
-            }
+            return _full_catalog_payload(current) if full else _incremental_catalog_payload(current, cache_key)
         except Exception as exc:
             raise HTTPException(status_code=500, detail=_safe(str(exc)))
 
@@ -837,8 +994,11 @@ def _export_completed(provider: str, request: ExportRequest) -> Dict[str, Any]:
     try:
         scripts = scan_scripts(current)
         if current.workflow == "hybrid_omni":
-            return deliver_hybrid_scripts(current, scripts, request.script_paths)
-        return export_completed_scripts(current, scripts, request.script_paths)
+            result = deliver_hybrid_scripts(current, scripts, request.script_paths)
+        else:
+            result = export_completed_scripts(current, scripts, request.script_paths)
+        _refresh_catalog_after_archive_change(current)
+        return result
     except Exception as exc:
         raise HTTPException(status_code=500, detail=_safe(str(exc)))
 
@@ -850,10 +1010,20 @@ def _restore_exported(provider: str, request: RestoreRequest) -> Dict[str, Any]:
     try:
         scripts = scan_scripts(current, include_archived=True)
         if current.workflow == "hybrid_omni":
-            return restore_hybrid_deliveries(current, scripts, request.script_paths)
-        return restore_exported_scripts(current, scripts, request.script_paths, bool(request.restore_videos))
+            result = restore_hybrid_deliveries(current, scripts, request.script_paths)
+        else:
+            result = restore_exported_scripts(current, scripts, request.script_paths, bool(request.restore_videos))
+        _refresh_catalog_after_archive_change(current)
+        return result
     except Exception as exc:
         raise HTTPException(status_code=500, detail=_safe(str(exc)))
+
+
+def _refresh_catalog_after_archive_change(current: Settings) -> None:
+    try:
+        _catalog_payload(current, refresh=True, full=True)
+    except Exception:
+        _clear_catalog_cache()
 
 
 def _delete_scripts(provider: str, request: ScriptDeleteRequest) -> Dict[str, Any]:
@@ -1104,18 +1274,18 @@ def get_hybrid_omni_config() -> Dict[str, Any]:
 
 @app.get("/api/catalog")
 @app.get("/omni/api/catalog")
-def get_omni_catalog(refresh: bool = False) -> Dict[str, Any]:
-    return _catalog_payload(omni_settings, refresh=refresh)
+def get_omni_catalog(refresh: bool = False, full: bool = False) -> Dict[str, Any]:
+    return _catalog_payload(omni_settings, refresh=refresh, full=full)
 
 
 @app.get("/grok/api/catalog")
-def get_grok_catalog(refresh: bool = False) -> Dict[str, Any]:
-    return _catalog_payload(grok_settings, refresh=refresh)
+def get_grok_catalog(refresh: bool = False, full: bool = False) -> Dict[str, Any]:
+    return _catalog_payload(grok_settings, refresh=refresh, full=full)
 
 
 @app.get("/hybrid-omni/api/catalog")
-def get_hybrid_omni_catalog(refresh: bool = False) -> Dict[str, Any]:
-    return _catalog_payload(hybrid_omni_settings, refresh=refresh)
+def get_hybrid_omni_catalog(refresh: bool = False, full: bool = False) -> Dict[str, Any]:
+    return _catalog_payload(hybrid_omni_settings, refresh=refresh, full=full)
 
 
 

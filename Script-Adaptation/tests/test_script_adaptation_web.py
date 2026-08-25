@@ -109,3 +109,67 @@ def test_cached_catalog_does_not_scan_until_refresh(monkeypatch, tmp_path: Path)
     assert cached["scan_index"]["ready"] is False
     assert refreshed["scan_index"]["ready"] is True
     assert calls == ["scan"]
+
+
+def test_incremental_scan_reuses_unchanged_adapted_script(monkeypatch, tmp_path: Path) -> None:
+    root = tmp_path / "scripts"
+    product = root / "P1"
+    product.mkdir(parents=True)
+    cold = product / "cold.md"
+    hot = product / "hot.md"
+    cold.write_text("cold", encoding="utf-8")
+    hot.write_text("hot", encoding="utf-8")
+    previous_cold = {
+        "name": cold.name,
+        "path": cold.as_posix(),
+        "product": "P1",
+        "adapted": True,
+        "adaptation_state": "done",
+        "scan_key": cold.as_posix(),
+        "scan_signature": "cold.md:signature",
+        "temperature": "cold",
+    }
+    previous_hot = {
+        "name": hot.name,
+        "path": hot.as_posix(),
+        "product": "P1",
+        "adapted": False,
+        "adaptation_state": "todo",
+        "scan_key": hot.as_posix(),
+        "scan_signature": "hot.md:signature",
+        "temperature": "hot",
+    }
+    built = []
+    monkeypatch.setattr(web, "load_local_agent_config", lambda: {})
+    monkeypatch.setattr(web, "script_library_root", lambda _config: root)
+    monkeypatch.setattr(web, "script_scan_signature", lambda path, _config: f"{path.name}:signature")
+    monkeypatch.setattr(
+        web,
+        "load_snapshot",
+        lambda *_args: {
+            "payload": {
+                "scan_state": {"schema_version": 2},
+                "products": [{"scripts": [previous_cold, previous_hot]}],
+            }
+        },
+    )
+    monkeypatch.setattr(
+        web,
+        "indexed_script_file_payload",
+        lambda path, *_args: built.append(path.name)
+        or {
+            "name": path.name,
+            "path": path.as_posix(),
+            "product": "P1",
+            "adapted": path.name == "hot.md",
+            "adaptation_state": "done",
+            "batch_id": "b1",
+        },
+    )
+
+    payload = web.list_product_scripts_incremental("omni")
+
+    assert built == ["hot.md"]
+    assert payload["scan_state"]["cold_reused"] == 1
+    assert payload["scan_state"]["scanned"] == 1
+    assert payload["adapted_count"] == 2

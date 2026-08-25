@@ -45,8 +45,8 @@ async function api(path, options = {}) {
   return response.json();
 }
 
-async function refreshAll(scan = false) {
-  const catalogPath = scan ? "/catalog?refresh=true" : "/catalog";
+async function refreshAll(scan = false, full = false) {
+  const catalogPath = scan ? `/catalog?refresh=true${full ? "&full=true" : ""}` : "/catalog";
   const [config, catalog, jobs, globalJobs] = await Promise.all([
     api("/config"),
     api(catalogPath),
@@ -63,7 +63,7 @@ async function refreshAll(scan = false) {
   render();
   if (!catalog.scan_index?.ready) {
     const summary = $("#summaryLine");
-    if (summary) summary.textContent = "尚未扫描资料库，请点击“扫描资料库”";
+    if (summary) summary.textContent = "尚未扫描资料库，请点击“增量扫描”；首次升级会自动完成一次完整索引迁移";
   }
 }
 
@@ -214,8 +214,10 @@ function renderCatalog() {
     const videoScripts = Number(summary.video_scripts || 0);
     const fullModeCompleted = Number(summary.full_mode_completed_scripts || summary.complete_scripts || 0);
     const cleanedExported = Number(summary.cleaned_exported_scripts || 0);
+    const scanState = state.catalog?.scan_state || {};
+    const scanText = ` · 本次检查 ${Number(scanState.scanned || 0)} · 复用冷数据 ${Number(scanState.cold_reused || 0)}`;
     const modeText = state.showArchived ? "归档" : "任务";
-    $("#summaryLine").textContent = `${summary.products} 产品 · ${summary.scripts} 脚本 · ${summary.segments} 片段 · 有视频 ${videoScripts} · 完整模式完成 ${fullModeCompleted} · 已导出 ${exported} · 已导出但视频已清理 ${cleanedExported} · ${modeText}已选 ${state.selectedScriptPaths.size}`;
+    $("#summaryLine").textContent = `${summary.products} 产品 · ${summary.scripts} 脚本 · ${summary.segments} 片段 · 有视频 ${videoScripts} · 完整模式完成 ${fullModeCompleted} · 已导出 ${exported} · 已导出但视频已清理 ${cleanedExported}${scanText} · ${modeText}已选 ${state.selectedScriptPaths.size}`;
   }
 
   const list = $("#scriptList");
@@ -1358,6 +1360,10 @@ function jobStatusLabel(job) {
 }
 
 $("#refreshButton").addEventListener("click", () => refreshAll(true));
+$("#fullRefreshButton")?.addEventListener("click", () => {
+  if (!confirm("强制完整校验会重新读取全部脚本、图片、视频和归档，仅建议在手动移动文件或索引异常时使用。继续吗？")) return;
+  refreshAll(true, true);
+});
 $("#selectAllScriptsButton").addEventListener("click", () => {
   const scripts = visibleCatalogScripts(state.catalog?.scripts || []);
   scripts.filter(isScriptSelectable).forEach((script) => state.selectedScriptPaths.add(script.md_path));

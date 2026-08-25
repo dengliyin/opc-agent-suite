@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from opc_shared.global_ai import load_profile, runtime_override_active, set_runtime_overrides
-from opc_shared.vault_snapshot import cached_or_empty, refresh_snapshot
+from opc_shared.vault_snapshot import cached_or_empty, incremental_records, load_snapshot, refresh_snapshot
 
 from opc_engine.core.project_assets import (
     ensure_project_dirs,
@@ -871,6 +871,35 @@ def script_file_payload(
     }
 
 
+def script_scan_signature(path: Path, config: dict[str, Any]) -> str:
+    stat = path.stat()
+    identity = [
+        path.as_posix(),
+        stat.st_mtime_ns,
+        stat.st_size,
+        normalize_target_model(config.get("script_adaptation_target_model")),
+        segment_seconds_for_target(
+            config.get("script_adaptation_target_model"),
+            config.get("script_adaptation_segment_seconds"),
+        ),
+        str(workflow.script_adaptation_output_root(config) or ""),
+    ]
+    return hashlib.sha256(json.dumps(identity, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def indexed_script_file_payload(
+    path: Path,
+    root: Path,
+    config: dict[str, Any],
+    status_logs: dict[Path, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    payload = script_file_payload(path, root, config, status_logs)
+    payload["scan_key"] = path.as_posix()
+    payload["scan_signature"] = script_scan_signature(path, config)
+    payload["temperature"] = "cold" if payload.get("adapted") else "hot"
+    return payload
+
+
 def adaptation_status_record_for_script(
     output_path: Path | None,
     source_filename: str,
@@ -1003,7 +1032,11 @@ def batch_payload(batch_id: str, scripts: list[dict[str, Any]]) -> dict[str, Any
 
 def product_script_payload(product_name: str, product_path: Path, files: list[Path], root: Path, config: dict[str, Any]) -> dict[str, Any]:
     status_logs: dict[Path, dict[str, Any]] = {}
-    scripts = [script_file_payload(path, root, config, status_logs) for path in files]
+    scripts = [indexed_script_file_payload(path, root, config, status_logs) for path in files]
+    return product_payload_from_records(product_name, product_path, scripts)
+
+
+def product_payload_from_records(product_name: str, product_path: Path, scripts: list[dict[str, Any]]) -> dict[str, Any]:
     adapted_count = sum(1 for script in scripts if script.get("adapted"))
     invalid_count = sum(1 for script in scripts if script.get("adaptation_state") in INVALID_ADAPTATION_STATES)
     countries = sorted({str(script.get("country") or "").strip() for script in scripts if str(script.get("country") or "").strip()})
@@ -1041,8 +1074,20 @@ def list_product_scripts(target_model: str | None = None) -> dict[str, Any]:
     if not root or not root.exists() or not root.is_dir():
         return {
             "root": root.as_posix() if root else "",
+            "target_model": normalize_target_model(config.get("script_adaptation_target_model")),
             "total_count": 0,
+            "adapted_count": 0,
+            "invalid_count": 0,
+            "unused_count": 0,
             "products": [],
+            "scan_state": {
+                "schema_version": 2,
+                "mode": "full",
+                "scanned": 0,
+                "cold_reused": 0,
+                "hot": 0,
+                "cold": 0,
+            },
         }
 
     grouped_files: dict[str, list[Path]] = {}
@@ -1061,7 +1106,7 @@ def list_product_scripts(target_model: str | None = None) -> dict[str, Any]:
     total_count = sum(product["count"] for product in products)
     adapted_count = sum(product.get("adapted_count", 0) for product in products)
     invalid_count = sum(product.get("invalid_count", 0) for product in products)
-    return {
+    payload = {
         "root": root.as_posix(),
         "target_model": normalize_target_model(config.get("script_adaptation_target_model")),
         "total_count": total_count,
@@ -1069,6 +1114,93 @@ def list_product_scripts(target_model: str | None = None) -> dict[str, Any]:
         "invalid_count": invalid_count,
         "unused_count": total_count - adapted_count,
         "products": products,
+    }
+    payload["scan_state"] = {
+        "schema_version": 2,
+        "mode": "full",
+        "scanned": total_count,
+        "cold_reused": 0,
+        "hot": sum(product.get("unused_count", 0) for product in products),
+        "cold": adapted_count,
+    }
+    return payload
+
+
+def list_product_scripts_incremental(target_model: str | None = None) -> dict[str, Any]:
+    target = normalize_target_model(target_model)
+    config = load_local_agent_config()
+    config["script_adaptation_target_model"] = target
+    config["script_adaptation_segment_seconds"] = segment_seconds_for_target(
+        target,
+        config.get("script_adaptation_segment_seconds"),
+    )
+    root = script_library_root(config)
+    snapshot = load_snapshot("script-adaptation", f"scripts-{target}")
+    previous_payload = snapshot.get("payload", {}) if snapshot else {}
+    if previous_payload.get("scan_state", {}).get("schema_version") != 2:
+        payload = list_product_scripts(target)
+        payload.setdefault(
+            "scan_state",
+            {"schema_version": 2, "scanned": 0, "cold_reused": 0, "hot": 0, "cold": 0},
+        )["mode"] = "migration_full"
+        return payload
+    if not root or not root.exists() or not root.is_dir():
+        return {
+            "root": root.as_posix() if root else "",
+            "target_model": target,
+            "total_count": 0,
+            "adapted_count": 0,
+            "invalid_count": 0,
+            "unused_count": 0,
+            "products": [],
+            "scan_state": {"schema_version": 2, "mode": "incremental", "scanned": 0, "cold_reused": 0, "hot": 0, "cold": 0},
+        }
+
+    previous_items = [
+        script
+        for product in previous_payload.get("products", [])
+        for script in product.get("scripts", [])
+        if isinstance(script, dict)
+    ]
+    sources = [
+        path
+        for path in sorted(root.rglob("*.md"), key=lambda item: item.relative_to(root).as_posix())
+        if path.is_file()
+    ]
+    status_logs: dict[Path, dict[str, Any]] = {}
+    records, stats = incremental_records(
+        previous_items,
+        sources,
+        source_key=lambda path: path.as_posix(),
+        source_signature=lambda path: script_scan_signature(path, config),
+        build_record=lambda path: indexed_script_file_payload(path, root, config, status_logs),
+        is_cold=lambda record: bool(record.get("adapted")),
+    )
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    paths: dict[str, Path] = {}
+    for record in records:
+        product_name = str(record.get("product") or "未分类")
+        grouped.setdefault(product_name, []).append(record)
+        paths.setdefault(product_name, Path(str(record.get("path") or root)).parent)
+    products = [product_payload_from_records(name, paths[name], grouped[name]) for name in sorted(grouped)]
+    total_count = len(records)
+    adapted_count = sum(1 for record in records if record.get("adapted"))
+    invalid_count = sum(1 for record in records if record.get("adaptation_state") in INVALID_ADAPTATION_STATES)
+    return {
+        "root": root.as_posix(),
+        "target_model": target,
+        "total_count": total_count,
+        "adapted_count": adapted_count,
+        "invalid_count": invalid_count,
+        "unused_count": total_count - adapted_count,
+        "products": products,
+        "scan_state": {
+            "schema_version": 2,
+            "mode": "incremental",
+            **stats,
+            "hot": total_count - adapted_count,
+            "cold": adapted_count,
+        },
     }
 
 
@@ -1296,7 +1428,7 @@ def list_adaptation_outputs(target_model: str | None = None) -> dict[str, Any]:
     }
 
 
-def cached_product_scripts(target_model: str | None = None, *, refresh: bool = False) -> dict[str, Any]:
+def cached_product_scripts(target_model: str | None = None, *, refresh: bool = False, full: bool = False) -> dict[str, Any]:
     target = normalize_target_model(target_model)
     config = load_local_agent_config()
     root = script_library_root(config)
@@ -1310,7 +1442,8 @@ def cached_product_scripts(target_model: str | None = None, *, refresh: bool = F
         "products": [],
     }
     if refresh:
-        return refresh_snapshot("script-adaptation", f"scripts-{target}", lambda: list_product_scripts(target))
+        builder = (lambda: list_product_scripts(target)) if full else (lambda: list_product_scripts_incremental(target))
+        return refresh_snapshot("script-adaptation", f"scripts-{target}", builder)
     return cached_or_empty("script-adaptation", f"scripts-{target}", empty)
 
 
@@ -3014,7 +3147,8 @@ HTML = r"""<!doctype html>
             <span id="libraryRoot" class="libraryRoot">加载中</span>
             <button class="blue" id="selectAllScriptsBtn">选当前产品</button>
             <button class="blue" id="clearScriptsBtn">清空</button>
-            <button class="blue" id="refreshScriptsBtn">扫描资料库</button>
+            <button class="blue" id="refreshScriptsBtn">增量扫描</button>
+            <button class="blue" id="fullRefreshScriptsBtn">强制完整校验</button>
           </div>
           <div id="products" class="products">
             <div class="muted">正在读取上次扫描索引</div>
@@ -3240,7 +3374,10 @@ HTML = r"""<!doctype html>
       $('runUnusedBtn').textContent = unusedScriptCount ? `适配未适配（${unusedScriptCount}）` : '无未适配';
       $('runUnusedBtn').disabled = !unusedScriptCount;
       $('libraryTitle').textContent = `产品脚本库 · 共 ${data.total_count || 0} · 已适配 ${data.adapted_count || 0} · 待处理 ${data.unused_count || 0} · 异常 ${data.invalid_count || 0}`;
-      $('libraryRoot').textContent = data.root ? '扫描目录已配置' : '未配置输入目录';
+      const scanState = data.scan_state || {};
+      $('libraryRoot').textContent = data.root
+        ? `扫描目录已配置 · 本次检查 ${Number(scanState.scanned || 0)} · 复用冷数据 ${Number(scanState.cold_reused || 0)}`
+        : '未配置输入目录';
       if (!products.length) {
         $('products').innerHTML = '<div class="muted">未找到 .md 脚本</div>';
         $('runUnusedBtn').textContent = '无未适配';
@@ -3333,12 +3470,12 @@ HTML = r"""<!doctype html>
       `;
     }
 
-    async function refreshScripts(scan=false) {
-      const suffix = scan ? '&refresh=1' : '';
+    async function refreshScripts(scan=false, full=false) {
+      const suffix = scan ? `&refresh=1${full ? '&full=1' : ''}` : '';
       const data = await api(`/api/scripts?target_model=${encodeURIComponent(currentTargetModel())}${suffix}`);
       renderProducts(data);
       if (!data.scan_index?.ready) {
-        renderChecks([{level:'warn', message:'脚本索引尚未建立', detail:'页面启动不会自动扫描资料库，请点击“扫描资料库”。'}]);
+        renderChecks([{level:'warn', message:'脚本索引尚未建立', detail:'页面启动不会自动扫描资料库，请点击“增量扫描”。首次升级会自动完成一次完整索引迁移。'}]);
       }
     }
 
@@ -3431,6 +3568,12 @@ HTML = r"""<!doctype html>
       $('refreshScriptsBtn').addEventListener('click', () => {
         refreshScripts(true).catch(err => {
           renderChecks([{level:'error', message:'脚本库刷新失败', detail:err.message}]);
+        });
+      });
+      $('fullRefreshScriptsBtn').addEventListener('click', () => {
+        if (!confirm('强制完整校验会重新读取全部脚本和适配结果，仅建议在手动移动文件或索引异常时使用。继续吗？')) return;
+        refreshScripts(true, true).catch(err => {
+          renderChecks([{level:'error', message:'完整校验失败', detail:err.message}]);
         });
       });
       $('selectAllScriptsBtn').addEventListener('click', () => {
@@ -3919,7 +4062,15 @@ class Handler(BaseHTTPRequestHandler):
                 json_response(self, 200, cached_adaptation_outputs(target_model_from_query(parsed), refresh=query.get("refresh", [""])[0] == "1"))
             elif parsed.path == "/api/scripts":
                 query = urllib.parse.parse_qs(parsed.query)
-                json_response(self, 200, cached_product_scripts(target_model_from_query(parsed), refresh=query.get("refresh", [""])[0] == "1"))
+                json_response(
+                    self,
+                    200,
+                    cached_product_scripts(
+                        target_model_from_query(parsed),
+                        refresh=query.get("refresh", [""])[0] == "1",
+                        full=query.get("full", [""])[0] == "1",
+                    ),
+                )
             elif parsed.path == "/api/file":
                 query = urllib.parse.parse_qs(parsed.query)
                 raw_path = query.get("path", [""])[0]

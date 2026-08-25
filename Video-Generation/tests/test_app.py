@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -199,6 +200,72 @@ def test_catalog_does_not_scan_until_explicit_refresh(monkeypatch, tmp_path):
     app_module._clear_catalog_cache()
 
 
+def test_incremental_catalog_reuses_completed_cold_script(monkeypatch, tmp_path):
+    from agent.files import ScriptCandidate
+
+    cold_path = tmp_path / "P1" / "cold.md"
+    hot_path = tmp_path / "P1" / "hot.md"
+    cold_path.parent.mkdir(parents=True)
+    cold_path.write_text("cold", encoding="utf-8")
+    hot_path.write_text("hot", encoding="utf-8")
+    candidates = [
+        ScriptCandidate("P1", cold_path.parent, cold_path, None),
+        ScriptCandidate("P1", hot_path.parent, hot_path, None),
+    ]
+    previous = [
+        {
+            "product_name": "P1",
+            "md_path": str(cold_path),
+            "segments": [],
+            "complete": True,
+            "full_mode_complete": True,
+            "exported": False,
+            "scan_key": str(cold_path.resolve()),
+            "scan_signature": "cold.md:signature",
+            "temperature": "cold",
+        },
+        {
+            "product_name": "P1",
+            "md_path": str(hot_path),
+            "segments": [],
+            "complete": False,
+            "full_mode_complete": False,
+            "exported": False,
+            "scan_key": str(hot_path.resolve()),
+            "scan_signature": "hot.md:signature",
+            "temperature": "hot",
+        },
+    ]
+    built = []
+    monkeypatch.setattr(
+        app_module,
+        "load_snapshot",
+        lambda *_args: {"payload": {"scripts": previous, "scan_state": {"schema_version": 2, "archive_active_paths": []}}},
+    )
+    monkeypatch.setattr(app_module, "discover_active_script_candidates", lambda *_args: candidates)
+    monkeypatch.setattr(app_module, "_candidate_signature", lambda _settings, candidate: f"{candidate.md_path.name}:signature")
+    monkeypatch.setattr(app_module, "load_script_candidate", lambda candidate: built.append(candidate.md_path.name) or candidate)
+    monkeypatch.setattr(
+        app_module,
+        "script_to_dict",
+        lambda _settings, candidate: {
+            "product_name": candidate.product_name,
+            "md_path": str(candidate.md_path),
+            "segments": [],
+            "complete": candidate.md_path.name == "hot.md",
+            "full_mode_complete": candidate.md_path.name == "hot.md",
+            "exported": False,
+        },
+    )
+
+    payload = app_module._incremental_catalog_payload(SimpleNamespace(workflow="standard"), "test")
+
+    assert built == ["hot.md"]
+    assert payload["scan_state"]["cold_reused"] == 1
+    assert payload["scan_state"]["scanned"] == 1
+    assert payload["scan_state"]["cold"] == 2
+
+
 def test_media_cleanup_route_is_owned_by_assembly_agent():
     paths = {route.path for route in app_module.app.routes}
 
@@ -221,6 +288,8 @@ def test_catalog_polling_is_deduplicated_after_terminal_job():
     assert "terminalKey !== state.lastTerminalCatalogJobKey" in source
     assert "refreshAll().catch" in source
     assert "}).finally(() => {\n  setInterval(pollJobs, 4000);\n});" in source
+    assert 'full ? "&full=true" : ""' in source
+    assert 'id="fullRefreshButton"' in (Path(__file__).resolve().parents[1] / "static" / "omni.html").read_text(encoding="utf-8")
 
 
 def test_api_settings_save_is_process_only(monkeypatch):

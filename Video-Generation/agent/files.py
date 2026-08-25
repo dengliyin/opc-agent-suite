@@ -43,6 +43,22 @@ class ScriptFile:
     script_type: str = ""
 
 
+@dataclass(frozen=True)
+class ScriptCandidate:
+    product_name: str
+    product_dir: Path
+    md_path: Path
+    reference_image: Optional[Path]
+    reference_images: tuple[Path, ...] = ()
+    batch_id: str = ""
+    batch_label: str = ""
+    batch_source: str = ""
+    source_script: str = ""
+    created_at: str = ""
+    upstream_script_path: str = ""
+    script_type: str = ""
+
+
 def scan_scripts(settings: Settings, include_archived: bool = False) -> List[ScriptFile]:
     if settings.workflow == "hybrid_omni":
         return _scan_hybrid_script_root(settings)
@@ -50,6 +66,101 @@ def scan_scripts(settings: Settings, include_archived: bool = False) -> List[Scr
     if include_archived:
         scripts.extend(_scan_script_root(settings, settings.completed_script_root, exported=True))
     return scripts
+
+
+def discover_active_script_candidates(
+    settings: Settings,
+    archived_active_paths: Iterable[str] = (),
+) -> List[ScriptCandidate]:
+    if settings.workflow == "hybrid_omni":
+        return _discover_hybrid_candidates(settings)
+    root = settings.script_root
+    if not root.exists():
+        return []
+    archived = {str(Path(path).expanduser().resolve()) for path in archived_active_paths if path}
+    candidates: List[ScriptCandidate] = []
+    for product_dir in [path for path in _safe_iterdir(root) if path.is_dir()]:
+        if product_dir.name.startswith("_") or product_dir.name.startswith("."):
+            continue
+        md_paths = [
+            path
+            for path in _safe_glob(product_dir, "*.md")
+            if not script_suppressed(path) and str(path.resolve()) not in archived
+        ]
+        if not md_paths:
+            continue
+        references = tuple(find_product_references(settings.reference_root, product_dir.name))
+        reference = references[0] if len(references) == 1 else None
+        for md_path in md_paths:
+            candidates.append(
+                ScriptCandidate(
+                    product_name=product_dir.name,
+                    product_dir=product_dir,
+                    md_path=md_path,
+                    reference_image=reference,
+                    reference_images=references,
+                )
+            )
+    return candidates
+
+
+def _discover_hybrid_candidates(settings: Settings) -> List[ScriptCandidate]:
+    root = settings.script_root
+    if not root.exists():
+        return []
+    candidates: List[ScriptCandidate] = []
+    references_by_product: Dict[str, tuple[Path, ...]] = {}
+    for md_path in _recursive_markdown_files(root):
+        if script_suppressed(md_path):
+            continue
+        relative = md_path.relative_to(root)
+        if len(relative.parts) < 3:
+            continue
+        script_type, product_name = relative.parts[:2]
+        if script_type not in {"混剪-钩子", "混剪-CTA"}:
+            continue
+        if any(part.startswith("_") or part.startswith(".") for part in relative.parts[:-1]):
+            continue
+        if product_name not in references_by_product:
+            references_by_product[product_name] = tuple(find_product_references(settings.reference_root, product_name))
+        references = references_by_product[product_name]
+        source_script = relative.parts[2] if len(relative.parts) > 3 else md_path.stem
+        candidates.append(
+            ScriptCandidate(
+                product_name=product_name,
+                product_dir=root / script_type / product_name,
+                md_path=md_path,
+                reference_image=references[0] if len(references) == 1 else None,
+                reference_images=references,
+                batch_id=f"{script_type}-{product_name}-{source_script}",
+                batch_label=source_script,
+                batch_source="hybrid_adaptation",
+                source_script=source_script,
+                script_type=script_type,
+            )
+        )
+    return candidates
+
+
+def load_script_candidate(candidate: ScriptCandidate) -> Optional[ScriptFile]:
+    markdown = _read_markdown(candidate.md_path)
+    if markdown is None:
+        return None
+    return ScriptFile(
+        product_name=candidate.product_name,
+        product_dir=candidate.product_dir,
+        md_path=candidate.md_path,
+        reference_image=candidate.reference_image,
+        segments=parse_segments(markdown),
+        reference_images=candidate.reference_images,
+        batch_id=candidate.batch_id,
+        batch_label=candidate.batch_label,
+        batch_source=candidate.batch_source,
+        source_script=candidate.source_script,
+        created_at=candidate.created_at,
+        upstream_script_path=candidate.upstream_script_path,
+        script_type=candidate.script_type,
+    )
 
 
 def _recursive_markdown_files(root: Path) -> List[Path]:
@@ -229,7 +340,17 @@ def fragment_delete_marker_path(md_path: Path) -> Path:
 
 def suppress_script(md_path: Path) -> Path:
     marker = fragment_delete_marker_path(md_path)
-    marker.write_text(str(md_path.stat().st_mtime_ns), encoding="utf-8")
+    stat = md_path.stat()
+    marker.write_text(
+        json.dumps(
+            {
+                "mtime_ns": stat.st_mtime_ns,
+                "size": stat.st_size,
+                "sha256": _file_sha256(md_path),
+            }
+        ),
+        encoding="utf-8",
+    )
     return marker
 
 
@@ -238,9 +359,29 @@ def script_suppressed(md_path: Path) -> bool:
     if not marker.is_file():
         return False
     try:
-        return marker.read_text(encoding="utf-8").strip() == str(md_path.stat().st_mtime_ns)
+        raw_marker = marker.read_text(encoding="utf-8").strip()
+        stat = md_path.stat()
+        try:
+            payload = json.loads(raw_marker)
+        except json.JSONDecodeError:
+            return raw_marker == str(stat.st_mtime_ns)
+        if not isinstance(payload, dict):
+            return False
+        if payload.get("mtime_ns") != stat.st_mtime_ns or payload.get("size") != stat.st_size:
+            return False
+        return str(payload.get("sha256") or "") == _file_sha256(md_path)
     except OSError:
         return False
+
+
+def _file_sha256(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def load_upstream_batch_map(settings: Settings) -> Dict[str, Dict[str, str]]:
