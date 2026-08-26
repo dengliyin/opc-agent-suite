@@ -20,7 +20,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from opc_shared.global_ai import load_profile, runtime_override_active, set_runtime_overrides
-from opc_shared.vault_snapshot import cached_or_empty, refresh_snapshot
+from opc_shared.vault_snapshot import cached_or_empty, load_snapshot, refresh_snapshot, save_snapshot
 
 from opc_engine.features.script_generation.generate_product_script import (
     CONFIG_DIR,
@@ -239,7 +239,13 @@ def reference_output_stems(reference_path: str | Path) -> tuple[str, ...]:
     output_root = output_dir_for_reference(reference_path)
     if not output_root.is_dir():
         return ()
-    return tuple(path.stem for path in output_root.glob("*.md") if path.is_file())
+    stems = {path.stem for path in output_root.glob("*.md") if path.is_file()}
+    stems.update(
+        path.name[: -len(".raw.json")]
+        for path in output_root.glob("*.raw.json")
+        if path.is_file()
+    )
+    return tuple(sorted(stems))
 
 
 def reference_output_status(
@@ -630,6 +636,68 @@ def cached_script_outputs(refresh: bool = False) -> dict[str, Any]:
     if refresh:
         return refresh_snapshot("hybrid-script-generation", "outputs", list_script_outputs)
     return cached_or_empty("hybrid-script-generation", "outputs", lambda: {"root": "", "roots": [], "outputs": []})
+
+
+def _remove_deleted_outputs_from_indexes(deleted_paths: list[Path]) -> None:
+    deleted = {str(path.resolve()) for path in deleted_paths}
+    outputs_snapshot = load_snapshot("hybrid-script-generation", "outputs")
+    if outputs_snapshot:
+        payload = dict(outputs_snapshot["payload"])
+        payload["outputs"] = [
+            item
+            for item in payload.get("outputs", [])
+            if str(resolve_root_path(str(item.get("path") or ""))) not in deleted
+        ]
+        save_snapshot("hybrid-script-generation", "outputs", payload)
+
+
+def clear_mutation_outputs_for_references(reference_paths: list[str], *, running: bool) -> dict[str, Any]:
+    if running:
+        raise ValueError("当前有脚本正在生成或排队，请等待任务完成后再删除")
+    requested = [str(path or "").strip() for path in reference_paths if str(path or "").strip()]
+    if not requested:
+        raise ValueError("请先勾选要清除裂变脚本的解析脚本")
+
+    reference_root = HOT_SCRIPT_SOURCE_ROOT.resolve()
+    selected_references: list[str] = []
+    targets: list[Path] = []
+    matched_references: set[str] = set()
+    for value in dict.fromkeys(requested):
+        reference = resolve_root_path(value)
+        try:
+            reference.relative_to(reference_root)
+        except ValueError as exc:
+            raise ValueError("只允许选择当前 02解析脚本目录内的脚本") from exc
+        if reference.suffix.lower() != ".md" or not reference.is_file():
+            raise ValueError("所选解析脚本不存在或不是 Markdown 文件")
+        hybrid_reference_classification(reference)
+        _country, author, source_id = reference_country_author_and_video_id(reference)
+        identity = f"-{author}-{source_id}"
+        selected_references.append(str(reference))
+        output_root = output_dir_for_reference(reference)
+        if not output_root.is_dir():
+            continue
+        matched = [path.resolve() for path in output_root.glob("裂变-*.md") if identity in path.stem]
+        if matched:
+            matched_references.add(str(reference))
+            targets.extend(matched)
+
+    deleted: list[Path] = []
+    failed: list[dict[str, str]] = []
+    for target in dict.fromkeys(targets):
+        try:
+            target.unlink()
+            deleted.append(target)
+        except OSError as exc:
+            failed.append({"path": str(target), "error": str(exc)})
+
+    if deleted:
+        _remove_deleted_outputs_from_indexes(deleted)
+    return {
+        "deleted": [str(path) for path in deleted],
+        "skipped": [path for path in selected_references if path not in matched_references],
+        "failed": failed,
+    }
 
 
 class ThreadWriter(io.TextIOBase):
@@ -1680,6 +1748,8 @@ HTML_PAGE = r"""<!doctype html>
           <h2>解析脚本列表</h2>
           <div class="bar">
             <span class="chip" id="scriptCountChip">0 个脚本</span>
+            <button id="selectAllMutationsBtn" disabled>全选</button>
+            <button class="warn" id="clearMutationsBtn" disabled>清除裂变脚本</button>
             <button id="refreshScriptsBtn">扫描资料库</button>
           </div>
         </div>
@@ -1716,6 +1786,7 @@ HTML_PAGE = r"""<!doctype html>
     let currentTab = 'prompt';
     let pollTimer = null;
     let outputRoot = '';
+    const selectedCleanupReferencePaths = new Set();
     let library = {products: [], references: [], roots: {}};
     let currentFiles = {};
     const COUNTRY_OPTIONS = [
@@ -1939,10 +2010,34 @@ HTML_PAGE = r"""<!doctype html>
       updateMutationSourceHint();
     }
 
+    function updateMutationCleanupControls(refs = currentProductReferences()) {
+      const paths = refs.map(item => item.path).filter(Boolean);
+      const allSelected = paths.length > 0 && paths.every(path => selectedCleanupReferencePaths.has(path));
+      $('selectAllMutationsBtn').disabled = paths.length === 0;
+      $('selectAllMutationsBtn').textContent = allSelected ? '取消全选' : '全选';
+      $('clearMutationsBtn').disabled = selectedCleanupReferencePaths.size === 0;
+    }
+
+    function toggleAllMutationReferences() {
+      const refs = currentProductReferences();
+      const paths = refs.map(item => item.path).filter(Boolean);
+      const allSelected = paths.length > 0 && paths.every(path => selectedCleanupReferencePaths.has(path));
+      for (const path of paths) {
+        if (allSelected) selectedCleanupReferencePaths.delete(path);
+        else selectedCleanupReferencePaths.add(path);
+      }
+      renderReferenceList();
+    }
+
     function renderReferenceList() {
       const list = $('referenceList');
       const selectedReferencePath = $('referencePath').value.trim();
       const refs = currentProductReferences();
+      const available = new Set(refs.map(item => item.path));
+      for (const path of Array.from(selectedCleanupReferencePaths)) {
+        if (!available.has(path)) selectedCleanupReferencePaths.delete(path);
+      }
+      updateMutationCleanupControls(refs);
       $('scriptCountChip').textContent = `${refs.length} 个脚本`;
       list.innerHTML = '';
       if (!refs.length) {
@@ -1965,6 +2060,16 @@ HTML_PAGE = r"""<!doctype html>
         const row = document.createElement('div');
         row.className = 'script-card' + (item.path === selectedReferencePath ? ' selected' : '');
         row.onclick = () => selectReference(item.path);
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = selectedCleanupReferencePaths.has(item.path);
+        checkbox.setAttribute('aria-label', `选择清除 ${item.name || '解析脚本'} 的裂变脚本`);
+        checkbox.onclick = event => event.stopPropagation();
+        checkbox.onchange = () => {
+          if (checkbox.checked) selectedCleanupReferencePaths.add(item.path);
+          else selectedCleanupReferencePaths.delete(item.path);
+          updateMutationCleanupControls(refs);
+        };
         const info = document.createElement('div');
         const title = document.createElement('strong');
         title.textContent = item.name || fileLabel(item.path);
@@ -1984,8 +2089,33 @@ HTML_PAGE = r"""<!doctype html>
         const pill = document.createElement('span');
         pill.className = 'script-pill';
         pill.textContent = item.path === selectedReferencePath ? '已选' : '选择';
-        row.append(info, statusWrap, pill);
+        row.append(checkbox, info, statusWrap, pill);
         list.appendChild(row);
+      }
+    }
+
+    async function clearSelectedMutations() {
+      const referencePaths = Array.from(selectedCleanupReferencePaths);
+      if (!referencePaths.length) return;
+      const names = referencePaths.slice(0, 8).map(path => `• ${fileLabel(path)}`).join('\n');
+      const remaining = referencePaths.length > 8 ? `\n• 另有 ${referencePaths.length - 8} 个解析脚本` : '';
+      if (!confirm(`确定清除以下 ${referencePaths.length} 个解析脚本产生的全部裂变脚本吗？\n\n${names}${remaining}\n\n只删除对应裂变 Markdown；永久删除，无法恢复。“已裂变”、累计裂变次数和历史编号仍会保留。`)) return;
+      const button = $('clearMutationsBtn');
+      button.disabled = true;
+      try {
+        const result = await api('/api/mutations', {
+          method: 'DELETE',
+          body: JSON.stringify({reference_paths: referencePaths}),
+        });
+        selectedCleanupReferencePaths.clear();
+        const failed = Number((result.failed || []).length);
+        const skipped = Number((result.skipped || []).length);
+        $('logs').textContent = `清除裂变脚本完成：删除 ${(result.deleted || []).length} 个；没有可删除文件 ${skipped} 个；失败 ${failed} 个。`;
+        await Promise.all([refreshOutputs(), loadState()]);
+      } catch (err) {
+        $('logs').textContent = `清除失败：${err.message || String(err)}`;
+      } finally {
+        button.disabled = selectedCleanupReferencePaths.size === 0;
       }
     }
 
@@ -2254,6 +2384,8 @@ HTML_PAGE = r"""<!doctype html>
     $('openOutputRootBtn').onclick = openOutputRoot;
     $('openReferenceBtn').onclick = openSelectedReference;
     $('refreshScriptsBtn').onclick = async () => renderState(await api('/api/config?refresh=1'));
+    $('selectAllMutationsBtn').onclick = toggleAllMutationReferences;
+    $('clearMutationsBtn').onclick = clearSelectedMutations;
     $('openPromptBtn').onclick = () => openConfiguredFile('prompt');
     $('openMutationPromptBtn').onclick = () => openConfiguredFile('mutation_prompt');
     $('openMistakeBookBtn').onclick = () => openConfiguredFile('mistake_book');
@@ -2312,6 +2444,27 @@ class ScriptGenerationWebHandler(BaseHTTPRequestHandler):
                 json_response(self, 200, import_markdown_file(payload))
             elif parsed.path == "/api/open":
                 json_response(self, 200, open_local_path(str(payload.get("path") or "")))
+            else:
+                json_response(self, 404, {"error": "Not found"})
+        except Exception as exc:  # noqa: BLE001
+            json_response(self, 400, {"error": str(exc)})
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        parsed = urllib.parse.urlparse(self.path)
+        try:
+            payload = read_request_json(self)
+            if parsed.path == "/api/mutations":
+                reference_paths = payload.get("reference_paths")
+                if not isinstance(reference_paths, list):
+                    raise ValueError("解析脚本路径必须是列表")
+                json_response(
+                    self,
+                    200,
+                    clear_mutation_outputs_for_references(
+                        reference_paths,
+                        running=bool(JOB.snapshot().get("running")),
+                    ),
+                )
             else:
                 json_response(self, 404, {"error": "Not found"})
         except Exception as exc:  # noqa: BLE001

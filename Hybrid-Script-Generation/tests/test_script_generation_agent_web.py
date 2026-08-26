@@ -8,10 +8,44 @@ from pathlib import Path
 from unittest.mock import patch
 
 from opc_engine.features.script_generation import script_generation_agent_web
-from opc_engine.features.script_generation.script_generation_agent_web import HTML_PAGE, GenerationJob
+from opc_engine.features.script_generation.script_generation_agent_web import (
+    HTML_PAGE,
+    GenerationJob,
+    clear_mutation_outputs_for_references,
+)
 
 
 class ScriptGenerationAgentWebTests(unittest.TestCase):
+    def test_clear_mutations_deletes_markdown_but_preserves_raw_history(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            reference_root = root / "references"
+            output_root = root / "outputs"
+            reference = reference_root / "混剪-钩子" / "P1" / "IE-author-1234567890123456789.md"
+            reference.parent.mkdir(parents=True)
+            reference.write_text("reference", encoding="utf-8")
+            output_dir = output_root / "混剪-钩子" / "P1" / reference.stem
+            output_dir.mkdir(parents=True)
+            mutation = output_dir / "裂变-P1-IE-author-1234567890123456789.md"
+            raw = output_dir / "裂变-P1-IE-author-1234567890123456789.raw.json"
+            mutation.write_text("mutation", encoding="utf-8")
+            raw.write_text("{}", encoding="utf-8")
+
+            with (
+                patch.object(script_generation_agent_web, "HOT_SCRIPT_SOURCE_ROOT", reference_root),
+                patch.object(script_generation_agent_web, "SCRIPT_OUTPUT_SOURCE_ROOT", output_root),
+                patch.object(script_generation_agent_web, "_remove_deleted_outputs_from_indexes"),
+            ):
+                result = clear_mutation_outputs_for_references([str(reference)], running=False)
+
+            self.assertEqual(result["deleted"], [str(mutation.resolve())])
+            self.assertFalse(mutation.exists())
+            self.assertTrue(raw.exists())
+
+    def test_cleanup_controls_are_present(self):
+        self.assertIn("清除裂变脚本", HTML_PAGE)
+        self.assertIn("selectAllMutationsBtn", HTML_PAGE)
+
     def test_unreadable_optional_file_is_treated_as_empty(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "optional.md"

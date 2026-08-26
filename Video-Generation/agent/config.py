@@ -315,6 +315,12 @@ def load_hybrid_omni_settings() -> Settings:
         script_root=Path(
             os.getenv("HYBRID_OMNI_SCRIPT_ROOT", str(DEFAULT_HYBRID_OMNI_SCRIPT_ROOT))
         ).expanduser(),
+        product_script_root=Path(
+            os.getenv(
+                "HYBRID_SCRIPT_GENERATION_OUTPUT_ROOT",
+                str(DEFAULT_HYBRID_ROOT / "03复刻裂变脚本"),
+            )
+        ).expanduser(),
         video_output_root=video_output_root,
         completed_root=hybrid_root / "08混剪工作区" / "片段产出归档",
         workflow="hybrid_omni",

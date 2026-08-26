@@ -310,6 +310,45 @@ def test_restore_hybrid_delivery_moves_video_back_and_removes_delivery_records(t
     assert script_to_dict(settings, scan_scripts(settings)[0])["exported"] is False
 
 
+def test_delete_hybrid_archive_removes_adaptation_and_retires_hybrid_source(tmp_path: Path) -> None:
+    settings = Settings(
+        **{
+            **settings_for(tmp_path).__dict__,
+            "provider_label": "混剪 Omni",
+            "api_base_path": "/hybrid-omni/api",
+            "workflow": "hybrid_omni",
+            "completed_root": tmp_path / "08混剪工作区" / "片段产出归档",
+            "product_script_root": tmp_path / "03复刻裂变脚本",
+        }
+    )
+    settings.reference_root.mkdir(parents=True)
+    (settings.reference_root / "P1.jpg").write_bytes(b"ref")
+    adapted_path = settings.script_root / "混剪-钩子" / "P1" / "来源A" / "hook.md"
+    adapted_path.parent.mkdir(parents=True)
+    adapted_path.write_text(
+        "# Segment 1：00:00 - 00:01\n"
+        "## A. 人物造型参考板提示词\nA\n"
+        "## B. 故事板图片提示词\nB\n",
+        encoding="utf-8",
+    )
+    original_path = settings.product_script_root / "混剪-钩子" / "P1" / "来源A" / "hook.md"
+    original_path.parent.mkdir(parents=True)
+    original_path.write_text("原始混剪脚本", encoding="utf-8")
+    video = video_output_path(settings, "P1", adapted_path, 1)
+    video.parent.mkdir(parents=True)
+    video.write_bytes(b"video")
+    delivered = deliver_hybrid_scripts(settings, scan_scripts(settings), [str(adapted_path)])
+    archive_dir = Path(delivered["exported"][0]["export_dir"])
+
+    result = delete_archived_scripts(settings, scan_scripts(settings), [str(adapted_path)])
+
+    assert len(result["deleted"]) == 1, result
+    assert not archive_dir.exists()
+    assert not adapted_path.exists()
+    assert original_path.read_text(encoding="utf-8") == "原始混剪脚本"
+    assert retired_model_record(settings.product_script_root, original_path, "omni")
+
+
 def test_scan_scripts_matches_reference_with_code_prefix(tmp_path: Path) -> None:
     settings = settings_for(tmp_path)
     product_dir = settings.script_root / "海蓝之谜精粹水"

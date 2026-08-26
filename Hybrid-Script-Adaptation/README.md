@@ -91,3 +91,5 @@ The repository intentionally excludes runtime data and private configuration:
 - local logs, caches, and Python bytecode
 
 Keep hybrid scripts and API keys outside Git. Use `agent_secrets.example.json` as the template for local credentials.
+
+当 9995 的混剪 Omni 入口删除已交付归档时，本 Agent 会读取 `03复刻裂变脚本/.opc/adaptation_retirements.json` 中按模型保存的淘汰记录。原始混剪脚本保留，对应模型显示为“已淘汰”，并从“适配未适配”任务中排除。

@@ -154,6 +154,7 @@ def deliver_hybrid_scripts(
                 "active_md_path": str(script.md_path),
                 "archived_md_path": str(script_export_dir / script.md_path.name),
                 "source_script": script.source_script,
+                "upstream_script_path": script.upstream_script_path,
                 "export_dir": str(script_export_dir),
                 "exported_at": time.time(),
                 "upload_status": "已导出",
@@ -296,7 +297,7 @@ def delete_archived_scripts(
         if str(script.md_path.resolve()) not in selected:
             continue
         marker_path = export_marker_path(script.md_path)
-        if not script.exported or not marker_path.is_file():
+        if (not script.exported and settings.workflow != "hybrid_omni") or not marker_path.is_file():
             skipped.append(_skip(script, "未归档"))
             continue
         try:
@@ -320,6 +321,8 @@ def delete_archived_scripts(
                 marker,
                 active_md_path,
                 settings.provider,
+                script.script_type,
+                settings.workflow,
             )
             retirement = retire_adaptation_model(
                 product_script_root,
@@ -370,10 +373,12 @@ def _current_upstream_script_path(
     marker: Dict[str, Any],
     active_md_path: Path,
     provider: str,
+    script_type: str = "",
+    workflow: str = "standard",
 ) -> Path:
     upstream = str(marker.get("upstream_script_path") or "").strip().replace("\\", "/")
     filename = upstream.rsplit("/", 1)[-1] if upstream else ""
-    if not filename:
+    if not filename and workflow != "hybrid_omni":
         source = str(marker.get("source_script") or "").strip().replace("\\", "/")
         filename = source.rsplit("/", 1)[-1] if source else ""
     if not filename:
@@ -383,6 +388,11 @@ def _current_upstream_script_path(
             filename = filename[len(prefix):]
     if Path(filename).suffix.lower() != ".md":
         raise ValueError("归档记录缺少原始产品脚本名称")
+    if workflow == "hybrid_omni":
+        source_folder = str(marker.get("source_script") or "").strip().replace("\\", "/").rsplit("/", 1)[-1]
+        if not script_type or not source_folder:
+            raise ValueError("混剪归档记录缺少脚本类型或来源目录")
+        return (product_script_root / script_type / product_name / source_folder / filename).resolve()
     return (product_script_root / product_name / filename).resolve()
 
 

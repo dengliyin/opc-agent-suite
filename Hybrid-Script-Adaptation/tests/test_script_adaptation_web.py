@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from opc_shared.adaptation_retirement import retire_adaptation_model
+
 APP_ROOT = Path(__file__).parents[1] / "software/Hybrid-Script-Adaptation-app"
 MODULE_PATH = APP_ROOT / "opc_engine/features/script_adaptation/script_adaptation_agent_web.py"
 sys.path.insert(0, str(APP_ROOT))
@@ -65,6 +67,33 @@ def test_status_record_uses_preloaded_log_without_reading_directory(monkeypatch,
 
 
 class HybridAgentConfigurationTests(unittest.TestCase):
+    def test_retired_model_is_excluded_from_unadapted_count(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source_root = root / "03复刻裂变脚本"
+            hook_root = source_root / "混剪-钩子"
+            script_path = hook_root / "产品A" / "来源脚本A" / "hook.md"
+            script_path.parent.mkdir(parents=True)
+            script_path.write_text("# hook\n", encoding="utf-8")
+            retire_adaptation_model(source_root, script_path, "omni", "9995 删除归档")
+            config = {
+                "script_adaptation_input_dirs": [str(hook_root)],
+                "script_adaptation_output_root": str(root / "04适配脚本" / "omni"),
+                "script_adaptation_target_model": "omni",
+            }
+
+            with (
+                patch.object(web, "HYBRID_PRODUCT_SCRIPT_ROOT", source_root),
+                patch.object(web, "load_local_agent_config", return_value=config),
+            ):
+                payload = web.list_product_scripts("omni")
+
+            script = payload["products"][0]["scripts"][0]
+            self.assertTrue(script["retired"])
+            self.assertEqual(script["adaptation_state"], "retired")
+            self.assertEqual(payload["retired_count"], 1)
+            self.assertEqual(payload["unused_count"], 0)
+
     def test_vault_root_is_required_when_process_environment_is_missing(self) -> None:
         with patch.dict(agent.os.environ, {}, clear=True):
             with self.assertRaisesRegex(RuntimeError, "OPC_VAULT_ROOT 未配置"):
