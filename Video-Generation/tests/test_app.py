@@ -266,6 +266,50 @@ def test_incremental_catalog_reuses_completed_cold_script(monkeypatch, tmp_path)
     assert payload["scan_state"]["cold"] == 2
 
 
+def test_incremental_catalog_rebases_archived_paths_to_current_vault(monkeypatch, tmp_path):
+    active_root = tmp_path / "current-vault" / "04适配脚本" / "omni"
+    archived_path = tmp_path / "current-vault" / "06合成工作区" / "2026-08-26" / "P1" / "script" / "script.md"
+    previous = [
+        {
+            "product_name": "P1",
+            "md_path": str(archived_path),
+            "segments": [],
+            "complete": True,
+            "exported": True,
+            "scan_key": str(archived_path),
+            "scan_signature": "archived",
+            "temperature": "cold",
+        }
+    ]
+    captured = []
+    monkeypatch.setattr(
+        app_module,
+        "load_snapshot",
+        lambda *_args: {
+            "payload": {
+                "scripts": previous,
+                "scan_state": {
+                    "schema_version": 2,
+                    "archive_active_paths": ["D:/old-vault/04适配脚本/omni/P1/script.md"],
+                },
+            }
+        },
+    )
+    monkeypatch.setattr(
+        app_module,
+        "discover_active_script_candidates",
+        lambda _settings, archive_paths: captured.extend(archive_paths) or [],
+    )
+    settings = SimpleNamespace(workflow="standard", script_root=active_root)
+
+    payload = app_module._incremental_catalog_payload(settings, "test")
+
+    expected = str((active_root / "P1" / "script.md").resolve())
+    assert captured == [expected]
+    assert payload["scan_state"]["archive_active_paths"] == [expected]
+    assert payload["scripts"] == previous
+
+
 def test_media_cleanup_route_is_owned_by_assembly_agent():
     paths = {route.path for route in app_module.app.routes}
 

@@ -2330,26 +2330,53 @@ def state_for_client() -> dict[str, Any]:
     }
 
 
+def overlay_live_publish_state(state: dict[str, Any]) -> dict[str, Any]:
+    records = load_publish_records()
+    published_by_path = published_record_by_path(records)
+    published_by_identity: dict[tuple[str, str], dict[str, Any]] = {}
+    for record in records:
+        if not isinstance(record, dict) or record.get("status") != "published" or not record.get("video_path"):
+            continue
+        published_by_identity.setdefault(video_identity(Path(str(record["video_path"]))), record)
+
+    result = dict(state)
+    videos: list[dict[str, Any]] = []
+    for cached_video in state.get("videos") or []:
+        if not isinstance(cached_video, dict):
+            continue
+        video = dict(cached_video)
+        path = str(video.get("path") or "")
+        record = published_by_path.get(path) or published_by_identity.get(video_identity(Path(path)))
+        video["published"] = record is not None
+        video["published_record"] = record
+        videos.append(video)
+    result["videos"] = videos
+    result["publish_records"] = records
+    return result
+
+
 def cached_state_for_client(refresh: bool = False) -> dict[str, Any]:
     if refresh:
-        return refresh_snapshot("finished-video-manager", "state", state_for_client)
-    return cached_or_empty(
-        "finished-video-manager",
-        "state",
-        lambda: {
-            "finished_video_root": FINISHED_VIDEO_ROOT.as_posix(),
-            "title_library_root": TITLE_LIBRARY_ROOT.as_posix(),
-            "video_count": 0,
-            "product_count": 0,
-            "library_count": 0,
-            "countries": [],
-            "products": [],
-            "videos": [],
-            "publish_config": load_publish_config(),
-            "publish_records": [],
-            "warnings": [],
-        },
-    )
+        state = refresh_snapshot("finished-video-manager", "state", state_for_client)
+    else:
+        state = cached_or_empty(
+            "finished-video-manager",
+            "state",
+            lambda: {
+                "finished_video_root": FINISHED_VIDEO_ROOT.as_posix(),
+                "title_library_root": TITLE_LIBRARY_ROOT.as_posix(),
+                "video_count": 0,
+                "product_count": 0,
+                "library_count": 0,
+                "countries": [],
+                "products": [],
+                "videos": [],
+                "publish_config": load_publish_config(),
+                "publish_records": [],
+                "warnings": [],
+            },
+        )
+    return overlay_live_publish_state(state)
 
 
 def get_publish_queue() -> PublishQueue:

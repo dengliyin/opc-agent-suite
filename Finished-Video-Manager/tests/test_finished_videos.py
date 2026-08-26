@@ -10,6 +10,28 @@ from finished_video_manager import web
 
 
 class FinishedVideoScanTest(unittest.TestCase):
+    def test_cached_video_publish_status_uses_live_records(self) -> None:
+        current_path = Path("/vault/成品视频/P1/demo.mp4")
+        legacy_path = Path("/old-vault/成品视频/P1/demo.mp4")
+        stale_path = Path("/vault/成品视频/P1/stale.mp4")
+        state = {
+            "videos": [
+                {"path": current_path.as_posix(), "published": False, "published_record": None},
+                {"path": stale_path.as_posix(), "published": True, "published_record": {"status": "published"}},
+            ],
+            "publish_records": [],
+        }
+        live_record = {"status": "published", "video_path": legacy_path.as_posix(), "completed_at": "2026-08-26"}
+
+        with patch.object(web, "load_publish_records", return_value=[live_record]):
+            result = web.overlay_live_publish_state(state)
+
+        self.assertTrue(result["videos"][0]["published"])
+        self.assertEqual(result["videos"][0]["published_record"], live_record)
+        self.assertFalse(result["videos"][1]["published"])
+        self.assertIsNone(result["videos"][1]["published_record"])
+        self.assertEqual(result["publish_records"], [live_record])
+
     def test_thumbnail_uses_first_video_frame(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

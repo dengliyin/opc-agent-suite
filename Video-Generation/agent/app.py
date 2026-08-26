@@ -841,16 +841,15 @@ def _catalog_summary_from_records(records: List[Dict[str, Any]]) -> Dict[str, in
     }
 
 
-def _archive_active_paths(records: List[Dict[str, Any]]) -> List[str]:
+def _archive_active_paths(current: Settings, records: List[Dict[str, Any]]) -> List[str]:
     active_paths: set[str] = set()
     for record in records:
         if not record.get("exported"):
             continue
         md_path = str(record.get("md_path") or "")
-        marker = read_export_marker(Path(md_path)) if md_path else {}
-        active_path = str(marker.get("active_md_path") or "").strip()
-        if active_path:
-            active_paths.add(str(Path(active_path).expanduser().resolve()))
+        product_name = str(record.get("product_name") or "").strip()
+        if md_path and product_name:
+            active_paths.add(str((current.script_root / product_name / Path(md_path).name).resolve()))
     return sorted(active_paths)
 
 
@@ -877,7 +876,7 @@ def _full_catalog_payload(current: Settings) -> Dict[str, Any]:
             ),
         )
         record["temperature"] = "cold" if record.get("complete") or record.get("exported") else "hot"
-    archive_paths = _archive_active_paths(records) if current.workflow == "standard" else []
+    archive_paths = _archive_active_paths(current, records) if current.workflow == "standard" else []
     return {
         "summary": _catalog_summary_from_records(records),
         "scripts": records,
@@ -902,7 +901,7 @@ def _incremental_catalog_payload(current: Settings, cache_key: str) -> Dict[str,
         payload["scan_state"]["mode"] = "migration_full"
         return payload
     archived_records = [record for record in previous.get("scripts", []) if record.get("exported") and current.workflow == "standard"]
-    archive_paths = list(scan_state.get("archive_active_paths") or [])
+    archive_paths = _archive_active_paths(current, archived_records) if current.workflow == "standard" else []
     candidates = discover_active_script_candidates(current, archive_paths)
     previous_active = [record for record in previous.get("scripts", []) if not record.get("exported") or current.workflow != "standard"]
 
