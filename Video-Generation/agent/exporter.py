@@ -12,6 +12,7 @@ from .files import (
     ScriptFile,
     character_image_path,
     export_marker_path,
+    fragment_delete_marker_path,
     script_exported,
     storyboard_image_path,
     video_output_path,
@@ -277,6 +278,77 @@ def restore_exported_scripts(
         except Exception as exc:
             skipped.append(_skip(script, f"恢复失败：{exc}"))
     return {"provider": settings.provider, "restored": restored, "skipped": skipped}
+
+
+def delete_archived_scripts(
+    settings: Settings,
+    scripts: Iterable[ScriptFile],
+    script_paths: Optional[Sequence[str]] = None,
+) -> Dict[str, Any]:
+    selected = {str(Path(path).expanduser().resolve()) for path in script_paths or []}
+    deleted: List[Dict[str, Any]] = []
+    skipped: List[Dict[str, Any]] = []
+    archive_root = settings.completed_script_root.resolve()
+    script_root = settings.script_root.resolve()
+    for script in scripts:
+        if str(script.md_path.resolve()) not in selected:
+            continue
+        marker_path = export_marker_path(script.md_path)
+        if not script.exported or not marker_path.is_file():
+            skipped.append(_skip(script, "未归档"))
+            continue
+        try:
+            marker = _read_marker(marker_path)
+            script_path = script.md_path.resolve()
+            export_dir = script_path.parent if archive_root in script_path.parents else _current_archive_dir(archive_root, marker)
+            if export_dir == archive_root or archive_root not in export_dir.parents:
+                raise ValueError(f"归档目录不属于当前 Agent：{export_dir}")
+
+            active_md_path = script_path if script_root in script_path.parents else (script_root / script.product_name / script.md_path.name).resolve()
+            if active_md_path != script_root and script_root not in active_md_path.parents:
+                raise ValueError(f"源脚本不属于当前 Agent：{active_md_path}")
+
+            file_count = sum(1 for path in export_dir.rglob("*") if path.is_file()) if export_dir.is_dir() else 0
+            if export_dir.is_dir():
+                shutil.rmtree(export_dir)
+                _remove_empty_parents(export_dir.parent, settings.completed_script_root)
+            if marker_path.exists():
+                marker_path.unlink()
+                file_count += 1
+            source_deleted = False
+            if active_md_path.is_file():
+                active_md_path.unlink()
+                file_count += 1
+                source_deleted = True
+            fragment_delete_marker_path(active_md_path).unlink(missing_ok=True)
+            _remove_empty_parents(active_md_path.parent, settings.script_root)
+            deleted.append(
+                {
+                    "product_name": script.product_name,
+                    "md_name": script.md_path.name,
+                    "md_path": str(script.md_path),
+                    "export_dir": str(export_dir),
+                    "files_deleted": file_count,
+                    "source_script_deleted": source_deleted,
+                }
+            )
+        except Exception as exc:
+            skipped.append(_skip(script, f"删除归档失败：{exc}"))
+    return {
+        "provider": settings.provider,
+        "deleted": deleted,
+        "skipped": skipped,
+        "files_deleted": sum(item["files_deleted"] for item in deleted),
+    }
+
+
+def _current_archive_dir(archive_root: Path, marker: Dict[str, Any]) -> Path:
+    raw_path = Path(str(marker.get("export_dir") or "")).expanduser()
+    parts = raw_path.parts
+    for index, part in enumerate(parts):
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", part):
+            return archive_root.joinpath(*parts[index:]).resolve()
+    return raw_path.resolve()
 
 
 def default_export_root(settings: Settings) -> Path:

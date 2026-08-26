@@ -17,6 +17,7 @@ from opc_shared.vault_snapshot import cached_or_empty, incremental_records, load
 
 from .config import ENV_PATH, SETTINGS_PATH, Settings, load_hybrid_omni_settings, load_settings, mask_secrets, update_env_values
 from .exporter import (
+    delete_archived_scripts,
     deliver_hybrid_scripts,
     export_completed_scripts,
     restore_exported_scripts,
@@ -1018,6 +1019,28 @@ def _restore_exported(provider: str, request: RestoreRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=_safe(str(exc)))
 
 
+def _delete_archived(provider: str, request: ScriptDeleteRequest) -> Dict[str, Any]:
+    selected_paths = {Path(path).expanduser().resolve() for path in request.script_paths if path}
+    if not selected_paths:
+        raise HTTPException(status_code=400, detail="请至少选择一个归档脚本")
+    for job in _manager_for(provider).list_jobs():
+        if job.get("status") not in {"queued", "running"}:
+            continue
+        locks_all, active_paths = _job_locked_script_paths(job)
+        if locks_all:
+            raise HTTPException(status_code=409, detail="当前任务会处理全部脚本，暂不能删除归档")
+        if selected_paths & active_paths:
+            raise HTTPException(status_code=409, detail="所选归档脚本正在运行或排队，请等待任务完成或先取消任务")
+    current = _settings_for(provider)
+    try:
+        scripts = scan_scripts(current, include_archived=True)
+        result = delete_archived_scripts(current, scripts, request.script_paths)
+        _refresh_catalog_after_archive_change(current)
+        return result
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=_safe(str(exc)))
+
+
 def _refresh_catalog_after_archive_change(current: Settings) -> None:
     try:
         _catalog_payload(current, refresh=True, full=True)
@@ -1355,6 +1378,22 @@ def delete_grok_scripts(request: ScriptDeleteRequest) -> Dict[str, Any]:
 @app.delete("/hybrid-omni/api/scripts")
 def delete_hybrid_omni_scripts(request: ScriptDeleteRequest) -> Dict[str, Any]:
     return _delete_scripts("hybrid_omni", request)
+
+
+@app.delete("/api/archived-scripts")
+@app.delete("/omni/api/archived-scripts")
+def delete_omni_archived_scripts(request: ScriptDeleteRequest) -> Dict[str, Any]:
+    return _delete_archived("omni", request)
+
+
+@app.delete("/grok/api/archived-scripts")
+def delete_grok_archived_scripts(request: ScriptDeleteRequest) -> Dict[str, Any]:
+    return _delete_archived("grok", request)
+
+
+@app.delete("/hybrid-omni/api/archived-scripts")
+def delete_hybrid_omni_archived_scripts(request: ScriptDeleteRequest) -> Dict[str, Any]:
+    return _delete_archived("hybrid_omni", request)
 
 
 
