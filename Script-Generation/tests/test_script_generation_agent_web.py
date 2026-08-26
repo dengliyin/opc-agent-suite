@@ -9,10 +9,84 @@ from pathlib import Path
 from unittest.mock import patch
 
 from opc_engine.features.script_generation import script_generation_agent_web
-from opc_engine.features.script_generation.script_generation_agent_web import HTML_PAGE, GenerationJob
+from opc_engine.features.script_generation.script_generation_agent_web import (
+    HTML_PAGE,
+    GenerationJob,
+    clear_mutation_outputs_for_references,
+)
 
 
 class ScriptGenerationAgentWebTests(unittest.TestCase):
+    def test_clear_mutations_uses_selected_reference_identity(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            reference_root = Path(temp_dir) / "02参考脚本"
+            output_root = Path(temp_dir) / "03产品脚本"
+            reference = reference_root / "P1" / "ES-author-1234567890123456789.md"
+            mutation = output_root / "P1" / "裂变-P1-IT-author-1234567890123456789.md"
+            unrelated = output_root / "P1" / "裂变-P1-IT-other-9999999999999999999.md"
+            clone = output_root / "P1" / "复刻-P1-IT-author-1234567890123456789.md"
+            raw = mutation.with_suffix(".raw.json")
+            reference.parent.mkdir(parents=True)
+            reference.write_text("reference", encoding="utf-8")
+            mutation.parent.mkdir(parents=True)
+            mutation.write_text("mutation", encoding="utf-8")
+            unrelated.write_text("unrelated", encoding="utf-8")
+            clone.write_text("clone", encoding="utf-8")
+            raw.write_text("{}", encoding="utf-8")
+
+            with (
+                patch.object(script_generation_agent_web, "SCRIPT_OUTPUT_SOURCE_ROOT", output_root),
+                patch.object(script_generation_agent_web, "HOT_SCRIPT_SOURCE_ROOT", reference_root),
+                patch.object(script_generation_agent_web, "load_snapshot", return_value=None),
+            ):
+                result = clear_mutation_outputs_for_references([str(reference)], running=False)
+
+            self.assertEqual(result["deleted"], [str(mutation.resolve())])
+            self.assertFalse(mutation.exists())
+            self.assertTrue(raw.exists())
+            self.assertTrue(unrelated.exists())
+            self.assertTrue(clone.exists())
+
+    def test_deleted_mutation_markdown_keeps_historical_mutation_count(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_root = Path(temp_dir) / "03产品脚本"
+            product_root = output_root / "P1"
+            product_root.mkdir(parents=True)
+            raw = product_root / "裂变-P1-ES-author-1234567890123456789.raw.json"
+            raw.write_text("{}", encoding="utf-8")
+            reference = Path("/tmp/ES-author-1234567890123456789.md")
+
+            with patch.object(script_generation_agent_web, "SCRIPT_OUTPUT_SOURCE_ROOT", output_root):
+                stems = script_generation_agent_web.product_output_stems("P1")
+                status = script_generation_agent_web.reference_output_status("P1", reference, stems)
+
+            self.assertEqual(status["mutation_count"], 1)
+
+    def test_clear_mutations_rejects_reference_outside_library(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            reference_root = Path(temp_dir) / "02参考脚本"
+            outside = Path(temp_dir) / "outside.md"
+            reference_root.mkdir()
+            outside.write_text("reference", encoding="utf-8")
+
+            with patch.object(script_generation_agent_web, "HOT_SCRIPT_SOURCE_ROOT", reference_root):
+                with self.assertRaisesRegex(ValueError, "02参考脚本"):
+                    clear_mutation_outputs_for_references([str(outside)], running=False)
+
+            self.assertTrue(outside.exists())
+
+    def test_clear_mutations_is_blocked_while_job_is_running(self):
+        with self.assertRaisesRegex(ValueError, "正在生成或排队"):
+            clear_mutation_outputs_for_references(["/tmp/reference.md"], running=True)
+
+    def test_browser_exposes_reference_mutation_cleanup_controls(self):
+        self.assertIn('id="selectAllMutationsBtn"', HTML_PAGE)
+        self.assertIn('id="clearMutationsBtn"', HTML_PAGE)
+        self.assertIn("取消全选", HTML_PAGE)
+        self.assertIn("清除裂变脚本", HTML_PAGE)
+        self.assertIn("永久删除，无法恢复", HTML_PAGE)
+        self.assertIn("method: 'DELETE'", HTML_PAGE)
+
     def test_reference_status_uses_markdown_stems_across_target_countries(self):
         reference = Path("/tmp/MX-author-1234567890123456789-example.md")
         stems = (

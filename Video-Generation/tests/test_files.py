@@ -18,6 +18,7 @@ from agent.files import (
 )
 from agent.exporter import (
     dated_export_root,
+    delete_archived_scripts,
     deliver_hybrid_scripts,
     export_completed_scripts,
     restore_exported_scripts,
@@ -603,6 +604,71 @@ def test_restore_exported_script_moves_images_back_but_leaves_videos_exported_by
     assert not video.exists()
     assert not archived_md_path.exists()
     assert not export_marker_path(archived_md_path).exists()
+
+
+def test_delete_archived_script_removes_archive_and_source_script(tmp_path: Path) -> None:
+    settings = settings_for(tmp_path)
+    product_dir = settings.script_root / "P1"
+    product_dir.mkdir(parents=True)
+    settings.reference_root.mkdir(parents=True)
+    (settings.reference_root / "P1.png").write_bytes(b"ref")
+    md_path = product_dir / "demo.md"
+    md_path.write_text(
+        "# Segment 1：00:00 - 00:01\n"
+        "## A. 人物造型参考板提示词\nA1\n"
+        "## B. 故事板图片提示词\nB1\n",
+        encoding="utf-8",
+    )
+    video = video_output_path(settings, "P1", md_path, 1)
+    video.parent.mkdir(parents=True, exist_ok=True)
+    video.write_bytes(b"video")
+    export_completed_scripts(settings, scan_scripts(settings), [str(md_path)])
+    archived_script = scan_scripts(settings, include_archived=True)[0]
+    archive_dir = archived_script.md_path.parent
+
+    result = delete_archived_scripts(settings, [archived_script], [str(archived_script.md_path)])
+
+    assert len(result["deleted"]) == 1
+    assert result["skipped"] == []
+    assert result["files_deleted"] >= 3
+    assert not archive_dir.exists()
+    assert not md_path.exists()
+    assert not fragment_delete_marker_path(md_path).exists()
+    assert scan_scripts(settings) == []
+    assert scan_scripts(settings, include_archived=True) == []
+
+
+def test_delete_old_archive_ignores_stale_host_paths_in_marker(tmp_path: Path) -> None:
+    settings = settings_for(tmp_path)
+    product_dir = settings.script_root / "P1"
+    product_dir.mkdir(parents=True)
+    settings.reference_root.mkdir(parents=True)
+    (settings.reference_root / "P1.png").write_bytes(b"ref")
+    md_path = product_dir / "legacy.md"
+    md_path.write_text(
+        "# Segment 1：00:00 - 00:01\n"
+        "## A. 人物造型参考板提示词\nA1\n"
+        "## B. 故事板图片提示词\nB1\n",
+        encoding="utf-8",
+    )
+    video = video_output_path(settings, "P1", md_path, 1)
+    video.parent.mkdir(parents=True, exist_ok=True)
+    video.write_bytes(b"video")
+    export_completed_scripts(settings, scan_scripts(settings), [str(md_path)])
+    archived_script = scan_scripts(settings, include_archived=True)[0]
+    marker_path = export_marker_path(archived_script.md_path)
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["active_md_path"] = "/Users/other/Documents/Obsidian Vault/wiki/视频/04适配脚本/omni/P1/legacy.md"
+    marker["export_dir"] = "/Users/old/Documents/Obsidian Vault/wiki/视频/06合成工作区/omni/2020-01-01/P1/legacy"
+    marker_path.write_text(json.dumps(marker, ensure_ascii=False), encoding="utf-8")
+    archive_dir = archived_script.md_path.parent
+
+    result = delete_archived_scripts(settings, [archived_script], [str(archived_script.md_path)])
+
+    assert len(result["deleted"]) == 1
+    assert result["skipped"] == []
+    assert not archive_dir.exists()
+    assert not md_path.exists()
 
 
 def test_export_script_with_videos_only(tmp_path: Path) -> None:

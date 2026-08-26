@@ -524,7 +524,8 @@ function renderArchiveControls() {
   if (exportButton) exportButton.hidden = state.showArchived;
   if (restoreButton) restoreButton.hidden = !state.showArchived;
   if (deleteButton) {
-    deleteButton.hidden = state.showArchived;
+    deleteButton.hidden = false;
+    deleteButton.textContent = state.showArchived ? "删除归档" : "删除所选";
     deleteButton.disabled = state.selectedScriptPaths.size === 0;
   }
   if (completeButton) completeButton.hidden = state.showArchived;
@@ -1201,6 +1202,10 @@ async function restoreSelectedArchived() {
 }
 
 async function deleteSelectedScripts() {
+  if (state.showArchived) {
+    await deleteSelectedArchived();
+    return;
+  }
   if (!state.config?.preserve_adapted_script_on_delete) {
     alert("删除规则更新将在当前任务结束、服务重启后生效；为避免丢失上游适配记录，现在暂不能删除脚本。");
     return;
@@ -1236,6 +1241,43 @@ async function deleteSelectedScripts() {
     await refreshAll(true);
   } catch (error) {
     alert(`删除失败：${error.message}`);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function deleteSelectedArchived() {
+  const scripts = state.catalog?.scripts || [];
+  const scriptByPath = new Map(scripts.map((script) => [script.md_path, script]));
+  const deletePaths = Array.from(state.selectedScriptPaths).filter((path) => isScriptExported(scriptByPath.get(path)));
+  if (!deletePaths.length) {
+    alert("请先勾选要永久删除的归档脚本");
+    return;
+  }
+  const names = deletePaths
+    .slice(0, 8)
+    .map((path) => `• ${scriptByPath.get(path)?.md_name || path}`)
+    .join("\n");
+  const remaining = deletePaths.length > 8 ? `\n• 另有 ${deletePaths.length - 8} 个归档脚本` : "";
+  const ok = confirm(
+    `确定永久删除以下 ${deletePaths.length} 个归档吗？\n\n${names}${remaining}\n\n将删除归档中的脚本、人物图、故事版图、视频及附属记录，同时删除 04适配脚本中的对应源脚本。删除后不能恢复，也不会保留“已适配”记录。`,
+  );
+  if (!ok) return;
+  const button = $("#deleteSelectedScriptsButton");
+  if (button) button.disabled = true;
+  try {
+    const result = await api("/archived-scripts", {
+      method: "DELETE",
+      body: JSON.stringify({ script_paths: deletePaths }),
+    });
+    const skippedText = result.skipped?.length
+      ? `，跳过 ${result.skipped.length} 个\n首个跳过原因：${result.skipped[0]?.reason || "未知原因"}`
+      : "";
+    alert(`归档永久删除完成：${result.deleted?.length || 0} 个，共删除 ${result.files_deleted || 0} 个文件${skippedText}`);
+    state.selectedScriptPaths.clear();
+    await refreshAll(true);
+  } catch (error) {
+    alert(`删除归档失败：${error.message}`);
   } finally {
     if (button) button.disabled = false;
   }

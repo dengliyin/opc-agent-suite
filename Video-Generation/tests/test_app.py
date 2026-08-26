@@ -153,6 +153,7 @@ def test_hybrid_omni_routes_and_page_exist():
     assert "/hybrid-omni/api/export-completed" in paths
     assert "/hybrid-omni/api/restore-exported" in paths
     assert "/hybrid-omni/api/scripts" in paths
+    assert "/hybrid-omni/api/archived-scripts" in paths
     response = client.get("/hybrid-omni")
     assert response.status_code == 200
     assert "混剪钩子与 CTA Omni 片段产出" in response.text

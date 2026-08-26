@@ -10,6 +10,7 @@ from agent.app import (
     ScriptDeleteRequest,
     _api_summary_payload,
     _delete_artifact,
+    _delete_archived,
     _delete_scripts,
     _export_completed,
     _function_api_model_options,
@@ -177,6 +178,25 @@ def test_delete_scripts_rejects_script_in_active_job(monkeypatch, tmp_path: Path
     assert exc.value.status_code == 409
     assert script.exists()
     assert all(path.exists() for path in assets)
+
+
+def test_delete_archived_delegates_to_archive_cleanup(monkeypatch, tmp_path: Path) -> None:
+    settings = settings_for(tmp_path)
+    archived = settings.completed_script_root / "2026-08-27" / "P1" / "demo" / "demo.md"
+    manager = FakeManager()
+    monkeypatch.setattr(app_module, "_settings_for", lambda _provider: settings)
+    monkeypatch.setattr(app_module, "_manager_for", lambda _provider: manager)
+    monkeypatch.setattr(app_module, "scan_scripts", lambda _settings, include_archived=False: ["archive"] if include_archived else [])
+    monkeypatch.setattr(
+        app_module,
+        "delete_archived_scripts",
+        lambda _settings, scripts, paths: {"scripts": scripts, "paths": paths},
+    )
+    monkeypatch.setattr(app_module, "_refresh_catalog_after_archive_change", lambda _settings: None)
+
+    result = _delete_archived("omni", ScriptDeleteRequest(script_paths=[str(archived)]))
+
+    assert result == {"scripts": ["archive"], "paths": [str(archived)]}
 
 
 def test_export_allows_selected_script_outside_active_job(monkeypatch, tmp_path: Path) -> None:
