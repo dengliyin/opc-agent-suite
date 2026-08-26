@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+from opc_shared.adaptation_retirement import load_adaptation_retirements, retired_model_record
+
 from agent import files as files_module
 from agent.config import Settings
 from agent.files import (
@@ -49,6 +51,7 @@ def settings_for(tmp_path: Path) -> Settings:
         video_size="720x1280",
         overwrite=False,
         script_root=tmp_path / "scripts",
+        product_script_root=tmp_path / "product-scripts",
         reference_root=tmp_path / "refs",
         video_output_root=tmp_path / "videos",
     )
@@ -606,7 +609,7 @@ def test_restore_exported_script_moves_images_back_but_leaves_videos_exported_by
     assert not export_marker_path(archived_md_path).exists()
 
 
-def test_delete_archived_script_removes_archive_and_source_script(tmp_path: Path) -> None:
+def test_delete_archived_script_removes_adaptation_and_retires_model(tmp_path: Path) -> None:
     settings = settings_for(tmp_path)
     product_dir = settings.script_root / "P1"
     product_dir.mkdir(parents=True)
@@ -619,6 +622,9 @@ def test_delete_archived_script_removes_archive_and_source_script(tmp_path: Path
         "## B. 故事板图片提示词\nB1\n",
         encoding="utf-8",
     )
+    original_path = settings.product_script_root / "P1" / "demo.md"
+    original_path.parent.mkdir(parents=True)
+    original_path.write_text("原始产品脚本", encoding="utf-8")
     video = video_output_path(settings, "P1", md_path, 1)
     video.parent.mkdir(parents=True, exist_ok=True)
     video.write_bytes(b"video")
@@ -633,6 +639,16 @@ def test_delete_archived_script_removes_archive_and_source_script(tmp_path: Path
     assert result["files_deleted"] >= 3
     assert not archive_dir.exists()
     assert not md_path.exists()
+    assert original_path.read_text(encoding="utf-8") == "原始产品脚本"
+    retirement = retired_model_record(
+        settings.product_script_root,
+        original_path,
+        "omni",
+        load_adaptation_retirements(settings.product_script_root),
+    )
+    assert retirement["reason"] == "9995 删除归档"
+    assert result["deleted"][0]["retired_source_path"] == str(original_path.resolve())
+    assert result["deleted"][0]["retired_model"] == "omni"
     assert not fragment_delete_marker_path(md_path).exists()
     assert scan_scripts(settings) == []
     assert scan_scripts(settings, include_archived=True) == []
@@ -651,6 +667,9 @@ def test_delete_old_archive_ignores_stale_host_paths_in_marker(tmp_path: Path) -
         "## B. 故事板图片提示词\nB1\n",
         encoding="utf-8",
     )
+    original_path = settings.product_script_root / "P1" / "legacy.md"
+    original_path.parent.mkdir(parents=True)
+    original_path.write_text("原始产品脚本", encoding="utf-8")
     video = video_output_path(settings, "P1", md_path, 1)
     video.parent.mkdir(parents=True, exist_ok=True)
     video.write_bytes(b"video")
@@ -660,6 +679,7 @@ def test_delete_old_archive_ignores_stale_host_paths_in_marker(tmp_path: Path) -
     marker = json.loads(marker_path.read_text(encoding="utf-8"))
     marker["active_md_path"] = "/Users/other/Documents/Obsidian Vault/wiki/视频/04适配脚本/omni/P1/legacy.md"
     marker["export_dir"] = "/Users/old/Documents/Obsidian Vault/wiki/视频/06合成工作区/omni/2020-01-01/P1/legacy"
+    marker["upstream_script_path"] = r"D:\obsidian-vault\wiki\视频\纯AI视频\03产品脚本\P1\legacy.md"
     marker_path.write_text(json.dumps(marker, ensure_ascii=False), encoding="utf-8")
     archive_dir = archived_script.md_path.parent
 
@@ -669,6 +689,9 @@ def test_delete_old_archive_ignores_stale_host_paths_in_marker(tmp_path: Path) -
     assert result["skipped"] == []
     assert not archive_dir.exists()
     assert not md_path.exists()
+    assert original_path.exists()
+    assert retired_model_record(settings.product_script_root, original_path, "omni")
+    assert not retired_model_record(settings.product_script_root, original_path, "grok")
 
 
 def test_export_script_with_videos_only(tmp_path: Path) -> None:

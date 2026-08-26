@@ -80,6 +80,7 @@ bash scripts/validate_app.sh
 - Any number of selected scripts is accepted. Work is scheduled in batches of at most three, for example five scripts run as `3 + 2`.
 - Valid scripts are retained immediately. Only failed scripts are retried, with retry batches shrinking from three to two to one.
 - Once a model response exists, quality-control failures use exact local JSON replacements instead of asking the model to rewrite the full adaptation.
+- When 9995 permanently deletes an archived production, this Agent reads the model-scoped retirement record from `03产品脚本/.opc/adaptation_retirements.json`. The original product script remains, while that model is shown as retired and excluded from automatic adaptation.
 
 ## Repository Safety
 

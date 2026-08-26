@@ -19,6 +19,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from opc_shared.adaptation_retirement import load_adaptation_retirements, retired_model_record
 from opc_shared.global_ai import load_profile, runtime_override_active, set_runtime_overrides
 from opc_shared.vault_snapshot import cached_or_empty, incremental_records, load_snapshot, refresh_snapshot
 
@@ -997,6 +998,13 @@ def script_file_payload(
     )
     batch_meta = script_batch_metadata(path, product_folder, status_record, stat.st_mtime)
     adapted = bool(output_validation["valid"])
+    retirement = retired_model_record(
+        root,
+        path,
+        target_model,
+        config.get("_adaptation_retirements"),
+    )
+    retired = bool(retirement) and not adapted
     return {
         "name": path.name,
         "path": path.as_posix(),
@@ -1009,8 +1017,9 @@ def script_file_payload(
         "variant_index": parsed_name.get("variant_index", ""),
         "has_country_format": bool(parsed_name.get("has_country_format")),
         "adapted": adapted,
-        "adaptation_state": output_validation["state"],
-        "adaptation_message": output_validation["message"],
+        "retired": retired,
+        "adaptation_state": "retired" if retired else output_validation["state"],
+        "adaptation_message": "此模型已淘汰" if retired else output_validation["message"],
         "adapted_output_path": output_path.as_posix() if output_path and adapted else "",
         "expected_output_name": f"{output_stem}.md",
         "batch_id": batch_meta["batch_id"],
@@ -1025,18 +1034,28 @@ def script_file_payload(
     }
 
 
-def script_scan_signature(path: Path, config: dict[str, Any]) -> str:
+def script_scan_signature(path: Path, config: dict[str, Any], root: Path | None = None) -> str:
     stat = path.stat()
+    source_root = root or script_library_root(config) or path.parent
+    target_model = normalize_target_model(config.get("script_adaptation_target_model"))
     identity = [
         path.as_posix(),
         stat.st_mtime_ns,
         stat.st_size,
-        normalize_target_model(config.get("script_adaptation_target_model")),
+        target_model,
         segment_seconds_for_target(
             config.get("script_adaptation_target_model"),
             config.get("script_adaptation_segment_seconds"),
         ),
         str(workflow.script_adaptation_output_root(config) or ""),
+        bool(
+            retired_model_record(
+                source_root,
+                path,
+                target_model,
+                config.get("_adaptation_retirements"),
+            )
+        ),
     ]
     return hashlib.sha256(json.dumps(identity, ensure_ascii=False).encode("utf-8")).hexdigest()
 
@@ -1049,8 +1068,8 @@ def indexed_script_file_payload(
 ) -> dict[str, Any]:
     payload = script_file_payload(path, root, config, status_logs)
     payload["scan_key"] = path.as_posix()
-    payload["scan_signature"] = script_scan_signature(path, config)
-    payload["temperature"] = "cold" if payload.get("adapted") else "hot"
+    payload["scan_signature"] = script_scan_signature(path, config, root)
+    payload["temperature"] = "cold" if payload.get("adapted") or payload.get("retired") else "hot"
     return payload
 
 
@@ -1166,6 +1185,7 @@ def script_batch_metadata(path: Path, product_name: str, status_record: dict[str
 def batch_payload(batch_id: str, scripts: list[dict[str, Any]]) -> dict[str, Any]:
     scripts = sorted(scripts, key=lambda item: (str(item.get("created_at") or ""), str(item.get("name") or "")))
     adapted_count = sum(1 for script in scripts if script.get("adapted"))
+    retired_count = sum(1 for script in scripts if script.get("retired"))
     invalid_count = sum(1 for script in scripts if script.get("adaptation_state") in INVALID_ADAPTATION_STATES)
     selected_source_scripts = sorted({str(script.get("source_script") or "").strip() for script in scripts if str(script.get("source_script") or "").strip()})
     created_values = [str(script.get("created_at") or "").strip() for script in scripts if str(script.get("created_at") or "").strip()]
@@ -1178,8 +1198,9 @@ def batch_payload(batch_id: str, scripts: list[dict[str, Any]]) -> dict[str, Any
         "created_at": min(created_values) if created_values else "",
         "count": len(scripts),
         "adapted_count": adapted_count,
+        "retired_count": retired_count,
         "invalid_count": invalid_count,
-        "unused_count": len(scripts) - adapted_count,
+        "unused_count": len(scripts) - adapted_count - retired_count,
         "scripts": scripts,
     }
 
@@ -1192,6 +1213,7 @@ def product_script_payload(product_name: str, product_path: Path, files: list[Pa
 
 def product_payload_from_records(product_name: str, product_path: Path, scripts: list[dict[str, Any]]) -> dict[str, Any]:
     adapted_count = sum(1 for script in scripts if script.get("adapted"))
+    retired_count = sum(1 for script in scripts if script.get("retired"))
     invalid_count = sum(1 for script in scripts if script.get("adaptation_state") in INVALID_ADAPTATION_STATES)
     countries = sorted({str(script.get("country") or "").strip() for script in scripts if str(script.get("country") or "").strip()})
     grouped_batches: dict[str, list[dict[str, Any]]] = {}
@@ -1209,8 +1231,9 @@ def product_payload_from_records(product_name: str, product_path: Path, scripts:
         "countries": countries,
         "count": total_count,
         "adapted_count": adapted_count,
+        "retired_count": retired_count,
         "invalid_count": invalid_count,
-        "unused_count": total_count - adapted_count,
+        "unused_count": total_count - adapted_count - retired_count,
         "batches": batches,
         "scripts": scripts,
     }
@@ -1231,6 +1254,7 @@ def list_product_scripts(target_model: str | None = None) -> dict[str, Any]:
             "target_model": normalize_target_model(config.get("script_adaptation_target_model")),
             "total_count": 0,
             "adapted_count": 0,
+            "retired_count": 0,
             "invalid_count": 0,
             "unused_count": 0,
             "products": [],
@@ -1244,6 +1268,7 @@ def list_product_scripts(target_model: str | None = None) -> dict[str, Any]:
             },
         }
 
+    config["_adaptation_retirements"] = load_adaptation_retirements(root)
     grouped_files: dict[str, list[Path]] = {}
     group_paths: dict[str, Path] = {}
     for script_path in sorted(root.rglob("*.md"), key=lambda item: item.relative_to(root).as_posix()):
@@ -1259,14 +1284,16 @@ def list_product_scripts(target_model: str | None = None) -> dict[str, Any]:
 
     total_count = sum(product["count"] for product in products)
     adapted_count = sum(product.get("adapted_count", 0) for product in products)
+    retired_count = sum(product.get("retired_count", 0) for product in products)
     invalid_count = sum(product.get("invalid_count", 0) for product in products)
     payload = {
         "root": root.as_posix(),
         "target_model": normalize_target_model(config.get("script_adaptation_target_model")),
         "total_count": total_count,
         "adapted_count": adapted_count,
+        "retired_count": retired_count,
         "invalid_count": invalid_count,
-        "unused_count": total_count - adapted_count,
+        "unused_count": total_count - adapted_count - retired_count,
         "products": products,
     }
     payload["scan_state"] = {
@@ -1275,7 +1302,7 @@ def list_product_scripts(target_model: str | None = None) -> dict[str, Any]:
         "scanned": total_count,
         "cold_reused": 0,
         "hot": sum(product.get("unused_count", 0) for product in products),
-        "cold": adapted_count,
+        "cold": adapted_count + retired_count,
     }
     return payload
 
@@ -1304,12 +1331,14 @@ def list_product_scripts_incremental(target_model: str | None = None) -> dict[st
             "target_model": target,
             "total_count": 0,
             "adapted_count": 0,
+            "retired_count": 0,
             "invalid_count": 0,
             "unused_count": 0,
             "products": [],
             "scan_state": {"schema_version": 2, "mode": "incremental", "scanned": 0, "cold_reused": 0, "hot": 0, "cold": 0},
         }
 
+    config["_adaptation_retirements"] = load_adaptation_retirements(root)
     previous_items = [
         script
         for product in previous_payload.get("products", [])
@@ -1326,9 +1355,9 @@ def list_product_scripts_incremental(target_model: str | None = None) -> dict[st
         previous_items,
         sources,
         source_key=lambda path: path.as_posix(),
-        source_signature=lambda path: script_scan_signature(path, config),
+        source_signature=lambda path: script_scan_signature(path, config, root),
         build_record=lambda path: indexed_script_file_payload(path, root, config, status_logs),
-        is_cold=lambda record: bool(record.get("adapted")),
+        is_cold=lambda record: bool(record.get("adapted") or record.get("retired")),
     )
     grouped: dict[str, list[dict[str, Any]]] = {}
     paths: dict[str, Path] = {}
@@ -1339,21 +1368,23 @@ def list_product_scripts_incremental(target_model: str | None = None) -> dict[st
     products = [product_payload_from_records(name, paths[name], grouped[name]) for name in sorted(grouped)]
     total_count = len(records)
     adapted_count = sum(1 for record in records if record.get("adapted"))
+    retired_count = sum(1 for record in records if record.get("retired"))
     invalid_count = sum(1 for record in records if record.get("adaptation_state") in INVALID_ADAPTATION_STATES)
     return {
         "root": root.as_posix(),
         "target_model": target,
         "total_count": total_count,
         "adapted_count": adapted_count,
+        "retired_count": retired_count,
         "invalid_count": invalid_count,
-        "unused_count": total_count - adapted_count,
+        "unused_count": total_count - adapted_count - retired_count,
         "products": products,
         "scan_state": {
             "schema_version": 2,
             "mode": "incremental",
             **stats,
-            "hot": total_count - adapted_count,
-            "cold": adapted_count,
+            "hot": total_count - adapted_count - retired_count,
+            "cold": adapted_count + retired_count,
         },
     }
 
@@ -1602,6 +1633,7 @@ def cached_product_scripts(target_model: str | None = None, *, refresh: bool = F
         "target_model": target,
         "total_count": 0,
         "adapted_count": 0,
+        "retired_count": 0,
         "invalid_count": 0,
         "unused_count": 0,
         "products": [],
@@ -1609,7 +1641,48 @@ def cached_product_scripts(target_model: str | None = None, *, refresh: bool = F
     if refresh:
         builder = (lambda: list_product_scripts(target)) if full else (lambda: list_product_scripts_incremental(target))
         return refresh_snapshot("script-adaptation", f"scripts-{target}", builder)
-    return cached_or_empty("script-adaptation", f"scripts-{target}", empty)
+    payload = cached_or_empty("script-adaptation", f"scripts-{target}", empty)
+    return overlay_retired_scripts(payload, root, target)
+
+
+def overlay_retired_scripts(payload: dict[str, Any], root: Path | None, target_model: str) -> dict[str, Any]:
+    if not root:
+        return payload
+    registry = load_adaptation_retirements(root)
+
+    def apply(script: dict[str, Any], product_name: str) -> None:
+        source = root / product_name / str(script.get("name") or "")
+        retired = bool(retired_model_record(root, source, target_model, registry))
+        script["retired"] = retired
+        if retired:
+            script["adapted"] = False
+            script["adaptation_state"] = "retired"
+            script["adaptation_message"] = "此模型已淘汰"
+            script["adapted_output_path"] = ""
+
+    for product in payload.get("products") or []:
+        product_name = str(product.get("name") or "")
+        scripts = product.get("scripts") or []
+        for script in scripts:
+            if isinstance(script, dict):
+                apply(script, product_name)
+        for batch in product.get("batches") or []:
+            batch_scripts = batch.get("scripts") or []
+            for script in batch_scripts:
+                if isinstance(script, dict):
+                    apply(script, product_name)
+            batch["adapted_count"] = sum(1 for script in batch_scripts if script.get("adapted"))
+            batch["retired_count"] = sum(1 for script in batch_scripts if script.get("retired"))
+            batch["unused_count"] = len(batch_scripts) - batch["adapted_count"] - batch["retired_count"]
+        product["adapted_count"] = sum(1 for script in scripts if script.get("adapted"))
+        product["retired_count"] = sum(1 for script in scripts if script.get("retired"))
+        product["unused_count"] = len(scripts) - product["adapted_count"] - product["retired_count"]
+
+    scripts = [script for product in payload.get("products") or [] for script in product.get("scripts") or []]
+    payload["adapted_count"] = sum(1 for script in scripts if script.get("adapted"))
+    payload["retired_count"] = sum(1 for script in scripts if script.get("retired"))
+    payload["unused_count"] = len(scripts) - payload["adapted_count"] - payload["retired_count"]
+    return payload
 
 
 def cached_adaptation_outputs(target_model: str | None = None, *, refresh: bool = False) -> dict[str, Any]:
@@ -1741,7 +1814,20 @@ class AgentWebJob:
             }
 
     def start(self, payload: dict[str, Any]) -> dict[str, Any]:
-        scripts = self.expand_target_scripts(self.selected_scripts(payload), self.selected_target_models(payload))
+        selected_scripts = self.selected_scripts(payload)
+        target_models = self.selected_target_models(payload)
+        config = load_local_agent_config()
+        root = script_library_root(config)
+        if root:
+            registry = load_adaptation_retirements(root)
+            for script in selected_scripts:
+                source_path = str(script.get("source_path") or "").strip()
+                if not source_path:
+                    continue
+                for target_model in target_models:
+                    if retired_model_record(root, Path(source_path), target_model, registry):
+                        raise RuntimeError(f"脚本已标记为 {target_model} 模型淘汰，不能再次自动适配: {Path(source_path).name}")
+        scripts = self.expand_target_scripts(selected_scripts, target_models)
         with self.lock:
             was_idle = self.active_runs == 0 and not self.running
             if was_idle:
@@ -3553,6 +3639,7 @@ HTML = r"""<!doctype html>
 
     function adaptationStateLabel(script) {
       const modelLabel = targetModelLabel();
+      if (script.retired || script.adaptation_state === 'retired') return `${modelLabel} 已淘汰`;
       if (script.adaptation_state === 'json_missing') return `${modelLabel} 缺 JSON`;
       if (script.adaptation_state === 'contract_mismatch') return `${modelLabel} 结构不一致`;
       if (script.adaptation_state === 'markdown_invalid') return `${modelLabel} 结构异常`;
@@ -3607,11 +3694,12 @@ HTML = r"""<!doctype html>
       for (const product of products) {
         for (const script of (product.scripts || [])) {
           knownScripts.set(script.path, script);
+          if (script.retired) selectedScripts.delete(script.path);
         }
       }
       $('runUnusedBtn').textContent = unusedScriptCount ? `适配未适配（${unusedScriptCount}）` : '无未适配';
       $('runUnusedBtn').disabled = !unusedScriptCount;
-      $('libraryTitle').textContent = `产品脚本库 · 共 ${data.total_count || 0} · 已适配 ${data.adapted_count || 0} · 待处理 ${data.unused_count || 0} · 异常 ${data.invalid_count || 0}`;
+      $('libraryTitle').textContent = `产品脚本库 · 共 ${data.total_count || 0} · 已适配 ${data.adapted_count || 0} · 已淘汰 ${data.retired_count || 0} · 待处理 ${data.unused_count || 0} · 异常 ${data.invalid_count || 0}`;
       const scanState = data.scan_state || {};
       $('libraryRoot').textContent = data.root
         ? `扫描目录已配置 · 本次检查 ${Number(scanState.scanned || 0)} · 复用冷数据 ${Number(scanState.cold_reused || 0)}`
@@ -3634,7 +3722,7 @@ HTML = r"""<!doctype html>
 
     function visibleProductScripts(product) {
       const scripts = product?.scripts || [];
-      return hideAdaptedScripts ? scripts.filter(script => !script.adapted) : scripts;
+      return hideAdaptedScripts ? scripts.filter(script => !script.adapted && !script.retired) : scripts;
     }
 
     function renderCurrentProduct() {
@@ -3652,7 +3740,7 @@ HTML = r"""<!doctype html>
             <select id="productSelect">
                   ${knownProducts.map(item => `
                 <option value="${escapeHtml(item.name || '')}" ${item.name === currentProductName ? 'selected' : ''}>
-                  ${escapeHtml(item.name || '未命名产品')}${(item.countries || []).length ? ` · ${escapeHtml((item.countries || []).join('/'))}` : ''} · ${Number(item.count || 0)} 个 · 已 ${Number(item.adapted_count || 0)} · 待 ${Number(item.unused_count || 0)} · 异常 ${Number(item.invalid_count || 0)}
+                  ${escapeHtml(item.name || '未命名产品')}${(item.countries || []).length ? ` · ${escapeHtml((item.countries || []).join('/'))}` : ''} · ${Number(item.count || 0)} 个 · 已 ${Number(item.adapted_count || 0)} · 淘汰 ${Number(item.retired_count || 0)} · 待 ${Number(item.unused_count || 0)} · 异常 ${Number(item.invalid_count || 0)}
                 </option>
               `).join('')}
             </select>
@@ -3675,6 +3763,7 @@ HTML = r"""<!doctype html>
               </label>
               <span class="productCount">${Number(product.count || 0)} 个</span>
               <span class="productCount done">已 ${Number(product.adapted_count || 0)}</span>
+              <span class="productCount">淘汰 ${Number(product.retired_count || 0)}</span>
               <span class="productCount todo">待 ${Number(product.unused_count || 0)}</span>
               <span class="productCount invalid">异常 ${Number(product.invalid_count || 0)}</span>
             </span>
@@ -3694,14 +3783,14 @@ HTML = r"""<!doctype html>
 
     function renderScriptItem(script) {
       return `
-        <label class="scriptItem ${script.adapted ? 'used' : invalidAdaptationState(script.adaptation_state) ? 'failed' : ''}" data-script-path="${escapeHtml(script.path)}" data-script-name="${escapeHtml(script.name)}">
+        <label class="scriptItem ${script.adapted || script.retired ? 'used' : invalidAdaptationState(script.adaptation_state) ? 'failed' : ''}" data-script-path="${escapeHtml(script.path)}" data-script-name="${escapeHtml(script.name)}">
           <span class="scriptItemMain">
-            <input type="checkbox" class="scriptCheck" data-script-path="${escapeHtml(script.path)}" ${selectedScripts.has(script.path) ? 'checked' : ''} />
+            <input type="checkbox" class="scriptCheck" data-script-path="${escapeHtml(script.path)}" ${selectedScripts.has(script.path) ? 'checked' : ''} ${script.retired ? 'disabled' : ''} />
             <span class="scriptName" title="${escapeHtml(script.name)}">${escapeHtml(script.name || '')}</span>
           </span>
           <span class="scriptMeta">
             ${script.country ? `<span class="countryBadge" title="国家">${escapeHtml(script.country)}</span>` : ''}
-            <span class="scriptStatus ${escapeHtml(invalidAdaptationState(script.adaptation_state) ? script.adaptation_state : script.adapted ? 'done' : 'todo')}" title="${escapeHtml(script.adaptation_message || '')}">${escapeHtml(adaptationStateLabel(script))}</span>
+            <span class="scriptStatus ${escapeHtml(invalidAdaptationState(script.adaptation_state) ? script.adaptation_state : script.adapted || script.retired ? 'done' : 'todo')}" title="${escapeHtml(script.adaptation_message || '')}">${escapeHtml(adaptationStateLabel(script))}</span>
             <span>${escapeHtml(script.size_label || '')}</span>
           </span>
         </label>
@@ -3760,7 +3849,7 @@ HTML = r"""<!doctype html>
 
     function syncSelectionChecks() {
       const productCheck = $('currentProductCheck');
-      const scriptChecks = Array.from(document.querySelectorAll('#products .scriptCheck'));
+      const scriptChecks = Array.from(document.querySelectorAll('#products .scriptCheck:not(:disabled)'));
       if (!productCheck || !scriptChecks.length) return;
       const checkedCount = scriptChecks.filter(input => input.checked).length;
       productCheck.checked = checkedCount === scriptChecks.length;
@@ -3769,7 +3858,7 @@ HTML = r"""<!doctype html>
 
     function setScriptSelected(scriptPath, selected) {
       const script = knownScripts.get(scriptPath);
-      if (!script) return;
+      if (!script || script.retired) return;
       if (selected) {
         selectedScripts.set(scriptPath, script);
       } else {
@@ -3790,6 +3879,7 @@ HTML = r"""<!doctype html>
       document.querySelectorAll('#products .scriptCheck').forEach(input => { input.checked = false; });
       for (const [path, script] of knownScripts.entries()) {
         if (!filterFn(script)) continue;
+        if (script.retired) continue;
         selectedScripts.set(path, script);
         const selector = `.scriptCheck[data-script-path="${cssEscape(path)}"]`;
         const input = document.querySelector(selector);
@@ -3819,10 +3909,11 @@ HTML = r"""<!doctype html>
         selectedScripts.clear();
         if (product) {
           for (const script of visibleProductScripts(product)) {
+            if (script.retired) continue;
             selectedScripts.set(script.path, script);
           }
         }
-        document.querySelectorAll('#products .scriptCheck').forEach(input => { input.checked = true; });
+        document.querySelectorAll('#products .scriptCheck:not(:disabled)').forEach(input => { input.checked = true; });
         document.querySelectorAll('#products .scriptItem').forEach(item => item.classList.add('active'));
         syncSelectionChecks();
         updateSelectedScriptInfo();
@@ -3846,10 +3937,11 @@ HTML = r"""<!doctype html>
           const product = currentProduct();
           selectedScripts.clear();
           document.querySelectorAll('#products .scriptCheck').forEach(input => {
-            input.checked = productCheck.checked;
+            input.checked = productCheck.checked && !input.disabled;
           });
           if (productCheck.checked && product) {
             for (const script of visibleProductScripts(product)) {
+              if (script.retired) continue;
               selectedScripts.set(script.path, script);
             }
           }
@@ -3867,7 +3959,7 @@ HTML = r"""<!doctype html>
         const item = event.target.closest('.scriptItem');
         if (!item) return;
         const input = item.querySelector('.scriptCheck');
-        if (!input) return;
+        if (!input || input.disabled) return;
         if (event.target !== input) {
           input.checked = !input.checked;
           event.preventDefault();
@@ -4180,7 +4272,7 @@ HTML = r"""<!doctype html>
     }
 
     async function runUnusedAgent() {
-      selectScriptsByFilter(script => !script.adapted);
+      selectScriptsByFilter(script => !script.adapted && !script.retired);
       if (!selectedScripts.size) {
         renderChecks([{level:'ok', message:'暂无未适配脚本', detail:'当前扫描到的 Markdown 都已经生成过对应适配结果。'}]);
         return;

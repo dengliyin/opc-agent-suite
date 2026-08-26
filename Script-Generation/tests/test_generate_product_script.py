@@ -12,6 +12,17 @@ from opc_engine.features.script_generation import generate_product_script
 
 
 class GenerateProductScriptTests(unittest.TestCase):
+    def test_mutation_number_continues_when_markdown_was_cleared_but_raw_record_remains(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_root = Path(temp_dir)
+            stem = "裂变-P1-IE-author-123"
+            (output_root / f"{stem}.raw.json").write_text("{}", encoding="utf-8")
+
+            output_path, raw_path = generate_product_script.unique_script_output_paths(output_root, stem)
+
+            self.assertEqual(output_path.name, f"{stem}_002.md")
+            self.assertEqual(raw_path.name, f"{stem}_002.raw.json")
+
     def test_preserved_duration_restores_each_reference_shot_timecode(self):
         reference = """镜头 1 (00:00.000 - 00:01.000):
 

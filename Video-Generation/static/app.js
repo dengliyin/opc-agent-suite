@@ -1260,7 +1260,7 @@ async function deleteSelectedArchived() {
     .join("\n");
   const remaining = deletePaths.length > 8 ? `\n• 另有 ${deletePaths.length - 8} 个归档脚本` : "";
   const ok = confirm(
-    `确定永久删除以下 ${deletePaths.length} 个归档吗？\n\n${names}${remaining}\n\n将删除归档中的脚本、人物图、故事版图、视频及附属记录，同时删除 04适配脚本中的对应源脚本。删除后不能恢复，也不会保留“已适配”记录。`,
+    `确定永久删除以下 ${deletePaths.length} 个归档吗？\n\n${names}${remaining}\n\n将删除 06合成工作区中的归档和 04适配脚本中的对应适配稿；保留 03产品脚本中的原始脚本，并将当前模型标记为“已淘汰”。`,
   );
   if (!ok) return;
   const button = $("#deleteSelectedScriptsButton");
