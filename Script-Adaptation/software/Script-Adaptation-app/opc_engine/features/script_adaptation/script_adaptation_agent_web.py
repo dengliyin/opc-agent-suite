@@ -477,7 +477,9 @@ def segmented_markdown_output_validation_text(
     has_segment_prompt_heading = bool(
         re.search(r"(?m)^#{1,2}\s*(?:3[.．、]\s*)?每段生成提示词\s*$", content)
     )
-    has_simple_structure = has_segment_prompt_heading or (target_model == "grok" and bool(segments))
+    # Segment 内容才是下游真正消费的结构。主标题由程序规范化，不能仅因模型
+    # 改写了标题名称而把一份完整结果送回模型重试。
+    has_simple_structure = has_segment_prompt_heading or bool(segments)
     if not has_full_structure and not has_simple_structure:
         return {
             "valid": False,
@@ -542,6 +544,32 @@ def segmented_markdown_output_validation_text(
     if issues:
         return {"valid": False, "state": "markdown_invalid", "message": "；".join(issues)}
     return {"valid": True, "state": "done", "message": "已适配"}
+
+
+def normalize_segmented_markdown(text: str) -> str:
+    """Normalize deterministic Markdown structure without asking the model."""
+    content = str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not content or not omni_segment_blocks(content):
+        return content
+    if re.search(r"(?m)^#{1,2}\s*(?:3[.．、]\s*)?每段生成提示词\s*$", content):
+        return content
+    first_segment = re.search(r"(?mi)^#\s*Segment\s*\d+\b", content)
+    if not first_segment:
+        return content
+    prefix = content[: first_segment.start()].rstrip()
+    suffix = content[first_segment.start() :].lstrip()
+    return f"{prefix}\n\n## 每段生成提示词\n\n{suffix}".lstrip()
+
+
+def normalize_adaptation_output(path: Path | None, target_model: str) -> bool:
+    if not path or not path.exists() or normalize_target_model(target_model) not in {"omni", "grok"}:
+        return False
+    original = path.read_text(encoding="utf-8", errors="ignore")
+    normalized = normalize_segmented_markdown(original)
+    if normalized.rstrip() == original.rstrip():
+        return False
+    path.write_text(normalized.rstrip() + "\n", encoding="utf-8")
+    return True
 
 
 def omni_output_validation_text(text: str, source_text: str = "") -> dict[str, Any]:
@@ -2120,6 +2148,7 @@ class AgentWebJob:
             target_model,
             output_config.get("script_adaptation_segment_seconds"),
         )
+        normalize_adaptation_output(expected_md, target_model)
         existing_validation = adaptation_output_validation(
             expected_md,
             target_model,
@@ -2238,6 +2267,8 @@ class AgentWebJob:
             raise JobCancelled("用户终止任务")
         print(f"[{index}/{total}] 脚本适配智能体执行完成，开始质检")
 
+        if normalize_adaptation_output(expected_md, target_model):
+            print(f"[{index}/{total}] 已自动规范化 Markdown 标题结构")
         output_validation = adaptation_output_validation(
             expected_md,
             target_model,
