@@ -116,6 +116,7 @@ class Settings:
     grok_timeout_seconds: float = 1200.0
     grok_retry_attempts: int = 3
     grok_retry_base_seconds: float = 10.0
+    product_script_root: Path | None = None
     workflow: str = "standard"
 
     @property
@@ -259,6 +260,7 @@ def load_settings(provider: str = "omni") -> Settings:
         script_root=script_root,
         reference_root=Path(os.getenv("REFERENCE_ROOT", str(DEFAULT_REFERENCE_ROOT))).expanduser(),
         video_output_root=resolved_video_output_root,
+        product_script_root=Path(os.getenv("PRODUCT_SCRIPT_ROOT", str(DEFAULT_SCRIPT_ROOT.parent.parent / "03产品脚本"))).expanduser(),
         completed_root=Path(
             os.getenv(
                 "VIDEO_ASSEMBLY_PENDING_ROOT",

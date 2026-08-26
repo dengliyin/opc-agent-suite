@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
+from opc_shared.adaptation_retirement import retire_adaptation_model
+
 from .config import Settings
 from .files import (
     ScriptFile,
@@ -308,6 +310,24 @@ def delete_archived_scripts(
             if active_md_path != script_root and script_root not in active_md_path.parents:
                 raise ValueError(f"源脚本不属于当前 Agent：{active_md_path}")
 
+            product_script_root = (
+                settings.product_script_root
+                or settings.script_root.parent.parent / "03产品脚本"
+            ).expanduser().resolve()
+            upstream_script_path = _current_upstream_script_path(
+                product_script_root,
+                script.product_name,
+                marker,
+                active_md_path,
+                settings.provider,
+            )
+            retirement = retire_adaptation_model(
+                product_script_root,
+                upstream_script_path,
+                settings.provider,
+                "9995 删除归档",
+            )
+
             file_count = sum(1 for path in export_dir.rglob("*") if path.is_file()) if export_dir.is_dir() else 0
             if export_dir.is_dir():
                 shutil.rmtree(export_dir)
@@ -330,6 +350,8 @@ def delete_archived_scripts(
                     "export_dir": str(export_dir),
                     "files_deleted": file_count,
                     "source_script_deleted": source_deleted,
+                    "retired_source_path": str(upstream_script_path),
+                    "retired_model": retirement["model"],
                 }
             )
         except Exception as exc:
@@ -340,6 +362,28 @@ def delete_archived_scripts(
         "skipped": skipped,
         "files_deleted": sum(item["files_deleted"] for item in deleted),
     }
+
+
+def _current_upstream_script_path(
+    product_script_root: Path,
+    product_name: str,
+    marker: Dict[str, Any],
+    active_md_path: Path,
+    provider: str,
+) -> Path:
+    upstream = str(marker.get("upstream_script_path") or "").strip().replace("\\", "/")
+    filename = upstream.rsplit("/", 1)[-1] if upstream else ""
+    if not filename:
+        source = str(marker.get("source_script") or "").strip().replace("\\", "/")
+        filename = source.rsplit("/", 1)[-1] if source else ""
+    if not filename:
+        filename = active_md_path.name
+        prefix = f"{provider}-"
+        if filename.startswith(prefix):
+            filename = filename[len(prefix):]
+    if Path(filename).suffix.lower() != ".md":
+        raise ValueError("归档记录缺少原始产品脚本名称")
+    return (product_script_root / product_name / filename).resolve()
 
 
 def _current_archive_dir(archive_root: Path, marker: Dict[str, Any]) -> Path:

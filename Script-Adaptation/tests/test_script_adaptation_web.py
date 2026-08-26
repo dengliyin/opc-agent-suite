@@ -1,6 +1,8 @@
 import importlib.util
 from pathlib import Path
 
+from opc_shared.adaptation_retirement import retire_adaptation_model
+
 
 MODULE_PATH = (
     Path(__file__).parents[1]
@@ -150,6 +152,60 @@ def test_cached_catalog_does_not_scan_until_refresh(monkeypatch, tmp_path: Path)
     assert calls == ["scan"]
 
 
+def test_retired_model_is_not_counted_as_unadapted(tmp_path: Path) -> None:
+    root = tmp_path / "03产品脚本"
+    source = root / "P1" / "demo.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("原始产品脚本", encoding="utf-8")
+    retire_adaptation_model(root, source, "omni", "9995 删除归档")
+
+    config = {
+        "script_adaptation_target_model": "omni",
+        "script_adaptation_output_root": str(tmp_path / "04适配脚本" / "omni"),
+    }
+    config["_adaptation_retirements"] = web.load_adaptation_retirements(root)
+    script = web.indexed_script_file_payload(source, root, config)
+    product = web.product_payload_from_records("P1", source.parent, [script])
+
+    assert script["adapted"] is False
+    assert script["retired"] is True
+    assert script["adaptation_state"] == "retired"
+    assert script["temperature"] == "cold"
+    assert product["retired_count"] == 1
+    assert product["unused_count"] == 0
+
+
+def test_cached_adapted_script_is_overlaid_as_retired(tmp_path: Path) -> None:
+    root = tmp_path / "03产品脚本"
+    source = root / "P1" / "demo.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("原始产品脚本", encoding="utf-8")
+    retire_adaptation_model(root, source, "omni", "9995 删除归档")
+    script = {
+        "name": "demo.md",
+        "path": source.as_posix(),
+        "adapted": True,
+        "adapted_output_path": "/old/04适配脚本/omni/P1/omni-demo.md",
+    }
+    payload = {
+        "products": [
+            {
+                "name": "P1",
+                "scripts": [dict(script)],
+                "batches": [{"scripts": [dict(script)]}],
+            }
+        ]
+    }
+
+    result = web.overlay_retired_scripts(payload, root, "omni")
+
+    assert result["adapted_count"] == 0
+    assert result["retired_count"] == 1
+    assert result["unused_count"] == 0
+    assert result["products"][0]["scripts"][0]["adaptation_state"] == "retired"
+    assert result["products"][0]["scripts"][0]["adapted_output_path"] == ""
+
+
 def test_incremental_scan_reuses_unchanged_adapted_script(monkeypatch, tmp_path: Path) -> None:
     root = tmp_path / "scripts"
     product = root / "P1"
@@ -181,7 +237,7 @@ def test_incremental_scan_reuses_unchanged_adapted_script(monkeypatch, tmp_path:
     built = []
     monkeypatch.setattr(web, "load_local_agent_config", lambda: {})
     monkeypatch.setattr(web, "script_library_root", lambda _config: root)
-    monkeypatch.setattr(web, "script_scan_signature", lambda path, _config: f"{path.name}:signature")
+    monkeypatch.setattr(web, "script_scan_signature", lambda path, _config, _root=None: f"{path.name}:signature")
     monkeypatch.setattr(
         web,
         "load_snapshot",
