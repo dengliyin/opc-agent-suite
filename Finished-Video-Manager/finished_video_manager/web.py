@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from opc_shared.vault_snapshot import cached_or_empty, refresh_snapshot
+from opc_shared.vault_snapshot import cached_or_empty, load_snapshot, refresh_snapshot
 
 from .publish_queue import PublishQueue
 
@@ -61,7 +61,7 @@ _FINISHED_VIDEO_INDEX_LOCK = threading.Lock()
 _FINISHED_VIDEO_INDEX_ROOT: Path | None = None
 _FINISHED_VIDEO_INDEX_AT = 0.0
 _FINISHED_VIDEO_INDEX: dict[tuple[str, str], Path] = {}
-_FINISHED_VIDEO_INDEX_TTL_SECONDS = 2.0
+_FINISHED_VIDEO_INDEX_TTL_SECONDS = 600.0
 STORAGE_POLL_SECONDS = 5
 STORAGE_FAILURE_LIMIT = 3
 STORAGE_STARTUP_RETRY_SECONDS = 30
@@ -608,6 +608,24 @@ def _build_finished_video_index(root: Path) -> dict[tuple[str, str], Path]:
     return index
 
 
+def _snapshot_finished_video_index() -> dict[tuple[str, str], Path]:
+    snapshot = load_snapshot("finished-video-manager", "state")
+    if snapshot is None:
+        return {}
+    videos = snapshot.get("payload", {}).get("videos") or []
+    index: dict[tuple[str, str], Path] = {}
+    for video in videos:
+        if not isinstance(video, dict) or not video.get("path"):
+            continue
+        path = Path(str(video["path"]))
+        try:
+            path.relative_to(FINISHED_VIDEO_ROOT)
+        except ValueError:
+            continue
+        index.setdefault(_finished_video_lookup_key(path), path)
+    return index
+
+
 def _finished_video_index() -> dict[tuple[str, str], Path]:
     global _FINISHED_VIDEO_INDEX_ROOT, _FINISHED_VIDEO_INDEX_AT, _FINISHED_VIDEO_INDEX
     root = FINISHED_VIDEO_ROOT.resolve()
@@ -617,9 +635,9 @@ def _finished_video_index() -> dict[tuple[str, str], Path]:
     with _FINISHED_VIDEO_INDEX_LOCK:
         now = time.monotonic()
         if _FINISHED_VIDEO_INDEX_ROOT != root or now - _FINISHED_VIDEO_INDEX_AT >= _FINISHED_VIDEO_INDEX_TTL_SECONDS:
-            _FINISHED_VIDEO_INDEX = _build_finished_video_index(root)
+            _FINISHED_VIDEO_INDEX = _snapshot_finished_video_index() or _build_finished_video_index(root)
             _FINISHED_VIDEO_INDEX_ROOT = root
-            _FINISHED_VIDEO_INDEX_AT = now
+            _FINISHED_VIDEO_INDEX_AT = time.monotonic()
     return _FINISHED_VIDEO_INDEX
 
 
@@ -2355,9 +2373,10 @@ def build_queue_tasks(payload: dict[str, Any]) -> list[dict[str, Any]]:
         raise ValueError("选中的比特浏览器窗口不存在")
 
     config = load_publish_config()
-    records = load_publish_records()
-    libraries = load_title_library()
-    videos = scan_finished_videos(libraries, records)
+    state = cached_state_for_client()
+    videos = state.get("videos") or []
+    if not state.get("scan_index", {}).get("ready"):
+        raise ValueError("成品资料库索引尚未建立，请先点击“扫描资料库”")
     videos_by_path = {item["path"]: item for item in videos}
     tasks: list[dict[str, Any]] = []
     for raw_task in raw_tasks:
@@ -3549,22 +3568,32 @@ HTML = r"""<!doctype html>
 
       if (!window.confirm(`按当前顺序加入 ${tasks.length} 个自动发布任务？\n账号：${profile.name}\n商品链接：${attachProduct ? '挂载' : '不挂载'}\n任务间隔：10 秒\n\n加入后处于待执行状态，不会立即发布。`)) return;
       setPublishStatus(`正在加入 ${tasks.length} 个队列任务...`, '');
-      const res = await fetch('/api/queue/enqueue', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({
-          profile_id:profileId,
-          tasks,
-          attach_product:attachProduct,
-          ai_generated:document.getElementById('aiGenerated').checked,
-        }),
-      });
-      const payload = await res.json();
-      if (!res.ok || payload.error) return setPublishStatus(payload.error || '加入队列失败', 'error');
-      selectedVideoOrder = [];
-      render();
-      await loadQueueSummary();
-      setPublishStatus(`已加入 ${tasks.length} 个待执行任务。请前往发布队列选择“可视执行”或“后台执行”。`, 'ok');
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 45000);
+      try {
+        const res = await fetch('/api/queue/enqueue', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          signal:controller.signal,
+          body:JSON.stringify({
+            profile_id:profileId,
+            tasks,
+            attach_product:attachProduct,
+            ai_generated:document.getElementById('aiGenerated').checked,
+          }),
+        });
+        const payload = await res.json();
+        if (!res.ok || payload.error) return setPublishStatus(payload.error || '加入队列失败', 'error');
+        selectedVideoOrder = [];
+        render();
+        await loadQueueSummary();
+        setPublishStatus(`已加入 ${tasks.length} 个待执行任务。请前往发布队列选择“可视执行”或“后台执行”。`, 'ok');
+      } catch (err) {
+        const message = err?.name === 'AbortError' ? '加入队列超时，请检查 Docker 数据目录和 BitBrowser。' : `加入队列失败：${err.message || err}`;
+        setPublishStatus(message, 'error');
+      } finally {
+        window.clearTimeout(timeout);
+      }
     }
 
     function setPublishStatus(text, kind = '') {

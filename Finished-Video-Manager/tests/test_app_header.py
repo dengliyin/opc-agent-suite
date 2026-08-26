@@ -81,6 +81,8 @@ class AppHeaderTest(unittest.TestCase):
         self.assertNotIn('onclick="autoPublish()"', HTML)
         self.assertNotIn('/api/tiktok/manual-upload', HTML)
         self.assertNotIn('/api/tiktok/publish', HTML)
+        self.assertIn("controller.abort()", HTML)
+        self.assertIn("加入队列超时", HTML)
 
     def test_product_link_is_enabled_by_default_and_sent_to_queue(self) -> None:
         self.assertIn('id="attachProduct" type="checkbox" checked', HTML)

@@ -40,12 +40,20 @@ class ProductLinkOptionTest(unittest.TestCase):
         with (
             patch.object(web, "list_bitbrowser_profiles", return_value={"profiles": [profile]}),
             patch.object(web, "load_publish_config", return_value={}),
-            patch.object(web, "load_publish_records", return_value=[]),
-            patch.object(web, "load_title_library", return_value={}),
-            patch.object(web, "scan_finished_videos", return_value=[video]),
+            patch.object(
+                web,
+                "cached_state_for_client",
+                return_value={"videos": [video], "scan_index": {"ready": True}},
+            ),
             patch.object(web, "safe_video_path", return_value=video_path),
         ):
             return web.build_queue_tasks(payload)
+
+    def test_queue_build_uses_snapshot_without_scanning_vault(self) -> None:
+        with patch.object(web, "scan_finished_videos") as scan:
+            self.build_tasks(False)
+
+        scan.assert_not_called()
 
     def test_without_product_link_does_not_require_mapping(self) -> None:
         tasks = self.build_tasks(False)

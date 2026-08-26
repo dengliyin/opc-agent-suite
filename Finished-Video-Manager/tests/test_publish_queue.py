@@ -270,6 +270,20 @@ class PublishQueueTest(unittest.TestCase):
 
         self.assertEqual(calls, [new_path])
 
+    def test_completed_history_does_not_touch_vault_when_loading_queue(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            calls = []
+            db_path = Path(directory) / "queue.sqlite3"
+            queue = PublishQueue(db_path, lambda item: {}, video_path_resolver=lambda value: calls.append(value) or value)
+            task_id = queue.enqueue([task("history")])[0]
+            with sqlite3.connect(db_path) as connection:
+                connection.execute("UPDATE queue_tasks SET status='published' WHERE id=?", (task_id,))
+
+            payload = queue.payload()
+
+        self.assertEqual(payload["counts"].get("published"), 1)
+        self.assertEqual(calls, ["/tmp/history.mp4"])
+
 
 if __name__ == "__main__":
     unittest.main()

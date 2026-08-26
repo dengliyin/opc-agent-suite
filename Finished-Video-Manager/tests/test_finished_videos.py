@@ -100,6 +100,7 @@ class FinishedVideoScanTest(unittest.TestCase):
                 patch.object(web, "FINISHED_VIDEO_ROOT", root),
                 patch.object(web, "_FINISHED_VIDEO_INDEX_ROOT", None),
                 patch.object(web, "_FINISHED_VIDEO_INDEX", {}),
+                patch.object(web, "_snapshot_finished_video_index", return_value={}),
                 patch.object(web, "_build_finished_video_index", wraps=web._build_finished_video_index) as build_index,
             ):
                 resolved_first = web.resolve_finished_video_path(old_first.as_posix())
@@ -108,6 +109,41 @@ class FinishedVideoScanTest(unittest.TestCase):
         self.assertEqual(resolved_first, first.resolve().as_posix())
         self.assertEqual(resolved_second, second.resolve().as_posix())
         build_index.assert_called_once_with(root.resolve())
+
+    def test_legacy_paths_reuse_persistent_snapshot_without_scanning_vault(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            current = root / "P1" / "demo.mp4"
+            old = root / "archive" / "P1" / current.name
+            current.parent.mkdir(parents=True)
+            current.write_bytes(b"video")
+            snapshot_index = {web._finished_video_lookup_key(current): current}
+
+            with (
+                patch.object(web, "FINISHED_VIDEO_ROOT", root),
+                patch.object(web, "_FINISHED_VIDEO_INDEX_ROOT", None),
+                patch.object(web, "_FINISHED_VIDEO_INDEX", {}),
+                patch.object(web, "_snapshot_finished_video_index", return_value=snapshot_index),
+                patch.object(web, "_build_finished_video_index") as build_index,
+            ):
+                resolved = web.resolve_finished_video_path(old.as_posix())
+
+        self.assertEqual(resolved, current.resolve().as_posix())
+        build_index.assert_not_called()
+
+    def test_index_ttl_starts_after_slow_build_finishes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with (
+                patch.object(web, "FINISHED_VIDEO_ROOT", root),
+                patch.object(web, "_FINISHED_VIDEO_INDEX_ROOT", None),
+                patch.object(web, "_FINISHED_VIDEO_INDEX_AT", 0.0),
+                patch.object(web, "_snapshot_finished_video_index", return_value={}),
+                patch.object(web, "_build_finished_video_index", return_value={}),
+                patch.object(web.time, "monotonic", side_effect=[10.0, 10.0, 200.0]),
+            ):
+                web._finished_video_index()
+                self.assertEqual(web._FINISHED_VIDEO_INDEX_AT, 200.0)
 
     def test_legacy_layout_keeps_path_date_when_no_new_copy_exists(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

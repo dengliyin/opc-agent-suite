@@ -193,7 +193,8 @@ class PublishQueue:
             scheduled_at = float(self._get_meta(connection, "scheduled_at", "0") or 0)
         counts: dict[str, int] = {}
         for row in rows:
-            row["video_path"] = self._resolve_video_path(str(row.get("video_path", "")))
+            if row.get("status") in (*ACTIVE_STATUSES, *RETRYABLE_STATUSES):
+                row["video_path"] = self._resolve_video_path(str(row.get("video_path", "")))
             row["ai_generated"] = bool(row.get("ai_generated"))
             row["attach_product"] = bool(row.get("attach_product"))
             counts[row["status"]] = counts.get(row["status"], 0) + 1
