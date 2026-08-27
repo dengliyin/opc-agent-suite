@@ -36,6 +36,7 @@ Script-Generation/opc_engine/features/script_generation/config/model_settings.js
 Script-Generation/workflow_configs/**/config/inputs.json
 Video-Generation/.env
 Finished-Video-Manager/data/
+Finished-Video-Manager/config/product_mappings.json
 
 # Browser state and generated application data
 **/browser-profile/

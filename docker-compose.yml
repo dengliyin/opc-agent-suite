@@ -194,7 +194,7 @@ services:
       - "${OPC_VAULT_ROOT:?Set OPC_VAULT_ROOT in .env}:/vault"
       - "${OPC_DOCKER_DATA_ROOT:?Set OPC_DOCKER_DATA_ROOT in .env}/config:/config"
       - "${OPC_DOCKER_DATA_ROOT:?Set OPC_DOCKER_DATA_ROOT in .env}/finished-video-data:/workspace/Finished-Video-Manager/data"
-      - ./Finished-Video-Manager/config/product_mappings.json:/workspace/Finished-Video-Manager/config/product_mappings.json
+      - ./Finished-Video-Manager/config:/workspace/Finished-Video-Manager/config
 
   product-script-rewrite:
     <<: *common-service
@@ -297,4 +297,4 @@ services:
       - "${OPC_DOCKER_DATA_ROOT:?Set OPC_DOCKER_DATA_ROOT in .env}/auto-publish-data:/workspace/Auto-Publish-Pipeline/data"
       - "${OPC_DOCKER_DATA_ROOT:?Set OPC_DOCKER_DATA_ROOT in .env}/finished-video-data:/workspace/Finished-Video-Manager/data"
       - "${OPC_DOCKER_DATA_ROOT:?Set OPC_DOCKER_DATA_ROOT in .env}/video-assembly-data:/workspace/Video-Assembly-hd/data"
-      - ./Finished-Video-Manager/config/product_mappings.json:/workspace/Finished-Video-Manager/config/product_mappings.json
+      - ./Finished-Video-Manager/config:/workspace/Finished-Video-Manager/config
