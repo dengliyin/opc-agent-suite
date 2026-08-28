@@ -40,6 +40,22 @@ def test_shared_theme_matches_console_palette() -> None:
         assert value in css
 
 
+def test_shared_theme_overrides_legacy_light_surfaces() -> None:
+    css = read("opc_shared/ui/opc-theme.css")
+    for selector in (
+        ".agent-status-chip.idle",
+        ".script-item",
+        ".api-info-card",
+        ".queueToolbar",
+        ".progressPanel",
+        ".badge.ready",
+        ".statusPill.mutation",
+        ".statusFilters button.active",
+        ".smallPath",
+    ):
+        assert selector in css
+
+
 def test_inline_primary_agents_inject_shared_theme() -> None:
     finished_source = read("Finished-Video-Manager/finished_video_manager/web.py")
     auto_source = read("Auto-Publish-Pipeline/auto_publish_pipeline/web.py")

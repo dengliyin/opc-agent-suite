@@ -10,8 +10,10 @@
   --text: #f3f5f7;
   --muted: #98a2ad;
   --line: #29313b;
+  --border: #29313b;
   --line-strong: #36414d;
   --line-soft: rgba(152, 162, 173, 0.2);
+  --surface-raised: #202733;
   --accent: #70a7ff;
   --accent-soft: #17243a;
   --accent-ink: #f7f9fb;
@@ -276,6 +278,141 @@ body.opc-agent .copyItem.titleTagItem {
 body.opc-agent .file-button:hover,
 body.opc-agent .copyItem.titleTagItem:hover {
   background: var(--surface-raised) !important;
+}
+
+/* Keep legacy light-theme components readable after the shared dark tokens load. */
+body.opc-agent .config-line,
+body.opc-agent .portal-option-meta,
+body.opc-agent .settings-status,
+body.opc-agent .copy,
+body.opc-agent .smallPath {
+  color: var(--muted) !important;
+}
+
+body.opc-agent .agent-status-chip.idle,
+body.opc-agent .toggle,
+body.opc-agent .concurrency-toggle select,
+body.opc-agent .product-group,
+body.opc-agent .batch-group,
+body.opc-agent .country-group,
+body.opc-agent .script-item,
+body.opc-agent .api-info-card,
+body.opc-agent .api-map-card,
+body.opc-agent .api-info-head,
+body.opc-agent .api-map-card h3,
+body.opc-agent .settings-group-title,
+body.opc-agent .folder-roots,
+body.opc-agent .queueToolbar,
+body.opc-agent .taskList,
+body.opc-agent .queueFooter,
+body.opc-agent .progressPanel,
+body.opc-agent .outputs,
+body.opc-agent .stat,
+body.opc-agent .pathBox,
+body.opc-agent .captionModeSegments span,
+body.opc-agent .cleanupVerify {
+  color: var(--text) !important;
+  background: var(--surface) !important;
+  border-color: var(--line) !important;
+}
+
+body.opc-agent .api-model-item,
+body.opc-agent .api-map-row,
+body.opc-agent .settings-row {
+  border-color: var(--line) !important;
+}
+
+body.opc-agent .script-item:hover,
+body.opc-agent .script-item.checked,
+body.opc-agent .script-item.running-now,
+body.opc-agent .script-item.active,
+body.opc-agent .captionModeSegments input:checked + span {
+  color: var(--text) !important;
+  background: var(--accent-soft) !important;
+  border-color: var(--blue) !important;
+}
+
+body.opc-agent .script-item.feedback-failed {
+  background: #26191c !important;
+  border-color: #61323a !important;
+}
+
+body.opc-agent .script-item.exported,
+body.opc-agent .script-item.feedback-done,
+body.opc-agent .script-item.feedback-pending.checked {
+  background: var(--soft) !important;
+}
+
+body.opc-agent .collapse-toggle {
+  color: var(--text) !important;
+  background: var(--surface-raised) !important;
+  border-color: var(--line) !important;
+}
+
+body.opc-agent .product-group.expanded > .product-group-head .collapse-toggle,
+body.opc-agent .country-group.expanded > .country-group-head .collapse-toggle,
+body.opc-agent .batch-group.expanded > .batch-head .collapse-toggle {
+  color: var(--blue) !important;
+  background: var(--accent-soft) !important;
+  border-color: var(--blue) !important;
+}
+
+body.opc-agent .asset-link {
+  color: #8bb9ff !important;
+}
+
+body.opc-agent .chip {
+  color: var(--text) !important;
+  background: var(--surface-raised) !important;
+  border-color: var(--line) !important;
+}
+
+body.opc-agent .chip.teal,
+body.opc-agent .chip.ok,
+body.opc-agent .badge.ok,
+body.opc-agent .badge.ready,
+body.opc-agent .statusPill.done {
+  color: var(--green) !important;
+  background: #12271f !important;
+  border-color: #285a46 !important;
+}
+
+body.opc-agent .chip.blue {
+  color: #9dc4ff !important;
+  background: var(--accent-soft) !important;
+  border-color: #365d92 !important;
+}
+
+body.opc-agent .statusPill.missing,
+body.opc-agent .statusPill.cleanup,
+body.opc-agent .statusPill.mutation {
+  color: var(--amber) !important;
+  background: #2a2113 !important;
+  border-color: #6b5228 !important;
+}
+
+body.opc-agent .statusPill.invalid,
+body.opc-agent .statusPill.failed {
+  color: var(--red) !important;
+  background: #26191c !important;
+  border-color: #61323a !important;
+}
+
+body.opc-agent .panelTitle span {
+  color: var(--green) !important;
+}
+
+body.opc-agent .statusFilters button.active {
+  color: #07101d !important;
+  background: var(--blue) !important;
+  border-color: var(--blue) !important;
+}
+
+body.opc-agent .stat.active,
+body.opc-agent .stat.active span,
+body.opc-agent .stat.active strong {
+  color: #07101d !important;
+  background: var(--blue) !important;
 }
 
 @media (max-width: 760px) {
