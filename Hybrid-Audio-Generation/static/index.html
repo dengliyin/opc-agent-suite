@@ -5,15 +5,19 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>配音智能体</title>
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/opc-theme.css?v=20260828">
 </head>
-<body>
+<body class="opc-agent">
   <header>
     <div>
       <div class="eyebrow">PORT 10004 · LOCAL VOICE GENERATION</div>
       <h1>配音智能体</h1>
       <p>读取本地音频文案，通过 HyperFrames 本地 TTS 生成 1.2 倍自然语速的 M4A，供 AI＋实拍混剪直接扫描。</p>
     </div>
-    <button id="refreshButton">重新扫描文案</button>
+    <div class="opc-header-actions">
+      <button id="refreshButton">重新扫描文案</button>
+      <a class="opc-home-link" href="http://127.0.0.1:8888/">返回控制台</a>
+    </div>
   </header>
   <main>
     <section class="panel controls">

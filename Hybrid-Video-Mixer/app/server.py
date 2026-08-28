@@ -9,6 +9,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from opc_shared.ui_theme import send_theme_css
 from opc_shared.vault_snapshot import cached_or_empty, refresh_snapshot
 
 try:
@@ -225,6 +226,9 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path == "/":
             self.serve_static("index.html")
+            return
+        if parsed.path == "/opc-theme.css":
+            send_theme_css(self)
             return
         if parsed.path.startswith("/static/"):
             self.serve_static(parsed.path.removeprefix("/static/"))

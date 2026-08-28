@@ -1,0 +1,288 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b0d10;
+  --paper: #15191f;
+  --panel: #15191f;
+  --surface: #15191f;
+  --soft: #1b2129;
+  --surface-soft: #1b2129;
+  --ink: #f3f5f7;
+  --text: #f3f5f7;
+  --muted: #98a2ad;
+  --line: #29313b;
+  --line-strong: #36414d;
+  --line-soft: rgba(152, 162, 173, 0.2);
+  --accent: #70a7ff;
+  --accent-soft: #17243a;
+  --accent-ink: #f7f9fb;
+  --blue: #70a7ff;
+  --teal: #66d19e;
+  --green: #66d19e;
+  --green-dark: #66d19e;
+  --amber: #f2bd67;
+  --red: #ff8b8b;
+  --danger: #ff8b8b;
+  --shadow: 0 16px 48px rgba(0, 0, 0, 0.28);
+}
+
+html,
+body.opc-agent {
+  background: #0b0d10;
+}
+
+body.opc-agent {
+  color: var(--text);
+  background:
+    radial-gradient(circle at top, #18202b 0, #0b0d10 42%),
+    #0b0d10;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+body.opc-agent ::selection {
+  color: #07101d;
+  background: var(--blue);
+}
+
+body.opc-agent header,
+body.opc-agent .topbar,
+body.opc-agent .portal-header {
+  color: var(--text);
+  background: rgba(15, 19, 24, 0.94);
+  border-color: var(--line);
+  box-shadow: none;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+body.opc-agent h1,
+body.opc-agent h2,
+body.opc-agent h3,
+body.opc-agent strong,
+body.opc-agent .title,
+body.opc-agent .panelTitle,
+body.opc-agent .section-title {
+  color: var(--text);
+}
+
+body.opc-agent p,
+body.opc-agent .muted,
+body.opc-agent .sub,
+body.opc-agent .lead,
+body.opc-agent .hint,
+body.opc-agent .description,
+body.opc-agent .pathNote,
+body.opc-agent .message,
+body.opc-agent .empty {
+  color: var(--muted);
+}
+
+body.opc-agent .panel,
+body.opc-agent .summary,
+body.opc-agent .paths,
+body.opc-agent .portal-option,
+body.opc-agent .config-drawer,
+body.opc-agent .modal-card,
+body.opc-agent .settings-section,
+body.opc-agent .task,
+body.opc-agent .job,
+body.opc-agent .entry,
+body.opc-agent .account,
+body.opc-agent .output,
+body.opc-agent .videoCard {
+  color: var(--text);
+  background: linear-gradient(145deg, #181d24, #11151a);
+  border-color: var(--line);
+  border-radius: 15px;
+  box-shadow: var(--shadow);
+}
+
+body.opc-agent .panel-head,
+body.opc-agent .panel-heading,
+body.opc-agent .panelTitle,
+body.opc-agent .section-title,
+body.opc-agent .panelHead,
+body.opc-agent .statusbar,
+body.opc-agent .summary {
+  color: var(--text);
+  background: #1b2129;
+  border-color: var(--line);
+}
+
+body.opc-agent button,
+body.opc-agent .button,
+body.opc-agent .mini-button,
+body.opc-agent .appHeaderControl,
+body.opc-agent .opc-home-link,
+body.opc-agent nav a {
+  color: var(--text);
+  background: #202733;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  box-shadow: none;
+  text-decoration: none;
+}
+
+body.opc-agent button:hover:not(:disabled),
+body.opc-agent .button:hover,
+body.opc-agent .mini-button:hover,
+body.opc-agent .appHeaderControl:hover,
+body.opc-agent .opc-home-link:hover,
+body.opc-agent nav a:hover {
+  color: #07101d;
+  background: var(--blue);
+  border-color: var(--blue);
+  transform: none;
+  box-shadow: none;
+}
+
+body.opc-agent button.primary,
+body.opc-agent .button.primary,
+body.opc-agent button.accent,
+body.opc-agent .primary-mini {
+  color: #11161d;
+  background: #e7edf5;
+  border-color: #e7edf5;
+  box-shadow: none;
+}
+
+body.opc-agent button.danger,
+body.opc-agent .button.danger,
+body.opc-agent .danger-mini {
+  color: var(--red);
+  background: #26191c;
+  border-color: #61323a;
+}
+
+body.opc-agent input,
+body.opc-agent select,
+body.opc-agent textarea,
+body.opc-agent .path-display,
+body.opc-agent .pathBox,
+body.opc-agent .fixedSetting,
+body.opc-agent .footage-summary,
+body.opc-agent .hook-preview-summary,
+body.opc-agent .random-deduplication,
+body.opc-agent .subtitle-toggle,
+body.opc-agent .choice,
+body.opc-agent fieldset,
+body.opc-agent .summary,
+body.opc-agent .queue-summary {
+  color: var(--text);
+  background: #0d1116;
+  border-color: var(--line);
+  border-radius: 10px;
+}
+
+body.opc-agent input:focus,
+body.opc-agent select:focus,
+body.opc-agent textarea:focus {
+  outline: 0;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(112, 167, 255, 0.16);
+}
+
+body.opc-agent input[type="checkbox"],
+body.opc-agent input[type="radio"] {
+  accent-color: var(--blue);
+}
+
+body.opc-agent .choice:has(input:checked),
+body.opc-agent .script-item.active,
+body.opc-agent .job.active,
+body.opc-agent .hook-video-card.selected {
+  color: var(--text);
+  background: var(--accent-soft);
+  border-color: var(--blue);
+  box-shadow: inset 3px 0 0 var(--blue);
+}
+
+body.opc-agent pre,
+body.opc-agent .log-pane,
+body.opc-agent .log-list {
+  color: #d7e1eb;
+  background: #080b0f;
+  border-color: var(--line);
+}
+
+body.opc-agent .badge,
+body.opc-agent .chip,
+body.opc-agent .status {
+  border-radius: 999px;
+  box-shadow: none;
+}
+
+body.opc-agent .status.ok,
+body.opc-agent .badge.done,
+body.opc-agent .chip.ok,
+body.opc-agent .agent-status-chip.running {
+  color: var(--green);
+  background: #12271f;
+  border-color: #285a46;
+}
+
+body.opc-agent .status.pending,
+body.opc-agent .badge.running,
+body.opc-agent .chip.warn {
+  color: var(--amber);
+  background: #2a2113;
+  border-color: #6b5228;
+}
+
+body.opc-agent .progress,
+body.opc-agent .progress-track {
+  background: #0d1116;
+  border-color: var(--line);
+}
+
+body.opc-agent .progress > div,
+body.opc-agent .progress > span {
+  background: var(--blue);
+}
+
+body.opc-agent .opc-home-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 8px 11px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+body.opc-agent .opc-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Normalize legacy result and empty-state panels that still used light surfaces. */
+body.opc-agent .progress-panel,
+body.opc-agent .run,
+body.opc-agent .file-button,
+body.opc-agent .empty,
+body.opc-agent .publishBox,
+body.opc-agent .publishMeta,
+body.opc-agent .optionRow,
+body.opc-agent .visibilityInline,
+body.opc-agent .copyItem.titleTagItem {
+  background: var(--surface) !important;
+  color: var(--text) !important;
+  border-color: var(--border) !important;
+}
+
+body.opc-agent .file-button:hover,
+body.opc-agent .copyItem.titleTagItem:hover {
+  background: var(--surface-raised) !important;
+}
+
+@media (max-width: 760px) {
+  body.opc-agent header,
+  body.opc-agent .topbar,
+  body.opc-agent .portal-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

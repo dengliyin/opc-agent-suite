@@ -5,8 +5,9 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>AI＋实拍混剪智能体</title>
   <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/opc-theme.css?v=20260828">
 </head>
-<body>
+<body class="opc-agent">
   <main>
     <header>
       <div>
@@ -14,7 +15,10 @@
         <h1>AI＋实拍混剪智能体</h1>
         <p class="lead">AI 钩子 → 混剪音频＋展示/使用实拍 → 可选 AI CTA。选择素材后自动生成编排方案，再渲染成片。</p>
       </div>
-      <button id="refreshButton" class="secondary">重新扫描素材</button>
+      <div class="opc-header-actions">
+        <button id="refreshButton" class="secondary">重新扫描素材</button>
+        <a class="opc-home-link" href="http://127.0.0.1:8888/">返回控制台</a>
+      </div>
     </header>
 
     <section class="summary" id="summary">正在读取上次扫描索引…</section>

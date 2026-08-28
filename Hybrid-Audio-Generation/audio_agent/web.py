@@ -9,6 +9,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from opc_shared.ui_theme import send_theme_css
 from opc_shared.vault_snapshot import cached_or_empty, refresh_snapshot
 
 from audio_agent.core import find_document, generate_entries, runtime_paths, scan_library
@@ -110,6 +111,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/status":
             self.send_json(task_snapshot())
+            return
+        if parsed.path == "/opc-theme.css":
+            send_theme_css(self)
             return
         if parsed.path == "/api/audio":
             try:

@@ -17,6 +17,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from opc_shared.global_ai import load_profile, runtime_override_active, set_runtime_overrides
+from opc_shared.ui_theme import send_theme_css
 from opc_shared.vault_snapshot import cached_or_empty, refresh_snapshot
 
 
@@ -1067,6 +1068,9 @@ class AgentHandler(SimpleHTTPRequestHandler):
                     return
                 content_type = mimetypes.guess_type(str(target))[0] or "text/plain"
                 self.send_text(target.read_text(encoding="utf-8", errors="ignore"), content_type=f"{content_type}; charset=utf-8")
+                return
+            if path == "/opc-theme.css":
+                send_theme_css(self)
                 return
             self.serve_static(path)
         except Exception as exc:

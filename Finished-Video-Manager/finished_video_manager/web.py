@@ -20,6 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from opc_shared.ui_theme import send_theme_css
 from opc_shared.vault_snapshot import cached_or_empty, load_snapshot, refresh_snapshot
 
 from .publish_queue import PublishQueue
@@ -2502,6 +2503,7 @@ def prepare_tiktok_upload_locked(
 APP_HEADER_MARKER = "<!-- APP_HEADER_ACTIONS -->"
 
 APP_HEADER_HTML = r"""<div class="appHeaderActions">
+      <a class="appHeaderControl opc-home-link" href="http://127.0.0.1:8888/">返回控制台</a>
       <a id="videoBadge" class="appHeaderControl appHeaderBadge" href="/" title="成品管理">视频 0</a>
       <span id="productBadge" class="appHeaderControl appHeaderBadge">产品 0</span>
       <span id="libraryBadge" class="appHeaderControl appHeaderBadge">标题库 0</span>
@@ -2590,7 +2592,8 @@ def render_app_page(html: str) -> str:
         raise ValueError("app page is missing the shared header marker")
     return (
         html.replace(APP_HEADER_MARKER, APP_HEADER_HTML)
-        .replace("</head>", f"{APP_HEADER_STYLE}\n</head>", 1)
+        .replace("</head>", f'{APP_HEADER_STYLE}\n<link rel="stylesheet" href="/opc-theme.css?v=20260828">\n</head>', 1)
+        .replace("<body>", '<body class="opc-agent">', 1)
         .replace("</body>", f"{APP_HEADER_SCRIPT}\n</body>", 1)
     )
 
@@ -4472,6 +4475,8 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/favicon.ico":
                 self.send_response(204)
                 self.end_headers()
+            elif parsed.path == "/opc-theme.css":
+                send_theme_css(self)
             elif parsed.path == "/health":
                 json_response(self, 200, {"status": "ok"})
             elif parsed.path == "/api/state":

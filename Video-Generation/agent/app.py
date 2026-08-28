@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from opc_shared.global_ai import runtime_override_active, set_runtime_overrides
+from opc_shared.ui_theme import THEME_PATH
 from opc_shared.vault_snapshot import cached_or_empty, incremental_records, load_snapshot, refresh_snapshot
 
 from .config import ENV_PATH, SETTINGS_PATH, Settings, load_hybrid_omni_settings, load_settings, mask_secrets, update_env_values
@@ -190,6 +191,11 @@ class ApiSettingsRequest(BaseModel):
 @app.get("/")
 def portal_page() -> FileResponse:
     return FileResponse(static_dir / "index.html")
+
+
+@app.get("/opc-theme.css")
+def opc_theme() -> FileResponse:
+    return FileResponse(THEME_PATH, media_type="text/css")
 
 
 @app.get("/settings")

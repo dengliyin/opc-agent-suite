@@ -10,6 +10,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from opc_shared.ui_theme import send_theme_css
+
 from opc_engine.features.unified_script_agent import core
 
 
@@ -209,6 +211,8 @@ class Handler(BaseHTTPRequestHandler):
             static_response(self, "app.css", "text/css; charset=utf-8")
         elif parsed.path == "/app.js":
             static_response(self, "app.js", "application/javascript; charset=utf-8")
+        elif parsed.path == "/opc-theme.css":
+            send_theme_css(self)
         elif parsed.path == "/api/state":
             query = urllib.parse.parse_qs(parsed.query)
             refresh = str((query.get("refresh") or [""])[0]).lower() in {"1", "true", "yes"}
