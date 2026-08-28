@@ -178,6 +178,30 @@ def test_hybrid_omni_routes_and_page_exist():
     assert "删除所选" in response.text
 
 
+def test_script_text_route_reads_only_agent_markdown(monkeypatch, tmp_path):
+    script_root = tmp_path / "scripts"
+    completed_root = tmp_path / "completed"
+    script_root.mkdir()
+    completed_root.mkdir()
+    script = script_root / "demo.md"
+    script.write_text("# 测试脚本\n\n正文", encoding="utf-8")
+    outside = tmp_path / "outside.md"
+    outside.write_text("private", encoding="utf-8")
+    monkeypatch.setattr(
+        app_module,
+        "omni_settings",
+        SimpleNamespace(script_root=script_root, completed_script_root=completed_root),
+    )
+    client = TestClient(app_module.app)
+
+    response = client.get("/omni/api/script", params={"path": str(script)})
+    rejected = client.get("/omni/api/script", params={"path": str(outside)})
+
+    assert response.status_code == 200
+    assert response.json() == {"path": str(script.resolve()), "name": "demo.md", "content": "# 测试脚本\n\n正文"}
+    assert rejected.status_code == 403
+
+
 def test_health_is_lightweight(monkeypatch):
     monkeypatch.setattr(
         app_module,

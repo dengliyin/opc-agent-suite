@@ -15,6 +15,8 @@ const state = {
   expandedProducts: new Set(),
   expandedCountries: new Set(),
   selectedReferenceByProduct: new Map(),
+  scriptTextCache: new Map(),
+  scriptTextLoading: new Set(),
 };
 
 const API_BASE = window.AGENT_API_BASE || "/api";
@@ -56,6 +58,7 @@ async function refreshAll(scan = false, full = false) {
   ]);
   state.config = config;
   state.catalog = catalog;
+  if (scan) state.scriptTextCache.clear();
   state.jobs = jobs.jobs || [];
   state.globalJobs = globalJobs;
   state.lastTerminalCatalogJobKey = terminalJobKey(state.jobs[0]);
@@ -73,6 +76,7 @@ function render() {
   renderGlobalStatus();
   renderCatalog();
   renderSegments();
+  renderScriptPreview();
   renderJobs();
 }
 
@@ -640,7 +644,8 @@ function renderSegments() {
     .map((segment) => {
       const reuse = segment.reuses_character ? `<span class="chip">复用 ${segment.referenced_character_index || 1}</span>` : "";
       const runningSegment = selectedScriptIsRunning && runningContext?.segmentIndex === Number(segment.index);
-      const runningChip = runningSegment ? `<span class="chip running-badge">运行中</span><br>` : "";
+      const runningChip = runningSegment ? `<span class="chip running-badge">运行中</span>` : "";
+      const timeRange = String(segment.time_range || "").replace(/\s*-\s*/g, "–").replace(/\s+/g, " ").trim();
       const missingMediaLabel = script.exported ? "已清理" : "未生成";
       const activeCell = (stage) => {
         const runningStage = runningContext?.stage;
@@ -649,10 +654,10 @@ function renderSegments() {
       };
       return `
         <tr class="${runningSegment ? "running-segment" : ""}">
-          <td class="segment-index">片段 ${segment.index}<br>${runningChip}<span class="muted">${escapeHtml(segment.time_range)}</span></td>
-          <td${activeCell("characters")}>${renderAsset(segment.character_exists, segment.character_url, "人物图", false, segment.character_stale ? (segment.character_stale_reason || "需重做") : missingMediaLabel, segment.character_path)}${reuse}</td>
-          <td${activeCell("storyboards")}>${renderAsset(segment.storyboard_exists, segment.storyboard_url, "故事版", false, segment.storyboard_stale ? (segment.storyboard_stale_reason || "需重做") : missingMediaLabel, segment.storyboard_path)}</td>
-          <td${activeCell("videos")}>${renderAsset(segment.video_exists, segment.video_url, state.config?.video_label || "视频", true, missingMediaLabel, segment.video_path)}</td>
+          <td class="segment-index">片段 ${segment.index} ${runningChip}<span class="muted">· ${escapeHtml(timeRange)}</span></td>
+          <td${activeCell("characters")}><div class="asset-cell">${renderAsset(segment.character_exists, segment.character_url, "人物图", segment.character_stale ? (segment.character_stale_reason || "需重做") : missingMediaLabel, segment.character_path)}${reuse}</div></td>
+          <td${activeCell("storyboards")}><div class="asset-cell">${renderAsset(segment.storyboard_exists, segment.storyboard_url, "故事版", segment.storyboard_stale ? (segment.storyboard_stale_reason || "需重做") : missingMediaLabel, segment.storyboard_path)}</div></td>
+          <td${activeCell("videos")}><div class="asset-cell">${renderAsset(segment.video_exists, segment.video_url, state.config?.video_label || "视频", missingMediaLabel, segment.video_path)}</div></td>
         </tr>
       `;
     })
@@ -673,28 +678,58 @@ function renderSegments() {
   `;
 }
 
-function renderAsset(exists, url, label, isVideo = false, missingLabel = "未生成", path = "") {
+function renderAsset(exists, url, label, missingLabel = "未生成", path = "") {
   if (!exists || !url) {
     const deleteButton = path && missingLabel !== "未生成" && missingLabel !== "已清理"
       ? `<button class="asset-delete-button inline" type="button" data-delete-asset-path="${escapeHtml(path)}" data-delete-asset-label="${escapeHtml(label)}" title="删除${escapeHtml(label)}">删除</button>`
       : "";
     return `<span class="chip warn" title="${escapeHtml(missingLabel)}">${escapeHtml(missingLabel)}</span>${deleteButton}`;
   }
-  const media = isVideo
-    ? `<video class="thumb" muted playsinline preload="metadata" src="${url}"></video>`
-    : `<img class="thumb" src="${url}" alt="${label}" loading="lazy" />`;
   const deleteButton = path
     ? `<button class="asset-delete-button" type="button" data-delete-asset-path="${escapeHtml(path)}" data-delete-asset-label="${escapeHtml(label)}" title="删除${escapeHtml(label)}">删除</button>`
     : "";
   return `
     <div class="asset-stack">
-      ${media}
       <div class="asset-actions">
         <a class="asset-link" href="${url}" target="_blank" rel="noreferrer">${label}</a>
         ${deleteButton}
       </div>
     </div>
   `;
+}
+
+function renderScriptPreview() {
+  const script = selectedScript();
+  const meta = $("#scriptPreviewMeta");
+  const content = $("#scriptPreviewContent");
+  if (!meta || !content) return;
+  if (!script) {
+    meta.textContent = "";
+    content.textContent = "请选择脚本";
+    return;
+  }
+  meta.textContent = script.md_name;
+  if (state.scriptTextCache.has(script.md_path)) {
+    content.textContent = state.scriptTextCache.get(script.md_path);
+    return;
+  }
+  content.textContent = "正在读取脚本…";
+  loadScriptPreview(script);
+}
+
+async function loadScriptPreview(script) {
+  const path = script.md_path;
+  if (!path || state.scriptTextLoading.has(path)) return;
+  state.scriptTextLoading.add(path);
+  try {
+    const payload = await api(`/script?path=${encodeURIComponent(path)}`);
+    state.scriptTextCache.set(path, payload.content || "");
+  } catch (error) {
+    state.scriptTextCache.set(path, `读取失败：${error.message}`);
+  } finally {
+    state.scriptTextLoading.delete(path);
+  }
+  if (selectedScript()?.md_path === path) renderScriptPreview();
 }
 
 async function handleArtifactDeleteClick(event) {

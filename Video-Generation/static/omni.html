@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Omni 片段产出智能体</title>
-    <link rel="stylesheet" href="/styles.css?v=workspace-layout-20260828" />
+    <link rel="stylesheet" href="/styles.css?v=script-preview-compact-20260828" />
     <link rel="stylesheet" href="/opc-theme.css?v=20260828-contrast1" />
   </head>
   <body class="opc-agent">
@@ -57,11 +57,20 @@
         </section>
 
         <section class="panel segment-panel">
-          <div class="panel-heading">
-            <h2 id="selectedTitle">片段状态</h2>
-            <span id="selectedMeta" class="muted"></span>
+          <div class="segment-status">
+            <div class="panel-heading">
+              <h2 id="selectedTitle">片段状态</h2>
+              <span id="selectedMeta" class="muted"></span>
+            </div>
+            <div id="segmentTable" class="segment-table"></div>
           </div>
-          <div id="segmentTable" class="segment-table"></div>
+          <div class="script-preview">
+            <div class="script-preview-heading">
+              <h3>脚本文本</h3>
+              <span id="scriptPreviewMeta" class="muted"></span>
+            </div>
+            <pre id="scriptPreviewContent" class="script-preview-content">请选择脚本</pre>
+          </div>
         </section>
 
         <aside class="side-column">
@@ -77,6 +86,6 @@
       </main>
     </div>
     <script>window.AGENT_API_BASE = "/omni/api";</script>
-    <script src="/app.js?v=idle-progress-hidden-20260828"></script>
+    <script src="/app.js?v=script-preview-compact-20260828"></script>
   </body>
 </html>

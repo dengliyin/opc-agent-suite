@@ -1161,6 +1161,20 @@ def _artifact(current: Settings, path: str) -> FileResponse:
     )
 
 
+def _script_text(current: Settings, path: str) -> Dict[str, str]:
+    target = Path(path).expanduser().resolve()
+    roots = (current.script_root.resolve(), current.completed_script_root.resolve())
+    if target.suffix.lower() != ".md" or not any(target.is_relative_to(root) for root in roots):
+        raise HTTPException(status_code=403, detail="不允许访问该脚本")
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="脚本不存在")
+    try:
+        content = target.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=_safe(f"读取脚本失败：{exc}"))
+    return {"path": str(target), "name": target.name, "content": content}
+
+
 def _delete_artifact(current: Settings, request: ArtifactDeleteRequest) -> Dict[str, Any]:
     target = Path(request.path).expanduser().resolve()
     if not target.exists() or not target.is_file():
@@ -1322,6 +1336,22 @@ def get_grok_catalog(refresh: bool = False, full: bool = False) -> Dict[str, Any
 @app.get("/hybrid-omni/api/catalog")
 def get_hybrid_omni_catalog(refresh: bool = False, full: bool = False) -> Dict[str, Any]:
     return _catalog_payload(hybrid_omni_settings, refresh=refresh, full=full)
+
+
+@app.get("/api/script")
+@app.get("/omni/api/script")
+def get_omni_script(path: str = Query(...)) -> Dict[str, str]:
+    return _script_text(omni_settings, path)
+
+
+@app.get("/grok/api/script")
+def get_grok_script(path: str = Query(...)) -> Dict[str, str]:
+    return _script_text(grok_settings, path)
+
+
+@app.get("/hybrid-omni/api/script")
+def get_hybrid_omni_script(path: str = Query(...)) -> Dict[str, str]:
+    return _script_text(hybrid_omni_settings, path)
 
 
 

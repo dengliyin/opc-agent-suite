@@ -280,6 +280,68 @@ h2 {
   flex: 0 0 auto;
 }
 
+.segment-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  align-self: stretch;
+}
+
+.segment-status {
+  display: flex;
+  flex: 0 0 280px;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.segment-status > .panel-heading {
+  flex: 0 0 auto;
+}
+
+.segment-status .segment-table {
+  flex: 1 1 auto;
+  max-height: none;
+}
+
+.script-preview {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface);
+}
+
+.script-preview-heading {
+  min-height: 42px;
+  padding: 9px 12px;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--line-strong);
+  background: var(--surface-soft);
+}
+
+.script-preview-heading h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.script-preview-content {
+  margin: 0;
+  padding: 12px 14px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
 .heading-actions {
   display: flex;
   align-items: center;
@@ -738,6 +800,17 @@ td {
   font-size: 13px;
 }
 
+.segment-status th,
+.segment-status td {
+  padding: 6px 8px;
+  vertical-align: middle;
+}
+
+.segment-status .segment-index {
+  width: 220px;
+  white-space: nowrap;
+}
+
 th {
   text-align: left;
   color: var(--muted);
@@ -770,17 +843,15 @@ td.running-cell {
 .asset-stack {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 48px;
+  gap: 4px;
+  min-height: 0;
 }
 
-.thumb {
-  width: 48px;
-  height: 48px;
-  border-radius: 0;
-  border: 1px solid var(--line-strong);
-  object-fit: cover;
-  background: var(--surface-soft);
+.asset-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
 }
 
 .asset-link {
@@ -794,7 +865,8 @@ td.running-cell {
 }
 
 .asset-actions {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   align-items: center;
 }
@@ -2001,14 +2073,6 @@ td.running-cell {
   background: #def5ec;
 }
 
-.thumb {
-  width: 54px;
-  height: 54px;
-  border-color: var(--line-strong);
-  background: #f1eadb;
-  box-shadow: 2px 2px 0 rgba(16, 20, 18, 0.1);
-}
-
 .asset-link {
   color: #164f84;
   font-weight: 750;
@@ -2203,6 +2267,14 @@ td.running-cell {
 
   .workspace {
     grid-template-columns: 1fr;
+  }
+
+  .segment-status {
+    flex-basis: 240px;
+  }
+
+  .segment-status .segment-index {
+    width: 168px;
   }
 
   .toolbar {
