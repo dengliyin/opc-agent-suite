@@ -503,12 +503,38 @@ h2 {
   background: #fff3c7;
 }
 
+body.opc-agent .product-reference-picker.required {
+  color: var(--text);
+  background: #2a2113;
+  border-color: #6b5228;
+}
+
+body.opc-agent .product-reference-picker.required strong {
+  color: var(--amber);
+}
+
+body.opc-agent .product-reference-picker.required span {
+  color: #d7c49a;
+}
+
+body.opc-agent .product-reference-picker.required select {
+  color: var(--text);
+  background: #0d1116;
+  border-color: #6b5228;
+}
+
 .product-reference-picker.error {
   display: block;
   color: var(--red);
   background: #fff2f1;
   font-size: 12px;
   font-weight: 780;
+}
+
+body.opc-agent .product-reference-picker.error {
+  color: var(--red);
+  background: #2b171a;
+  border-color: #61323a;
 }
 
 .product-reference-picker img {
