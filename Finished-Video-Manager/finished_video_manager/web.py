@@ -2592,7 +2592,7 @@ def render_app_page(html: str) -> str:
         raise ValueError("app page is missing the shared header marker")
     return (
         html.replace(APP_HEADER_MARKER, APP_HEADER_HTML)
-        .replace("</head>", f'{APP_HEADER_STYLE}\n<link rel="stylesheet" href="/opc-theme.css?v=20260828">\n</head>', 1)
+        .replace("</head>", f'{APP_HEADER_STYLE}\n<link rel="stylesheet" href="/opc-theme.css?v=20260828-contrast1">\n</head>', 1)
         .replace("<body>", '<body class="opc-agent">', 1)
         .replace("</body>", f"{APP_HEADER_SCRIPT}\n</body>", 1)
     )

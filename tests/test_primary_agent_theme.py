@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-THEME_HREF = "/opc-theme.css?v=20260828"
+THEME_HREF = "/opc-theme.css?v=20260828-contrast1"
 
 
 def read(path: str) -> str:
