@@ -38,6 +38,7 @@ from .files import (
 )
 from .product_lock import storyboard_meta_path
 from .tasks import JobManager, VALID_STAGES
+from assembly.router import router as assembly_router
 
 
 omni_settings = load_settings("omni")
@@ -51,6 +52,7 @@ job_managers = {
 }
 job_manager = job_managers["omni"]
 static_dir = Path(__file__).resolve().parent.parent / "static"
+assembly_static_dir = static_dir / "assembly"
 CATALOG_CACHE_TTL_SECONDS = max(0.0, float(os.getenv("CATALOG_CACHE_TTL_SECONDS", "5")))
 _catalog_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
 _catalog_cache_lock = threading.Lock()
@@ -218,6 +220,12 @@ def grok_page() -> FileResponse:
 @app.get("/hybrid-omni/")
 def hybrid_omni_page() -> FileResponse:
     return FileResponse(static_dir / "hybrid-omni.html")
+
+
+@app.get("/assembly")
+@app.get("/assembly/")
+def assembly_page() -> FileResponse:
+    return FileResponse(assembly_static_dir / "index.html")
 
 
 
@@ -623,7 +631,7 @@ def _function_option_detail(current: Settings, stage: str, value: str) -> Dict[s
             )
         else:
             endpoint = "/v1/videos"
-            params = f"size={_control_value(controls, 'video_size')}；duration=10s；参考图=故事版图；prompt=当前片段完整脚本"
+            params = f"size={_control_value(controls, 'video_size')}；duration=10s；故事板=仅作导演参考、不作为首帧；prompt=当前片段完整脚本"
     return {"api": api_label, "model": model, "endpoint": endpoint, "params": params, "controls": controls}
 
 
@@ -1560,4 +1568,6 @@ def _safe(text: str) -> str:
     return mask_secrets(text, [*omni_settings.secret_values(), *grok_settings.secret_values()])
 
 
+app.include_router(assembly_router)
+app.mount("/assembly/static", StaticFiles(directory=assembly_static_dir), name="assembly-static")
 app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")

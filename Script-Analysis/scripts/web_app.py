@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from datetime import datetime
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -28,9 +29,15 @@ SETTINGS_PATH = CONFIG_DIR / "settings.json"
 SECRETS_PATH = CONFIG_DIR / "settings.local.json"
 PATHS_PATH = CONFIG_DIR / "paths.local.json"
 ANALYZE_SCRIPT = SKILL_ROOT / "scripts" / "analyze_video.py"
+SCRIPTS_DIR = SKILL_ROOT / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+import url_downloader  # noqa: E402
 DEFAULT_VIDEO_SCAN_DIR = INPUTS_DIR
 DEFAULT_SCRIPT_CHECK_DIR = OUTPUTS_DIR / "scripts"
 VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v"}
+CONTENT_LINES = {"pure_ai", "hybrid"}
+HYBRID_MATERIAL_TYPES = {"混剪-钩子", "混剪-CTA"}
 COUNTRY_MARKERS = [
     ("MX", ("mexico", "méxico", "tiktokshopmx", "tiktokshopmexico", "tik tok shop mexico", "墨西哥")),
     ("MY", ("tiktokshopmalaysia", "malaysia", "malaysian", "bahasa melayu", "malay", "penang", "syampu", "pewarna", "uban", "kwn", "马来西亚", "马来语")),
@@ -100,6 +107,87 @@ def local_paths():
     if not script_dir.is_absolute():
         script_dir = SKILL_ROOT / script_dir
     return video_dir.resolve(), script_dir.resolve()
+
+
+def normalize_content_line(value):
+    content_line = str(value or "pure_ai").strip()
+    if content_line not in CONTENT_LINES:
+        raise ValueError("未知内容线路")
+    return content_line
+
+
+def content_paths(content_line):
+    content_line = normalize_content_line(content_line)
+    if content_line == "pure_ai":
+        return local_paths()
+    vault_root = Path(str(os.environ.get("OPC_VAULT_ROOT") or "/vault")).expanduser()
+    video_dir = Path(
+        str(
+            os.environ.get("HYBRID_VIDEO_TEARDOWN_INPUT_ROOT")
+            or vault_root / "wiki" / "视频" / "AI实拍混剪" / "01参考视频"
+        )
+    ).expanduser()
+    script_dir = Path(
+        str(
+            os.environ.get("HYBRID_VIDEO_TEARDOWN_OUTPUT_ROOT")
+            or vault_root / "wiki" / "视频" / "AI实拍混剪" / "02解析脚本"
+        )
+    ).expanduser()
+    return video_dir.resolve(), script_dir.resolve()
+
+
+def list_product_names():
+    names = set()
+    vault_root = Path(str(os.environ.get("OPC_VAULT_ROOT") or "/vault")).expanduser()
+    product_info_dir = vault_root / "wiki" / "产品" / "产品信息"
+    try:
+        for path in product_info_dir.glob("*.md"):
+            name = re.sub(r"-?产品信息$", "", path.stem).strip()
+            if name:
+                names.add(name)
+    except OSError:
+        pass
+    for content_line in CONTENT_LINES:
+        video_dir, _ = content_paths(content_line)
+        if content_line == "hybrid":
+            roots = [video_dir / material_type for material_type in HYBRID_MATERIAL_TYPES]
+        else:
+            roots = [video_dir]
+        for root in roots:
+            try:
+                names.update(
+                    path.name
+                    for path in root.iterdir()
+                    if path.is_dir()
+                    and not path.name.startswith(".")
+                    and path.name != "_template"
+                    and path.name not in HYBRID_MATERIAL_TYPES
+                )
+            except OSError:
+                continue
+    names.difference_update({"_template", *HYBRID_MATERIAL_TYPES})
+    return sorted(names)
+
+
+def download_product_dir(video_dir, product, content_line="pure_ai", material_type=""):
+    name = str(product or "").strip()
+    if not name:
+        raise ValueError("请选择或输入产品目录")
+    if Path(name).name != name or name in {".", ".."} or "/" in name or "\\" in name:
+        raise ValueError("产品目录只能填写一层文件夹名称")
+    root = video_dir.resolve()
+    if normalize_content_line(content_line) == "hybrid":
+        material_type = str(material_type or "").strip()
+        if material_type not in HYBRID_MATERIAL_TYPES:
+            raise ValueError("请选择混剪钩子或混剪 CTA")
+        root = (root / material_type).resolve()
+    target = (root / name).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("产品目录不能超出视频目录") from exc
+    target.mkdir(parents=True, exist_ok=True)
+    return target
 
 
 def rel_path(path):
@@ -330,44 +418,68 @@ def relative_or_absolute(path, base):
         return str(path)
 
 
-def product_name_for(path, base):
+def classify_path(path, base, content_line="pure_ai"):
     try:
         relative = path.relative_to(base)
     except ValueError:
-        return ""
-    return relative.parts[0] if len(relative.parts) > 1 else ""
+        return {"product": "", "material_type": "", "relative_dir": "", "group_label": "未分类"}
+    parents = relative.parent.parts
+    if normalize_content_line(content_line) == "hybrid":
+        material_type = parents[0] if parents else ""
+        product = parents[1] if len(parents) > 1 else ""
+        if material_type not in HYBRID_MATERIAL_TYPES or not product:
+            return {"product": "", "material_type": "", "relative_dir": "", "group_label": "未分类"}
+        relative_dir = str(Path(material_type) / product)
+        return {
+            "product": product,
+            "material_type": material_type,
+            "relative_dir": relative_dir,
+            "group_label": f"{material_type} / {product}",
+        }
+    product = parents[0] if parents else ""
+    return {
+        "product": product,
+        "material_type": "",
+        "relative_dir": product,
+        "group_label": product or "未分类",
+    }
 
 
-def collect_script_ids(script_dir):
+def product_name_for(path, base, content_line="pure_ai"):
+    return classify_path(path, base, content_line)["product"]
+
+
+def collect_script_ids(script_dir, content_line="pure_ai"):
     global_ids = {}
-    product_ids = {}
+    scoped_ids = {}
     for path in sorted(script_dir.rglob("*.md")):
         video_id = extract_video_id(path.name)
         if video_id and video_id.lower() != "unknown":
-            product = product_name_for(path, script_dir)
+            classification = classify_path(path, script_dir, content_line)
             global_ids.setdefault(video_id, path)
-            if product:
-                product_ids.setdefault((product, video_id), path)
-    return global_ids, product_ids
+            if classification["relative_dir"]:
+                scoped_ids.setdefault((classification["relative_dir"], video_id), path)
+    return global_ids, scoped_ids
 
 
 def script_target_path(script_dir, item):
-    product = str(item.get("product") or "").strip()
-    target_dir = script_dir / product if product else script_dir
+    relative_dir = str(item.get("relative_dir") or item.get("product") or "").strip()
+    target_dir = script_dir / relative_dir if relative_dir else script_dir
     source_name = f"{compact_stem(item.get('path') or item.get('name') or 'video')}.md"
     return target_dir / source_name
 
 
 def country_script_target_path(script_dir, item, country_code):
-    product = str(item.get("product") or "").strip()
-    target_dir = script_dir / product if product else script_dir
+    relative_dir = str(item.get("relative_dir") or item.get("product") or "").strip()
+    target_dir = script_dir / relative_dir if relative_dir else script_dir
     source_name = f"{compact_stem(item.get('path') or item.get('name') or 'video')}.md"
     prefix = re.sub(r"[^A-Z0-9]", "", str(country_code or "UNK").upper()) or "UNK"
     return target_dir / f"{prefix}-{source_name}"
 
 
-def scan_teardown_queue(video_dir, script_dir):
-    script_ids, product_script_ids = collect_script_ids(script_dir)
+def scan_teardown_queue(video_dir, script_dir, content_line="pure_ai"):
+    content_line = normalize_content_line(content_line)
+    script_ids, scoped_script_ids = collect_script_ids(script_dir, content_line)
     videos = []
     pending = []
     skipped = []
@@ -377,24 +489,31 @@ def scan_teardown_queue(video_dir, script_dir):
             continue
         stat = path.stat()
         video_id = extract_video_id(path.name)
-        product = product_name_for(path, video_dir)
+        classification = classify_path(path, video_dir, content_line)
+        product = classification["product"]
         duplicate_path = None
         if video_id:
-            duplicate_path = product_script_ids.get((product, video_id)) or script_ids.get(video_id)
+            duplicate_path = scoped_script_ids.get((classification["relative_dir"], video_id))
+            if content_line == "pure_ai":
+                duplicate_path = duplicate_path or script_ids.get(video_id)
         item = {
             "path": str(path),
             "name": path.name,
             "relative_path": relative_or_absolute(path, video_dir),
             "product": product,
+            **classification,
             "video_id": video_id,
-            "target_path": str(country_script_target_path(script_dir, {"path": str(path), "product": product}, "UNK")),
+            "target_path": str(country_script_target_path(script_dir, {"path": str(path), **classification}, "UNK")),
             "size": stat.st_size,
             "mtime": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
             "duplicate": bool(duplicate_path),
             "duplicate_script": str(duplicate_path) if duplicate_path else "",
         }
         videos.append(item)
-        if duplicate_path:
+        if content_line == "hybrid" and not classification["relative_dir"]:
+            item["classification_error"] = "视频必须位于 混剪-钩子|混剪-CTA/<产品名>/ 目录下"
+            missing_id.append(item)
+        elif duplicate_path:
             skipped.append(item)
         elif video_id:
             pending.append(item)
@@ -405,6 +524,7 @@ def scan_teardown_queue(video_dir, script_dir):
         "id": scan_id,
         "video_dir": str(video_dir),
         "script_dir": str(script_dir),
+        "content_line": content_line,
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "summary": {
             "total": len(videos),
@@ -473,9 +593,9 @@ def list_outputs():
     return runs[:40]
 
 
-def list_scripts_by_product(script_dir=None):
+def list_scripts_by_product(script_dir=None, content_line="pure_ai"):
     if script_dir is None:
-        _, script_dir = local_paths()
+        _, script_dir = content_paths(content_line)
     script_dir = script_dir.resolve()
     if not script_dir.exists():
         return []
@@ -483,12 +603,14 @@ def list_scripts_by_product(script_dir=None):
     for file_path in sorted(script_dir.rglob("*.md")):
         if not file_path.is_file():
             continue
-        product = product_name_for(file_path, script_dir) or "未分类"
+        classification = classify_path(file_path, script_dir, content_line)
+        product = classification["product"] or "未分类"
+        group_label = classification["group_label"]
         group = groups.setdefault(
-            product,
+            group_label,
             {
-                "product": product,
-                "path": str(script_dir / product) if product != "未分类" else str(script_dir),
+                "product": group_label,
+                "path": str(script_dir / classification["relative_dir"]) if classification["relative_dir"] else str(script_dir),
                 "count": 0,
                 "files": [],
             },
@@ -508,13 +630,15 @@ def list_scripts_by_product(script_dir=None):
     return sorted(groups.values(), key=lambda item: (-item["count"], item["product"]))
 
 
-def cached_scripts_by_product(script_dir=None, refresh=False):
+def cached_scripts_by_product(script_dir=None, refresh=False, content_line="pure_ai"):
     if script_dir is None:
-        _, script_dir = local_paths()
+        _, script_dir = content_paths(content_line)
     resolved = Path(script_dir).resolve()
     key = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:16]
     if refresh:
-        payload = refresh_snapshot("script-analysis", key, lambda: {"groups": list_scripts_by_product(resolved)})
+        payload = refresh_snapshot(
+            "script-analysis", key, lambda: {"groups": list_scripts_by_product(resolved, content_line)}
+        )
     else:
         payload = cached_or_empty("script-analysis", key, lambda: {"groups": []})
     return payload.get("groups") or []
@@ -761,6 +885,87 @@ def run_queue_job(job_id, items, output_dir, script_dir):
         )
 
 
+def run_url_download_job(job_id, urls, video_dir, script_dir, product_dir, content_line="pure_ai"):
+    global LATEST_SCAN_ID
+    set_job(
+        job_id,
+        status="running",
+        started_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    )
+    downloaded = 0
+    skipped = 0
+    failures = 0
+    outputs = []
+    for index, url in enumerate(urls, start=1):
+        append_job_log(job_id, f"[{index}/{len(urls)}] 开始下载: {url}")
+        with JOBS_LOCK:
+            JOBS[job_id]["items"][index - 1]["status"] = "running"
+        last_error = None
+        for attempt in range(1, 4):
+            try:
+                status, target, video_id = url_downloader.download_one(url, product_dir)
+                break
+            except Exception as exc:
+                last_error = exc
+                if attempt < 3:
+                    append_job_log(job_id, f"[{index}/{len(urls)}] 第 {attempt} 次失败，准备重试: {exc}")
+                    time.sleep(1)
+        else:
+            failures += 1
+            status = "failed"
+            target = None
+            video_id = ""
+            append_job_log(job_id, f"[{index}/{len(urls)}] 下载失败: {last_error}")
+
+        if status == "downloaded":
+            downloaded += 1
+            outputs.append(str(target))
+            append_job_log(job_id, f"[{index}/{len(urls)}] 下载完成: {target.name}")
+        elif status == "skipped":
+            skipped += 1
+            outputs.append(str(target))
+            append_job_log(job_id, f"[{index}/{len(urls)}] 视频已存在，跳过: {target.name}")
+
+        with JOBS_LOCK:
+            item = JOBS[job_id]["items"][index - 1]
+            item.update(status=status, video_id=video_id, path=str(target) if target else "")
+            JOBS[job_id].update(
+                completed=downloaded + skipped,
+                downloaded=downloaded,
+                skipped=skipped,
+                failed=failures,
+                final_outputs=list(outputs),
+            )
+
+    try:
+        scan = scan_teardown_queue(video_dir, script_dir, content_line)
+        LATEST_SCAN_ID = scan["id"]
+    except Exception as exc:
+        append_job_log(job_id, f"下载结束，但刷新待拆解队列失败: {exc}")
+        set_job(
+            job_id,
+            status="failed",
+            error=str(exc),
+            ended_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            completed=downloaded + skipped,
+            downloaded=downloaded,
+            skipped=skipped,
+            failed=failures + 1,
+            final_outputs=outputs,
+        )
+        return
+    set_job(
+        job_id,
+        status="completed" if failures == 0 else "failed",
+        return_code=0 if failures == 0 else 1,
+        ended_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        completed=downloaded + skipped,
+        downloaded=downloaded,
+        skipped=skipped,
+        failed=failures,
+        final_outputs=outputs,
+        latest_scan_id=scan["id"],
+    )
 class AgentHandler(SimpleHTTPRequestHandler):
     server_version = "ScriptAnalysis/1.0"
 
@@ -802,7 +1007,11 @@ class AgentHandler(SimpleHTTPRequestHandler):
                 self.send_json({"status": "ok"})
                 return
             if path == "/api/status":
-                default_video_dir, default_script_dir = local_paths()
+                content_line = normalize_content_line((query.get("content_line") or ["pure_ai"])[0])
+                default_video_dir, default_script_dir = content_paths(content_line)
+                latest_scan = SCANS.get(LATEST_SCAN_ID, {})
+                if latest_scan.get("content_line") != content_line:
+                    latest_scan = {}
                 self.send_json(
                     {
                         "skill_root": str(SKILL_ROOT),
@@ -812,12 +1021,14 @@ class AgentHandler(SimpleHTTPRequestHandler):
                             "settings": file_info(SETTINGS_PATH),
                         },
                         "uploads": list_uploads(),
-                        "scripts_by_product": cached_scripts_by_product(),
+                        "scripts_by_product": cached_scripts_by_product(content_line=content_line),
                         "queue_defaults": {
+                            "content_line": content_line,
                             "video_dir": str(default_video_dir),
                             "script_dir": str(default_script_dir),
+                            "products": list_product_names(),
                         },
-                        "latest_scan": SCANS.get(LATEST_SCAN_ID, {}),
+                        "latest_scan": latest_scan,
                         "active_job": get_active_job(),
                     }
                 )
@@ -844,7 +1055,9 @@ class AgentHandler(SimpleHTTPRequestHandler):
                 if not job:
                     self.send_json({"error": "任务不存在"}, 404)
                     return
-                job["scripts_by_product"] = cached_scripts_by_product()
+                job["scripts_by_product"] = cached_scripts_by_product(
+                    content_line=job.get("content_line", "pure_ai")
+                )
                 self.send_json(job)
                 return
             if path == "/api/file":
@@ -883,13 +1096,58 @@ class AgentHandler(SimpleHTTPRequestHandler):
                 return
             if path == "/api/scan-queue":
                 payload = self.read_json_body()
-                default_video_dir, default_script_dir = local_paths()
-                video_dir = resolve_existing_path(payload.get("video_dir"), default_video_dir, "视频目录")
-                script_dir = resolve_existing_path(payload.get("script_dir"), default_script_dir, "脚本目录")
-                scan = scan_teardown_queue(video_dir, script_dir)
-                cached_scripts_by_product(script_dir, refresh=True)
+                content_line = normalize_content_line(payload.get("content_line"))
+                video_dir, script_dir = content_paths(content_line)
+                video_dir.mkdir(parents=True, exist_ok=True)
+                script_dir.mkdir(parents=True, exist_ok=True)
+                scan = scan_teardown_queue(video_dir, script_dir, content_line)
+                cached_scripts_by_product(script_dir, refresh=True, content_line=content_line)
                 LATEST_SCAN_ID = scan["id"]
                 self.send_json(scan)
+                return
+            if path == "/api/url-download":
+                payload = self.read_json_body()
+                if get_active_job():
+                    raise ValueError("已有任务正在运行，请等待完成后再下载")
+                content_line = normalize_content_line(payload.get("content_line"))
+                video_dir, script_dir = content_paths(content_line)
+                video_dir.mkdir(parents=True, exist_ok=True)
+                script_dir.mkdir(parents=True, exist_ok=True)
+                urls = url_downloader.extract_tiktok_urls(payload.get("urls"))
+                if not urls:
+                    raise ValueError("请粘贴标准 TikTok 视频 URL，每行一个")
+                product_dir = download_product_dir(
+                    video_dir,
+                    payload.get("product"),
+                    content_line,
+                    payload.get("material_type"),
+                )
+                job_id = uuid.uuid4().hex[:12]
+                LATEST_JOB_ID = job_id
+                set_job(
+                    job_id,
+                    id=job_id,
+                    type="url_download",
+                    status="queued",
+                    total=len(urls),
+                    completed=0,
+                    downloaded=0,
+                    skipped=0,
+                    failed=0,
+                    product=product_dir.name,
+                    content_line=content_line,
+                    material_type=str(payload.get("material_type") or ""),
+                    output_dir=str(product_dir),
+                    items=[{"url": url, "name": url, "status": "queued"} for url in urls],
+                    logs=[],
+                )
+                thread = threading.Thread(
+                    target=run_url_download_job,
+                    args=(job_id, urls, video_dir, script_dir, product_dir, content_line),
+                    daemon=True,
+                )
+                thread.start()
+                self.send_json(get_job(job_id), 202)
                 return
             if path == "/api/run":
                 payload = self.read_json_body()
@@ -935,6 +1193,7 @@ class AgentHandler(SimpleHTTPRequestHandler):
                     id=job_id,
                     status="queued",
                     type="queue",
+                    content_line=scan.get("content_line", "pure_ai"),
                     scan_id=scan_id,
                     total=len(pending_items),
                     completed=0,
@@ -961,12 +1220,14 @@ class AgentHandler(SimpleHTTPRequestHandler):
                 return
             if path == "/api/open":
                 payload = self.read_json_body()
-                target = resolve_skill_path_for_open(payload.get("path") or "outputs")
+                _, target = content_paths(payload.get("content_line"))
+                if not target.exists():
+                    raise ValueError(f"脚本目录不存在: {target}")
                 result = subprocess.run(["open", str(target)], capture_output=True, text=True, timeout=10)
                 if result.returncode != 0:
                     self.send_json({"error": (result.stderr or result.stdout or "打开目录失败").strip()}, 500)
                     return
-                self.send_json({"ok": True, "path": rel_path(target)})
+                self.send_json({"ok": True, "path": str(target)})
                 return
             self.send_json({"error": "未知接口"}, 404)
         except Exception as exc:

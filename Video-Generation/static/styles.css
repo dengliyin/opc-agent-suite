@@ -382,11 +382,48 @@ h2 {
 }
 
 .product-scripts,
+.product-countries,
 .batch-list,
 .batch-scripts {
   display: grid;
   gap: 7px;
   min-width: 0;
+}
+
+.country-group {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+  padding: 7px;
+}
+
+.country-group.collapsed {
+  background: var(--surface);
+}
+
+.country-group-head {
+  display: grid;
+  grid-template-columns: 24px 22px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.country-group-head strong,
+.country-group-head span {
+  display: block;
+  line-height: 1.35;
+}
+
+.country-group-head strong {
+  font-size: 12px;
+}
+
+.country-group-head span {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .product-reference-picker {
@@ -510,6 +547,7 @@ h2 {
 }
 
 .product-group.expanded > .product-group-head .collapse-toggle,
+.country-group.expanded > .country-group-head .collapse-toggle,
 .batch-group.expanded > .batch-head .collapse-toggle {
   border-color: var(--line-strong);
   background: var(--text);

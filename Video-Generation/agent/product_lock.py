@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 
-PRODUCT_LOCK_VERSION = 5
+PRODUCT_LOCK_VERSION = 6
 
 
 def build_storyboard_product_lock_prompt(

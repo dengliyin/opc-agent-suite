@@ -1,14 +1,10 @@
 # 片段合成智能体
 
-独立、完全离线的产品视频片段扫描与拼接工具。
+片段产出智能体内置的完全离线产品视频扫描与拼接工具。
 
 ## 启动
 
-```bash
-bash scripts/start_web.sh
-```
-
-访问 `http://127.0.0.1:9998/`。
+启动 9995 后，从片段产出首页的“片段合成”入口进入，地址为 `http://127.0.0.1:9995/assembly`。
 
 ## 工作流
 
@@ -35,8 +31,8 @@ $OPC_VAULT_ROOT/wiki/视频/成品视频/产品/脚本同名.mp4
 
 ## Agent 职责
 
-- 片段产出 Agent 负责生成片段、图片并导出到待拼接目录。
-- 片段合成 Agent 负责扫描、拼接、成品校验和已拼接素材清理。
+- 9995 的片段生产工作台负责生成片段、图片并导出到待拼接目录。
+- 9995 的片段合成工作台负责扫描、拼接、成品校验和已拼接素材清理。
 - 清理前使用 FFprobe 确认成品有有效时长、视频轨和音频轨，并要求用户勾选“成品可以使用”。
 - 清理仅删除待拼接脚本目录中的片段、图片和 `.product-lock.json`；保留 Markdown、`.exported.json` 和成品 MP4。
 - 清理后导出记录写入 `upload_status: "已清理"` 和 `media_cleaned: true`。
@@ -46,7 +42,7 @@ $OPC_VAULT_ROOT/wiki/视频/成品视频/产品/脚本同名.mp4
 - 拼接与字幕生成不调用远程模型或 API。
 - 页面不加载 CDN、远程字体或远程图片。
 - 不通过 `npx`、`pnpm dlx` 或包管理器下载运行依赖。
-- Node、FFmpeg、FFprobe、HyperFrames、Chrome 和 GSAP 均由本目录提供。
+- Node、FFmpeg、FFprobe、HyperFrames、Chrome 和 GSAP 均由 9995 镜像或本目录提供。
 - 卡拉 OK 字幕使用随应用安装并缓存的 `uvx`、`mlx-whisper`、Whisper 模型和开源字体；首次使用前运行一次 `bash scripts/install_caption_runtime.sh` 完成本机安装。
 - HyperFrames 的更新检查、自动安装和遥测均关闭。
 

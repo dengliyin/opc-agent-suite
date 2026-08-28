@@ -13,6 +13,7 @@ const state = {
   showArchived: false,
   expansionMode: "",
   expandedProducts: new Set(),
+  expandedCountries: new Set(),
   selectedReferenceByProduct: new Map(),
 };
 
@@ -252,6 +253,26 @@ function renderCatalog() {
     });
   });
 
+  $$(".country-toggle").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      toggleCountryExpansion(button.dataset.countryKey || "");
+      render();
+    });
+  });
+
+  $$(".country-select").forEach((checkbox) => {
+    checkbox.addEventListener("click", (event) => event.stopPropagation());
+    checkbox.addEventListener("change", () => {
+      const countryKey = checkbox.dataset.countryKey || "";
+      const country = groupVisibleScripts(visibleScripts)
+        .flatMap((product) => product.countries)
+        .find((item) => item.key === countryKey);
+      setPathSelection((country?.scripts || []).map((script) => script.md_path), checkbox.checked);
+      render();
+    });
+  });
+
   $$(".product-reference-select").forEach((select) => {
     select.addEventListener("change", () => {
       const productName = select.dataset.productName || "";
@@ -328,7 +349,29 @@ function renderProductGroup(product, scripts, runningContexts, scriptStatuses) {
         </div>
       </div>
       ${expanded ? renderProductReferencePicker(product.name, references, selectedReference) : ""}
-      ${expanded ? `<div class="product-scripts">${product.scripts.map((script) => renderScriptCard(script, scripts, runningContexts, scriptStatuses)).join("")}</div>` : ""}
+      ${expanded ? `<div class="product-countries">${product.countries.map((country) => renderCountryGroup(country, scripts, runningContexts, scriptStatuses)).join("")}</div>` : ""}
+    </div>
+  `;
+}
+
+function renderCountryGroup(country, scripts, runningContexts, scriptStatuses) {
+  const paths = country.scripts.map((script) => script.md_path);
+  const checked = paths.length > 0 && paths.every((path) => state.selectedScriptPaths.has(path));
+  const selected = paths.filter((path) => state.selectedScriptPaths.has(path)).length;
+  const expanded = isCountryExpanded(country.key);
+  return `
+    <div class="country-group ${expanded ? "expanded" : "collapsed"}">
+      <div class="country-group-head">
+        <button class="collapse-toggle country-toggle" type="button" data-country-key="${escapeHtml(country.key)}" aria-expanded="${expanded ? "true" : "false"}" aria-label="${expanded ? "收起国家" : "展开国家"}">${expanded ? "▾" : "▸"}</button>
+        <label class="miniCheck" title="选择该国家下的全部脚本">
+          <input class="country-select" type="checkbox" data-country-key="${escapeHtml(country.key)}" ${checked ? "checked" : ""} />
+        </label>
+        <div>
+          <strong>${escapeHtml(country.label)}</strong>
+          <span>${country.scripts.length} 脚本 · ${country.segments} 片段 · 已选 ${selected}</span>
+        </div>
+      </div>
+      ${expanded ? `<div class="product-scripts">${country.scripts.map((script) => renderScriptCard(script, scripts, runningContexts, scriptStatuses)).join("")}</div>` : ""}
     </div>
   `;
 }
@@ -413,9 +456,11 @@ function ensureInitialExpansion(visibleScripts) {
   const mode = expansionModeKey();
   if (state.expansionMode === mode) return;
   state.expandedProducts.clear();
+  state.expandedCountries.clear();
   const script = selectedVisibleScript(visibleScripts);
   if (script) {
     state.expandedProducts.add(productExpansionKey(scriptGroupKey(script)));
+    state.expandedCountries.add(countryExpansionKey(scriptGroupKey(script), script.country_code));
   }
   state.expansionMode = mode;
 }
@@ -437,6 +482,23 @@ function toggleProductExpansion(productName) {
   }
 }
 
+function countryExpansionKey(productKey, countryCode) {
+  return `${productKey}::${countryCode || "unmarked"}`;
+}
+
+function isCountryExpanded(countryKey) {
+  return state.expandedCountries.has(String(countryKey || ""));
+}
+
+function toggleCountryExpansion(countryKey) {
+  const key = String(countryKey || "");
+  if (state.expandedCountries.has(key)) {
+    state.expandedCountries.delete(key);
+  } else {
+    state.expandedCountries.add(key);
+  }
+}
+
 function groupVisibleScripts(scripts) {
   const products = [];
   const productMap = new Map();
@@ -449,6 +511,7 @@ function groupVisibleScripts(scripts) {
         name: script.product_name,
         label: script.script_type ? `${script.script_type} / ${script.product_name}` : script.product_name,
         scripts: [],
+        countries: [],
         segments: 0,
       };
       productMap.set(key, product);
@@ -456,7 +519,26 @@ function groupVisibleScripts(scripts) {
     }
     product.scripts.push(script);
     product.segments += (script.segments || []).length;
+    const countryCode = script.country_code || "";
+    let country = product.countries.find((item) => item.code === countryCode);
+    if (!country) {
+      country = {
+        key: countryExpansionKey(key, countryCode),
+        code: countryCode,
+        label: countryCode || "未标注国家",
+        scripts: [],
+        segments: 0,
+      };
+      product.countries.push(country);
+    }
+    country.scripts.push(script);
+    country.segments += (script.segments || []).length;
   });
+  products.forEach((product) => product.countries.sort((left, right) => {
+    if (!left.code) return 1;
+    if (!right.code) return -1;
+    return left.code.localeCompare(right.code);
+  }));
   return products;
 }
 
@@ -1430,6 +1512,7 @@ $("#archiveToggleButton")?.addEventListener("click", () => {
   state.showArchived = !state.showArchived;
   state.expansionMode = "";
   state.expandedProducts.clear();
+  state.expandedCountries.clear();
   state.selectedScriptPaths.clear();
   render();
 });

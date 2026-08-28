@@ -94,6 +94,19 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(video_dir, Path("/global/videos"))
         self.assertEqual(script_dir, Path("/global/scripts"))
 
+    def test_hybrid_business_paths_are_separate(self):
+        with patch.dict(
+            self.web_app.os.environ,
+            {
+                "HYBRID_VIDEO_TEARDOWN_INPUT_ROOT": "/hybrid/videos",
+                "HYBRID_VIDEO_TEARDOWN_OUTPUT_ROOT": "/hybrid/scripts",
+            },
+        ):
+            video_dir, script_dir = self.web_app.content_paths("hybrid")
+
+        self.assertEqual(video_dir, Path("/hybrid/videos"))
+        self.assertEqual(script_dir, Path("/hybrid/scripts"))
+
     def test_long_video_names_use_short_queue_and_output_names(self):
         video_id = "7666010963795102989"
         name = f"digimon634-{video_id}-" + "very_long_title_" * 20 + ".mp4"

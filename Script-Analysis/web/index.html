@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>视频拆解智能体</title>
-    <link rel="stylesheet" href="/app.css?v=cartesia-20260701" />
+    <link rel="stylesheet" href="/app.css?v=four-stage-20260827" />
   </head>
   <body>
     <header class="topbar">
@@ -19,21 +19,51 @@
     </header>
 
     <main class="shell">
-      <section class="panel left-panel">
+      <section class="panel collection-panel">
         <div class="panel-head">
-          <h2>视频队列</h2>
+          <h2>视频采集</h2>
+        </div>
+
+        <div class="panel-body">
+          <div id="urlDownloadBlock" class="url-download-block">
+            <div class="stage-note">粘贴 TikTok 视频链接，下载到对应内容线路和产品目录。</div>
+            <div class="field-block">
+              <label for="contentLineInput">内容线路</label>
+              <select id="contentLineInput">
+                <option value="pure_ai">纯 AI 视频</option>
+                <option value="hybrid">AI＋实拍混剪</option>
+              </select>
+            </div>
+            <div id="materialTypeBlock" class="field-block" hidden>
+              <label for="materialTypeInput">混剪参考类型</label>
+              <select id="materialTypeInput">
+                <option value="混剪-钩子">混剪钩子</option>
+                <option value="混剪-CTA">混剪 CTA</option>
+              </select>
+            </div>
+            <div class="field-block">
+              <label for="downloadProductInput">保存到产品目录</label>
+              <select id="downloadProductInput">
+                <option value="">正在读取产品目录...</option>
+              </select>
+            </div>
+            <div class="field-block">
+              <label for="directUrlsInput">TikTok 视频 URL</label>
+              <textarea id="directUrlsInput" placeholder="每行一个标准 TikTok 视频链接"></textarea>
+            </div>
+            <button id="downloadUrlsBtn" class="primary wide">开始下载</button>
+            <div class="process-note">仅下载视频；完成后自动刷新待拆解队列，不会自动调用模型。</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel queue-panel">
+        <div class="panel-head">
+          <h2>扫描拆解视频</h2>
           <button id="openConfigBtn" class="secondary">编辑提示词</button>
         </div>
 
         <div class="panel-body">
-          <div class="field-block">
-            <label for="videoDirInput">视频目录</label>
-            <input id="videoDirInput" type="text" />
-          </div>
-          <div class="field-block">
-            <label for="scriptDirInput">脚本目录</label>
-            <input id="scriptDirInput" type="text" />
-          </div>
 
           <div class="field-block">
             <label for="batchLimitInput">本次拆解条数</label>
@@ -70,7 +100,7 @@
         </div>
       </section>
 
-      <section class="panel center-panel">
+      <section class="panel run-panel">
         <div class="panel-head">
           <h2>拆解运行</h2>
           <span id="jobStatus" class="badge idle">待机</span>
@@ -79,21 +109,21 @@
           <div id="progressPanel" class="progress-panel" hidden></div>
           <pre id="logPane" class="log-pane">等待任务...</pre>
 
-          <div class="panel-head compact">
-            <h2>配置</h2>
-            <div class="actions">
-              <button id="saveSettingsBtn" class="secondary">保存配置</button>
+          <details class="settings-block">
+            <summary>模型配置</summary>
+            <div class="settings-content">
+              <div class="settings-grid">
+                <label>模型<input id="modelInput" type="text" /></label>
+                <label>Base URL<input id="baseUrlInput" type="text" /></label>
+                <label>API Key<input id="apiKeyInput" type="password" placeholder="留空则不修改" /></label>
+              </div>
+              <button id="saveSettingsBtn" class="secondary wide">保存配置</button>
             </div>
-          </div>
-          <div class="settings-grid">
-            <label>模型<input id="modelInput" type="text" /></label>
-            <label>Base URL<input id="baseUrlInput" type="text" /></label>
-            <label>API Key<input id="apiKeyInput" type="password" placeholder="留空则不修改" /></label>
-          </div>
+          </details>
         </div>
       </section>
 
-      <section class="panel right-panel">
+      <section class="panel result-panel">
         <div class="panel-head">
           <h2>脚本结果</h2>
           <button id="openOutputBtn" class="secondary">打开目录</button>
@@ -115,6 +145,6 @@
       </section>
     </div>
 
-    <script src="/app.js"></script>
+    <script src="/app.js?v=four-stage-20260827"></script>
   </body>
 </html>

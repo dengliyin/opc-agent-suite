@@ -34,21 +34,19 @@ def public_service_url(env_name: str, default: str) -> str:
 
 def build_services() -> dict[str, dict]:
     defaults = {
-        "collect": ("OPC_HOT_VIDEO_AGENT_URL", "http://127.0.0.1:9991/"),
         "analyze": ("OPC_VIDEO_TEARDOWN_AGENT_URL", "http://127.0.0.1:9992/"),
         "script": ("OPC_SCRIPT_PRODUCTION_AGENT_URL", "http://127.0.0.1:9993/"),
         "adapt": ("OPC_SCRIPT_ADAPTATION_AGENT_URL", "http://127.0.0.1:9994/"),
         "assemble": ("OPC_VIDEO_OUTPUT_AGENT_URL", "http://127.0.0.1:9995/"),
         "finished": ("OPC_FINISHED_VIDEO_MANAGER_URL", "http://127.0.0.1:9996/"),
         "rewrite": ("OPC_PRODUCT_SCRIPT_REWRITE_URL", "http://127.0.0.1:9997/"),
-        "compose": ("OPC_VIDEO_ASSEMBLY_AGENT_URL", "http://127.0.0.1:9998/"),
         "hybrid_adapt": ("OPC_HYBRID_SCRIPT_ADAPTATION_AGENT_URL", "http://127.0.0.1:9999/"),
         "hybrid_mix": ("OPC_HYBRID_VIDEO_MIXER_AGENT_URL", "http://127.0.0.1:10000/"),
-        "hybrid_collect": ("OPC_HYBRID_VIDEO_COLLECTION_AGENT_URL", "http://127.0.0.1:10001/"),
         "hybrid_analyze": ("OPC_HYBRID_SCRIPT_ANALYSIS_AGENT_URL", "http://127.0.0.1:10002/"),
         "hybrid_script": ("OPC_HYBRID_SCRIPT_GENERATION_AGENT_URL", "http://127.0.0.1:10003/"),
         "hybrid_voice": ("OPC_HYBRID_AUDIO_GENERATION_AGENT_URL", "http://127.0.0.1:10004/"),
         "auto_publish": ("OPC_AUTO_PUBLISH_PIPELINE_URL", "http://127.0.0.1:10005/"),
+        "unified_script": ("OPC_UNIFIED_SCRIPT_AGENT_URL", "http://127.0.0.1:10006/"),
     }
     urls = {
         key: service_url(env_name, default)
@@ -59,14 +57,9 @@ def build_services() -> dict[str, dict]:
         for key, (env_name, default) in defaults.items()
     }
     services = {
-        "collect": {
-            "label": "视频采集",
-            "description": "采集 FastMoss 商品关联视频并下载 TikTok 素材",
-            "url": urls["collect"],
-        },
         "analyze": {
-            "label": "脚本解析",
-            "description": "把本地短视频拆解成结构化 Markdown",
+            "label": "视频下载与脚本解析",
+            "description": "按内容线路下载 TikTok 视频并拆解成结构化 Markdown",
             "url": urls["analyze"],
         },
         "script": {
@@ -81,7 +74,7 @@ def build_services() -> dict[str, dict]:
         },
         "assemble": {
             "label": "片段产出",
-            "description": "生成人物图、故事版和视频片段",
+            "description": "生成人物图、故事版和视频片段，并进入片段合成",
             "url": urls["assemble"],
         },
         "finished": {
@@ -94,11 +87,6 @@ def build_services() -> dict[str, dict]:
             "description": "把爆款脚本改写成目标产品版本",
             "url": urls["rewrite"],
         },
-        "compose": {
-            "label": "片段合成",
-            "description": "离线拼接片段、校验成品并清理已用素材",
-            "url": urls["compose"],
-        },
         "hybrid_adapt": {
             "label": "钩子与 CTA 脚本适配",
             "description": "把复刻裂变后的钩子与 CTA 脚本适配成视频模型片段指令",
@@ -108,11 +96,6 @@ def build_services() -> dict[str, dict]:
             "label": "AI＋实拍混剪",
             "description": "按产品音频编排 AI 首尾片段与展示、使用实拍素材",
             "url": urls["hybrid_mix"],
-        },
-        "hybrid_collect": {
-            "label": "混剪参考视频采集",
-            "description": "按类型和产品下载钩子或 CTA 参考视频",
-            "url": urls["hybrid_collect"],
         },
         "hybrid_analyze": {
             "label": "混剪参考视频解析",
@@ -134,6 +117,11 @@ def build_services() -> dict[str, dict]:
             "description": "从已复刻脚本独立完成裂变、适配、片段、合成和串行发布",
             "url": urls["auto_publish"],
         },
+        "unified_script": {
+            "label": "脚本创作与适配",
+            "description": "按三条线路直接生成 Omni 适配稿，不保存普通中间脚本",
+            "url": urls["unified_script"],
+        },
     }
     for service_id, service in services.items():
         service["url"] = public_urls[service_id]
@@ -148,29 +136,29 @@ SERVICES = build_services()
 
 GLOBAL_PATH_FIELDS = (
     ("OPC_VAULT_ROOT", "资料库根目录", "所有 Agent 共用的内容资料库根目录", "/path/to/Obsidian Vault"),
-    ("VIDEO_TEARDOWN_INPUT_ROOT", "来源素材", "9991 写入、9992 扫描的爆款视频目录", "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/01来源素材"),
-    ("VIDEO_TEARDOWN_OUTPUT_ROOT", "参考脚本", "9992 与 9997 写入、9993 读取的参考脚本目录", "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/02参考脚本"),
+    ("VIDEO_TEARDOWN_INPUT_ROOT", "来源素材", "9992 下载并扫描的纯 AI 视频目录", "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/01来源素材"),
+    ("VIDEO_TEARDOWN_OUTPUT_ROOT", "参考脚本", "9992 写入，10006 的线路 1、线路 2 读取", "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/02参考脚本"),
     ("PRODUCT_SCRIPT_ROOT", "产品脚本", "9993 保存、9994 读取的正式产品脚本目录", "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/03产品脚本"),
-    ("HYBRID_VIDEO_TEARDOWN_INPUT_ROOT", "混剪参考视频", "10002 扫描10001下载结果的目录", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/01参考视频"),
-    ("HYBRID_VIDEO_TEARDOWN_OUTPUT_ROOT", "混剪解析脚本", "10002 保存分类解析 Markdown 的目录", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/02解析脚本"),
-    ("HYBRID_SCRIPT_GENERATION_INPUT_ROOT", "混剪解析脚本", "10003 扫描10002解析结果的目录", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/02解析脚本"),
+    ("HYBRID_VIDEO_TEARDOWN_INPUT_ROOT", "混剪参考视频", "9992 下载并扫描钩子或 CTA 参考视频的目录", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/01参考视频"),
+    ("HYBRID_VIDEO_TEARDOWN_OUTPUT_ROOT", "混剪解析脚本", "9992 保存分类解析 Markdown 的目录", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/02解析脚本"),
+    ("HYBRID_SCRIPT_GENERATION_INPUT_ROOT", "混剪解析脚本", "10003 与 10006 线路 3 扫描解析结果的目录", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/02解析脚本"),
     ("HYBRID_SCRIPT_GENERATION_OUTPUT_ROOT", "复刻裂变脚本", "10003 保存复刻稿与裂变稿的目录", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/03复刻裂变脚本"),
-    ("HYBRID_OMNI_SCRIPT_ROOT", "混剪 Omni 脚本输入", "9995 读取的混剪钩子与 CTA Omni 适配脚本目录", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/04适配脚本/omni"),
+    ("HYBRID_OMNI_SCRIPT_ROOT", "混剪 Omni 脚本输入", "10006 线路 3 写入、9995 读取的混剪 Omni 适配脚本目录", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/04适配脚本/omni"),
     ("HYBRID_AI_CLIP_ROOT", "混剪 AI 片段", "10000 读取的模型/类型/产品 AI 钩子与 CTA 片段目录", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/05AI片段"),
     ("HYBRID_OMNI_VIDEO_OUTPUT_ROOT", "混剪 Omni 视频输出", "9995 保存混剪钩子与 CTA Omni 片段的目录", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/05AI片段/omni"),
     ("HYBRID_AUDIO_COPY_ROOT", "混剪音频文案", "10004 扫描可生成配音的 Markdown 文案目录", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/06音频文案"),
     ("HYBRID_PRODUCT_AUDIO_ROOT", "产品介绍音频", "10000 读取的产品介绍音频目录，按产品名分组", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/06音频文件"),
     ("HYBRID_REAL_FOOTAGE_ROOT", "产品实拍素材", "10000 读取的产品/展示|使用实拍素材目录", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/07实拍素材"),
     ("HYBRID_MIX_WORK_ROOT", "混剪工作区", "10000 保存编排方案、渲染中间文件和素材使用历史", "${OPC_VAULT_ROOT}/wiki/视频/AI实拍混剪/08混剪工作区"),
-    ("SCRIPT_ROOT", "Omni 脚本输入", "9995 读取的 Omni 适配脚本目录", "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/04适配脚本/omni"),
+    ("SCRIPT_ROOT", "Omni 脚本输入", "10006 线路 1、线路 2 写入，9995 读取", "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/04适配脚本/omni"),
     ("GROK_SCRIPT_ROOT", "Grok 脚本输入", "9995 读取的 Grok 适配脚本目录", "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/04适配脚本/grok"),
     ("REFERENCE_ROOT", "产品参考图", "9995 读取的产品底图目录", "${OPC_VAULT_ROOT}/wiki/产品/产品底图"),
     ("VIDEO_OUTPUT_ROOT", "Omni 视频输出", "9995 保存 Omni 视频片段的目录", "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/05AI片段/omni"),
     ("GROK_VIDEO_OUTPUT_ROOT", "Grok 视频输出", "9995 保存 Grok 视频片段的目录", "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/05AI片段/grok"),
-    ("VIDEO_ASSEMBLY_PENDING_ROOT", "合成工作区", "9995 导出、9998 扫描待拼接内容的目录", "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/06合成工作区"),
-    ("VIDEO_ASSEMBLY_OUTPUT_ROOT", "成品视频", "9998 输出、9996 管理的统一产品成品目录", "${OPC_VAULT_ROOT}/wiki/视频/成品视频"),
+    ("VIDEO_ASSEMBLY_PENDING_ROOT", "合成工作区", "9995 导出并扫描待拼接内容的目录", "${OPC_VAULT_ROOT}/wiki/视频/纯AI视频/06合成工作区"),
+    ("VIDEO_ASSEMBLY_OUTPUT_ROOT", "成品视频", "9995 合成输出、9996 管理的统一产品成品目录", "${OPC_VAULT_ROOT}/wiki/视频/成品视频"),
     ("VIDEO_TITLE_LIBRARY_ROOT", "视频标题库", "9996 读取的全线路共享标题与标签目录", "${OPC_VAULT_ROOT}/wiki/视频/成品视频/视频标题库"),
-    ("SCRIPT_MISTAKE_BOOK_ROOT", "脚本错题本", "9993 与 10003 共享的产品级脚本纠错知识库", "${OPC_VAULT_ROOT}/wiki/视频/共享知识库/脚本错题本"),
+    ("SCRIPT_MISTAKE_BOOK_ROOT", "脚本错题本", "10006 与旧脚本 Agent 共享的产品级纠错知识库", "${OPC_VAULT_ROOT}/wiki/视频/共享知识库/脚本错题本"),
 )
 
 GLOBAL_PATH_GROUPS = (
@@ -194,14 +182,14 @@ GLOBAL_PATH_GROUPS = (
     },
     {
         "id": "script_knowledge",
-        "label": "9993 / 10003 · 脚本知识库",
-        "description": "两条脚本生产线路共享，按产品名读取同名错题本 Markdown",
+        "label": "10006 · 脚本创作与适配",
+        "description": "三条线路共享，按目标产品名读取同名错题本 Markdown",
         "keys": ("SCRIPT_MISTAKE_BOOK_ROOT",),
     },
     {
-        "id": "10002",
-        "label": "10002 · 混剪参考视频解析",
-        "description": "保持混剪-钩子|混剪-CTA/<产品名>目录层级",
+        "id": "9992_hybrid",
+        "label": "9992 · 混剪参考视频下载与解析",
+        "description": "保持混剪-钩子|混剪-CTA/<产品名>目录层级，并供 10006 线路 3 读取",
         "keys": ("HYBRID_VIDEO_TEARDOWN_INPUT_ROOT", "HYBRID_VIDEO_TEARDOWN_OUTPUT_ROOT"),
     },
     {
@@ -212,8 +200,8 @@ GLOBAL_PATH_GROUPS = (
     },
     {
         "id": "9995",
-        "label": "9995 · 片段产出",
-        "description": "纯 AI Omni/Grok 与混剪钩子、CTA Omni 的独立输入输出路径",
+        "label": "10006 → 9995 · 适配稿与片段产出",
+        "description": "10006 直接写入 Omni 适配稿，9995 读取后完成纯 AI 与混剪片段生产",
         "keys": (
             "SCRIPT_ROOT",
             "GROK_SCRIPT_ROOT",
@@ -222,12 +210,14 @@ GLOBAL_PATH_GROUPS = (
             "VIDEO_OUTPUT_ROOT",
             "GROK_VIDEO_OUTPUT_ROOT",
             "HYBRID_OMNI_VIDEO_OUTPUT_ROOT",
+            "VIDEO_ASSEMBLY_PENDING_ROOT",
+            "VIDEO_ASSEMBLY_OUTPUT_ROOT",
         ),
     },
     {
         "id": "10000",
         "label": "10000 · AI＋实拍混剪",
-        "description": "读取 AI 片段、产品音频和展示/使用实拍池；成片复用 9998 的统一输出目录",
+        "description": "读取 AI 片段、产品音频和展示/使用实拍池；成片复用统一输出目录",
         "keys": ("HYBRID_AI_CLIP_ROOT", "HYBRID_PRODUCT_AUDIO_ROOT", "HYBRID_REAL_FOOTAGE_ROOT", "HYBRID_MIX_WORK_ROOT"),
     },
     {
@@ -237,26 +227,19 @@ GLOBAL_PATH_GROUPS = (
         "keys": ("HYBRID_AUDIO_COPY_ROOT",),
     },
     {
-        "id": "9998",
-        "label": "9998 · 片段合成",
-        "description": "待拼接视频片段的扫描目录和最终成品输出目录",
-        "keys": ("VIDEO_ASSEMBLY_PENDING_ROOT", "VIDEO_ASSEMBLY_OUTPUT_ROOT"),
-    },
-    {
         "id": "9996",
         "label": "9996 · 成品管理",
-        "description": "标题库由所有成品视频线路共享；成品目录复用 9998 的输出路径",
+        "description": "标题库由所有成品视频线路共享；成品目录复用 9995 的合成输出路径",
         "keys": ("VIDEO_TITLE_LIBRARY_ROOT",),
     },
 )
 
 OTHER_AGENT_PATH_NOTES = (
-    {"port": "9991", "label": "视频采集", "note": "输出复用 9992 的“来源素材”路径"},
     {"port": "9994", "label": "脚本适配", "note": "读取 9993 产品脚本，写入 04适配脚本/{veo,omni,grok}"},
     {"port": "9997", "label": "产品脚本改写", "note": "输入输出复用 9992 的“参考脚本”路径"},
     {"port": "9999", "label": "混剪脚本适配", "note": "输入输出路径由独立 Agent 配置管理"},
-    {"port": "10001", "label": "混剪参考视频采集", "note": "输出到AI实拍混剪/01参考视频/<类型>/<产品名>"},
-    {"port": "10005", "label": "自动发布流水线", "note": "继承9993–9998的业务路径，但使用独立任务数据库和执行进程"},
+    {"port": "10005", "label": "自动发布流水线", "note": "继承9993–9995的业务路径，但使用独立任务数据库和执行进程"},
+    {"port": "10006", "label": "脚本创作与适配", "note": "线路 1/2 复用参考脚本与纯 AI Omni 路径；线路 3 复用混剪解析脚本与混剪 Omni 路径"},
 )
 
 GLOBAL_AI_GROUPS = (
@@ -269,8 +252,8 @@ GLOBAL_AI_GROUPS = (
     {
         "id": "text",
         "label": "文本生成模型",
-        "description": "9993、9994、9997、9999、10003 共同继承",
-        "restart_label": "重启 9993、9994、9997、9999、10003",
+        "description": "10006 与旧脚本 Agent 共同继承；10006 当前只开放 Omni",
+        "restart_label": "重启 10006 与旧脚本 Agent",
     },
     {
         "id": "otu",
@@ -619,24 +602,19 @@ INDEX_HTML = """<!doctype html>
 :root{color-scheme:dark;--bg:#0b0d10;--panel:#15191f;--line:#29313b;--text:#f3f5f7;--muted:#98a2ad;--green:#66d19e;--blue:#70a7ff;--amber:#f2bd67}
 *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#18202b 0,#0b0d10 42%);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 main{max-width:1180px;margin:auto;padding:64px 24px 80px}header{display:flex;justify-content:space-between;gap:32px;align-items:end;margin-bottom:36px}h1{font-size:clamp(32px,5vw,58px);line-height:1.03;margin:0 0 14px;letter-spacing:-.04em}header p{max-width:700px;color:var(--muted);font-size:17px;line-height:1.7;margin:0}.headerTools{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.summary{white-space:nowrap;color:var(--muted);padding:10px 14px;border:1px solid var(--line);border-radius:999px;background:#11151a}
-.workflows{display:grid;gap:20px}.workflow,.destination{padding:22px;border:1px solid var(--line);border-radius:20px;background:#101419b8;box-shadow:0 16px 48px #0004}.workflowHead{display:flex;justify-content:space-between;gap:20px;align-items:end;margin-bottom:16px}.workflowTitle{font-size:24px;font-weight:760}.workflowDescription{color:var(--muted);font-size:13px;line-height:1.5;text-align:right}.flow{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px}.card{display:flex;flex-direction:column;height:160px;padding:17px;border:1px solid var(--line);border-radius:15px;background:linear-gradient(145deg,#181d24,#11151a)}.card.planned{border-style:dashed;background:linear-gradient(145deg,#191813,#11151a)}.top{display:flex;justify-content:space-between;gap:12px;align-items:center}.step{font-size:11px;color:var(--blue);letter-spacing:.1em}.status{font-size:11px;color:var(--muted);white-space:nowrap}.status::before{content:"";display:inline-block;width:7px;height:7px;margin-right:6px;border-radius:50%;background:#59636e}.status.on{color:var(--green)}.status.on::before{background:var(--green);box-shadow:0 0 12px var(--green)}.status.planned{color:var(--amber)}.status.planned::before{background:var(--amber)}h2{min-height:47px;font-size:18px;line-height:1.3;margin:18px 0 7px}.card .actions{display:flex;gap:7px;margin-top:auto}.actions>*{flex:1;text-align:center}button,a.button{appearance:none;border:1px solid var(--line);background:#202733;color:var(--text);padding:8px 7px;border-radius:9px;font:12px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;white-space:nowrap;text-decoration:none;cursor:pointer}button.primary{background:#e7edf5;color:#11161d;border-color:#e7edf5}button:disabled{opacity:.45;cursor:wait}.destination{margin-top:20px}.destination .flow{display:block}.destination .card{width:calc((100% - 50px)/6);margin:auto}.destinationHead{text-align:center;margin-bottom:16px}.destinationTitle{font-size:24px;font-weight:760}.destinationDescription{margin-top:6px;color:var(--muted);font-size:13px}.note{margin-top:30px;color:var(--muted);font-size:13px;text-align:center}
-@media(max-width:1000px){.flow{grid-template-columns:repeat(3,minmax(0,1fr))}.destination .card{width:calc((100% - 20px)/3)}}
-@media(max-width:700px){main{padding-top:38px}header{align-items:start;flex-direction:column}.summary{white-space:normal}.workflowHead{align-items:start;flex-direction:column}.workflowDescription{text-align:left}.flow{grid-template-columns:1fr}.destination .card{width:100%}}
+.console{padding:22px;border:1px solid var(--line);border-radius:20px;background:#101419b8;box-shadow:0 16px 48px #0004}.consoleHead{margin-bottom:18px}.consoleTitle{font-size:24px;font-weight:760}.consoleDescription{margin-top:6px;color:var(--muted);font-size:13px;line-height:1.5}.agents{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.card{display:flex;flex-direction:column;min-height:210px;padding:19px;border:1px solid var(--line);border-radius:15px;background:linear-gradient(145deg,#181d24,#11151a)}.top{display:flex;justify-content:space-between;gap:12px;align-items:center}.port{font-size:11px;color:var(--blue);letter-spacing:.1em}.status{font-size:11px;color:var(--muted);white-space:nowrap}.status::before{content:"";display:inline-block;width:7px;height:7px;margin-right:6px;border-radius:50%;background:#59636e}.status.on{color:var(--green)}.status.on::before{background:var(--green);box-shadow:0 0 12px var(--green)}h2{font-size:20px;line-height:1.3;margin:20px 0 8px}.description{color:var(--muted);font-size:13px;line-height:1.55}.card .actions{display:flex;gap:7px;margin-top:auto;padding-top:18px}.actions>*{flex:1;text-align:center}button,a.button{appearance:none;border:1px solid var(--line);background:#202733;color:var(--text);padding:8px 7px;border-radius:9px;font:12px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;white-space:nowrap;text-decoration:none;cursor:pointer}button.primary{background:#e7edf5;color:#11161d;border-color:#e7edf5}button:disabled{opacity:.45;cursor:wait}.note{margin-top:30px;color:var(--muted);font-size:13px;text-align:center}
+@media(max-width:900px){.agents{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){main{padding-top:38px}header{align-items:start;flex-direction:column}.summary{white-space:normal}.agents{grid-template-columns:1fr}}
 </style>
 </head>
-<body><main><header><div><h1>OPC 内容量化增长引擎</h1><p>按手动生产线路与自动发布流水线组织现有 Agent。手动 Agent 保持独立，自动流水线复用底层能力。</p></div><div class="headerTools"><a class="button" href="/settings/ai">全局 API / 模型</a><a class="button" href="/settings/paths">全局路径设置</a><div class="summary" id="summary">正在检测服务…</div></div></header><section class="workflows" id="workflows"></section><section class="destination"><div class="destinationHead"><div class="destinationTitle">统一归口 · 成品管理与发布</div><div class="destinationDescription">三条线路的最终成片统一进入成品目录，由同一个 Agent 扫描、管理和发布。</div></div><div class="flow" id="destination"></div></section><p class="note">控制台端口 8888 · 已接入 15 个 Agent</p></main>
+<body><main><header><div><h1>OPC 大 Agent 控制台</h1><p>统一进入当前主力 Agent。具体生产线路和任务类型在各 Agent 内选择，旧回退服务不在首页展示。</p></div><div class="headerTools"><a class="button" href="/settings/ai">全局 API / 模型</a><a class="button" href="/settings/paths">全局路径设置</a><div class="summary" id="summary">正在检测服务…</div></div></header><section class="console"><div class="consoleHead"><div class="consoleTitle">主力 Agent</div><div class="consoleDescription">每个 Agent 只显示一次；点击打开后继续选择线路、产品和任务。</div></div><div class="agents" id="agents"></div></section><p class="note">控制台端口 8888 · 旧脚本 Agent 暂时保留作为回退</p></main>
 <script>
-const workflowsHost=document.querySelector('#workflows'),destination=document.querySelector('#destination'),summary=document.querySelector('#summary');
-const workflowLines=[
-  {title:'线路 1 · 爆款复刻',description:'从爆款视频采集开始，完成纯 AI 脚本、片段与成片生产。',steps:['collect','analyze','script','adapt','assemble','compose']},
-  {title:'线路 2 · 产品脚本改写',description:'从产品脚本改写开始，继续进入纯 AI 片段生产与合成。',steps:['rewrite','script','adapt','assemble','compose']},
-  {title:'线路 3 · AI＋实拍混剪',description:'独立采集、解析、复刻裂变钩子/CTA参考视频，并生成混剪配音、AI首尾片段与实拍成片。',steps:['hybrid_collect','hybrid_analyze','hybrid_script','hybrid_adapt',{id:'assemble',label:'钩子与 CTA 片段产出'},'hybrid_voice','hybrid_mix']},
-  {title:'线路 4 · 自动发布',description:'从已认可的复刻脚本开始，独立完成裂变、适配、片段、合成与串行发布。',steps:['auto_publish']}
-];
+const agentsHost=document.querySelector('#agents'),summary=document.querySelector('#summary');
+const dashboardAgentIds=['analyze','unified_script','assemble','hybrid_voice','hybrid_mix','finished','auto_publish'];
 let services=[];
 function esc(value){return String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function cardHtml(step,index){const reference=typeof step==='string'?{id:step}:step;if(!reference.id){return `<article class="card planned"><div class="top"><span class="step">STEP ${String(index+1).padStart(2,'0')} · ${esc(reference.port)}</span><span class="status planned">待开发</span></div><h2>${esc(reference.label)}</h2><div class="actions"><button disabled>暂未接入</button></div></article>`}const service=services.find(item=>item.id===reference.id);if(!service)return '';return `<article class="card"><div class="top"><span class="step">STEP ${String(index+1).padStart(2,'0')} · ${esc(new URL(service.url).port)}</span><span class="status ${service.running?'on':''}">${service.running?'运行中':'未启动'}</span></div><h2>${esc(reference.label||service.label)}</h2><div class="actions"><a class="button" href="${esc(service.url)}" target="_blank" rel="noreferrer">打开</a></div></article>`}
-function render(){workflowsHost.innerHTML=workflowLines.map(line=>`<section class="workflow"><div class="workflowHead"><div class="workflowTitle">${esc(line.title)}</div><div class="workflowDescription">${esc(line.description)}</div></div><div class="flow">${line.steps.map(cardHtml).join('')}</div></section>`).join('');destination.innerHTML=cardHtml({id:'finished'},0);const count=services.filter(s=>s.running).length;summary.textContent=`${count} / ${services.length} 个 Agent 运行中`;}
+function cardHtml(service){return `<article class="card"><div class="top"><span class="port">AGENT · ${esc(new URL(service.url).port)}</span><span class="status ${service.running?'on':''}">${service.running?'运行中':'未启动'}</span></div><h2>${esc(service.label)}</h2><div class="description">${esc(service.description)}</div><div class="actions"><a class="button" href="${esc(service.url)}" target="_blank" rel="noreferrer">打开</a></div></article>`}
+function render(){const dashboardServices=dashboardAgentIds.map(id=>services.find(item=>item.id===id)).filter(Boolean);agentsHost.innerHTML=dashboardServices.map(cardHtml).join('');const count=dashboardServices.filter(service=>service.running).length;summary.textContent=`${count} / ${dashboardServices.length} 个主力 Agent 运行中`;}
 async function refresh(){try{const r=await fetch('/api/agent-services');const data=await r.json();services=data.services;render()}catch(e){summary.textContent='服务状态读取失败'}}
 refresh();setInterval(refresh,4000);
 </script></body></html>"""
@@ -705,21 +683,19 @@ Promise.all([loadSettings(),loadMigration()]).catch(error=>{groupsHost.textConte
 
 
 ROUTE_TO_SERVICE = {
-    "/collect": "collect",
     "/analyze": "analyze",
     "/script": "script",
     "/adapt": "adapt",
     "/assemble": "assemble",
     "/finished": "finished",
     "/rewrite": "rewrite",
-    "/compose": "compose",
     "/hybrid-adapt": "hybrid_adapt",
     "/hybrid-mix": "hybrid_mix",
-    "/hybrid-collect": "hybrid_collect",
     "/hybrid-analyze": "hybrid_analyze",
     "/hybrid-script": "hybrid_script",
     "/hybrid-voice": "hybrid_voice",
     "/auto-publish": "auto_publish",
+    "/unified-script": "unified_script",
 }
 
 

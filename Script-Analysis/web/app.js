@@ -7,6 +7,7 @@ const state = {
   pendingItems: [],
   selectedPaths: new Set(),
   runningItems: [],
+  contentLine: "pure_ai",
 };
 
 const JOB_STORAGE_KEY = "ScriptAnalysis.currentJobId";
@@ -49,25 +50,16 @@ function escapeHtml(value) {
   })[char]);
 }
 
-function shortPath(path) {
-  const text = String(path || "");
-  const marker = "/带货/带货/";
-  const index = text.indexOf(marker);
-  if (index === -1) return text;
-  return `带货/${text.slice(index + marker.length)}`;
+function routePayload() {
+  return {
+    content_line: $("contentLineInput").value,
+    material_type: $("materialTypeInput").value,
+  };
 }
 
-function setPathInput(id, fullPath) {
-  const input = $(id);
-  input.dataset.fullPath = fullPath || "";
-  input.value = shortPath(fullPath);
-  input.title = fullPath || "";
-}
-
-function getPathInput(id) {
-  const input = $(id);
-  const fullPath = input.dataset.fullPath || "";
-  return fullPath && input.value === shortPath(fullPath) ? fullPath : input.value;
+function updateContentLineFields() {
+  state.contentLine = $("contentLineInput").value;
+  $("materialTypeBlock").hidden = state.contentLine !== "hybrid";
 }
 
 function getBatchLimit() {
@@ -114,6 +106,28 @@ function setCurrentJobId(jobId) {
 function startJobPolling() {
   clearInterval(state.pollTimer);
   state.pollTimer = setInterval(() => pollJob().catch(showError), 1500);
+}
+
+function renderDownloadProducts(products) {
+  const select = $("downloadProductInput");
+  const previousValue = select.value;
+  select.innerHTML = "";
+  if (!products?.length) {
+    const empty = document.createElement("option");
+    empty.value = "";
+    empty.textContent = "未找到产品目录";
+    select.appendChild(empty);
+    select.disabled = true;
+    return;
+  }
+  for (const product of products || []) {
+    const option = document.createElement("option");
+    option.value = product;
+    option.textContent = product;
+    select.appendChild(option);
+  }
+  select.disabled = false;
+  select.value = products.includes(previousValue) ? previousValue : products[0];
 }
 
 function makeItem(item, options = {}) {
@@ -352,15 +366,16 @@ function renderScriptsByProduct(groups) {
 }
 
 async function refreshStatus() {
-  const data = await api("/api/status");
+  const params = new URLSearchParams(routePayload());
+  const data = await api(`/api/status?${params.toString()}`);
   $("rootPath").textContent = "Gemini 视频拆解 · 查重队列 · Markdown 脚本归档";
   $("rootPath").title = data.skill_root || "";
   $("modelBadge").textContent = data.settings.model || "未设置模型";
   $("keyBadge").textContent = `${data.settings.api_key_hint || "API"} · ${data.settings.ai_settings_source || "8888 全局设置"}`;
   $("modelInput").value = data.settings.model || "";
   $("baseUrlInput").value = data.settings.base_url || "";
-  setPathInput("videoDirInput", data.queue_defaults.video_dir || "");
-  setPathInput("scriptDirInput", data.queue_defaults.script_dir || "");
+  renderDownloadProducts(data.queue_defaults.products || []);
+  $("downloadUrlsBtn").disabled = false;
   renderScriptsByProduct(data.scripts_by_product || []);
   renderScan(data.latest_scan || {});
   if (isActiveJob(data.active_job)) {
@@ -370,7 +385,36 @@ async function refreshStatus() {
     renderJobState(data.active_job);
     $("scanBtn").disabled = true;
     $("processBtn").disabled = true;
+    $("downloadUrlsBtn").disabled = true;
     startJobPolling();
+  }
+}
+
+async function downloadUrls() {
+  const product = $("downloadProductInput").value.trim();
+  const urls = $("directUrlsInput").value.trim();
+  if (!product) throw new Error("请选择或输入产品目录");
+  if (!urls) throw new Error("请先粘贴 TikTok 视频 URL");
+  $("downloadUrlsBtn").disabled = true;
+  $("scanBtn").disabled = true;
+  $("processBtn").disabled = true;
+  $("logPane").textContent = "URL 下载任务提交中...";
+  try {
+    const job = await api("/api/url-download", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        product,
+        urls,
+        ...routePayload(),
+      }),
+    });
+    setCurrentJobId(job.id);
+    renderJobState(job);
+    startJobPolling();
+  } catch (error) {
+    $("downloadUrlsBtn").disabled = false;
+    throw error;
   }
 }
 
@@ -382,12 +426,10 @@ async function scanQueue() {
     const scan = await api("/api/scan-queue", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        video_dir: getPathInput("videoDirInput"),
-        script_dir: getPathInput("scriptDirInput"),
-      }),
+      body: JSON.stringify(routePayload()),
     });
     renderScan(scan);
+    setJobBadge("idle");
     $("logPane").textContent =
       `扫描完成: 待拆解 ${scan.summary.pending} 个，重复跳过 ${scan.summary.skipped} 个。请选择要处理的视频。`;
     return scan;
@@ -459,24 +501,27 @@ function renderProgressPanel(job) {
   const total = Number(job.total || items.length || 0);
   const completed = Number(job.completed || items.filter((item) => item.status === "completed").length || 0);
   const failed = Number(job.failed || items.filter((item) => item.status === "failed").length || 0);
+  const downloaded = Number(job.downloaded || 0);
+  const skipped = Number(job.skipped || 0);
   const runningItem = items.find((item) => item.status === "running");
   const queued = Math.max(total - completed - failed - (runningItem ? 1 : 0), 0);
   const doneCount = completed + failed;
   const percent = total ? Math.min(100, Math.round((doneCount / total) * 100)) : 0;
   const currentName =
-    runningItem?.relative_path || runningItem?.name || (job.status === "queued" ? "等待开始" : "暂无正在处理的视频");
+    runningItem?.relative_path || runningItem?.url || runningItem?.name || (job.status === "queued" ? "等待开始" : "暂无正在处理的视频");
+  const isDownload = job.type === "url_download";
 
   panel.hidden = false;
   panel.innerHTML = `
     <div class="progress-top">
-      <div class="progress-title">${job.status === "running" ? "正在逐条拆解" : "队列状态"}</div>
+      <div class="progress-title">${job.status === "running" ? (isDownload ? "正在逐条下载" : "正在逐条拆解") : "队列状态"}</div>
       <div class="progress-count">${doneCount}/${total || 0} · ${percent}%</div>
     </div>
     <div class="progress-track"><div class="progress-fill" style="width: ${percent}%"></div></div>
     <div class="progress-meta-grid">
-      <div class="progress-meta"><span>完成</span><strong>${completed}</strong></div>
+      <div class="progress-meta"><span>${isDownload ? "下载" : "完成"}</span><strong>${isDownload ? downloaded : completed}</strong></div>
       <div class="progress-meta"><span>失败</span><strong>${failed}</strong></div>
-      <div class="progress-meta"><span>处理中</span><strong>${runningItem ? 1 : 0}</strong></div>
+      <div class="progress-meta"><span>${isDownload ? "跳过" : "处理中"}</span><strong>${isDownload ? skipped : (runningItem ? 1 : 0)}</strong></div>
       <div class="progress-meta"><span>等待</span><strong>${queued}</strong></div>
     </div>
     <div class="progress-current">当前: ${escapeHtml(currentName)}</div>
@@ -493,7 +538,7 @@ function renderJobState(job) {
   $("logPane").textContent = progress + ((job.logs || []).join("\n") || "等待日志...");
   $("logPane").scrollTop = $("logPane").scrollHeight;
   state.runningItems = job.items || state.runningItems;
-  renderJobItems(job.items || []);
+  if (job.type !== "url_download") renderJobItems(job.items || []);
   if (job.final_outputs && job.final_outputs.length) {
     renderScriptsByProduct(job.scripts_by_product || []);
   }
@@ -508,6 +553,8 @@ async function pollJob() {
     setCurrentJobId("");
     $("scanBtn").disabled = false;
     $("processBtn").disabled = false;
+    $("downloadUrlsBtn").disabled = false;
+    if (job.type === "url_download" && job.status === "completed") $("directUrlsInput").value = "";
     await refreshStatus();
   }
 }
@@ -546,16 +593,21 @@ async function saveSettings() {
 }
 
 async function openLastOutput() {
-  const targetPath = getPathInput("scriptDirInput");
   const result = await api("/api/open", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path: targetPath }),
+    body: JSON.stringify(routePayload()),
   });
-  $("logPane").textContent = `已打开目录: ${result.path || targetPath}`;
+  $("logPane").textContent = `已打开目录: ${result.path || "脚本目录"}`;
 }
 
 function bindEvents() {
+  $("contentLineInput").addEventListener("change", () => {
+    updateContentLineFields();
+    refreshStatus().catch(showError);
+  });
+  $("materialTypeInput").addEventListener("change", () => refreshStatus().catch(showError));
+  $("downloadUrlsBtn").addEventListener("click", () => downloadUrls().catch(showError));
   $("scanBtn").addEventListener("click", () => scanQueue().catch(showError));
   $("processBtn").addEventListener("click", () => processQueue().catch(showError));
   $("selectAllBtn").addEventListener("click", () => setSelectedPaths(state.pendingItems.map((item) => item.path)));
@@ -584,11 +636,13 @@ function showError(error) {
   setJobBadge("failed");
   $("scanBtn").disabled = false;
   $("processBtn").disabled = false;
+  $("downloadUrlsBtn").disabled = false;
   updateSelectionState();
 }
 
 async function boot() {
   bindEvents();
+  updateContentLineFields();
   setJobBadge("idle");
   renderScan({});
   renderProgressPanel(null);

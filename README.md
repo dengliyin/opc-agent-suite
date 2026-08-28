@@ -1,6 +1,6 @@
 # AI+跨境电商 OPC 内容量化增长引擎
 
-深圳科赛力量有限公司的跨境电商短视频内容生产系统。项目包含 8888 集合控制台和 9991–10005 共 15 个 Agent。
+深圳科赛力量有限公司的跨境电商短视频内容生产系统。项目包含 8888 集合控制台和 12 个独立业务服务；视频下载与脚本解析统一由 9992 负责，片段合成已并入 9995。
 
 ## 唯一运行方式：Docker Compose
 
@@ -23,7 +23,7 @@ VIDEO_ASSEMBLY_WORK_ROOT="/Volumes/seafer/OPC-Data/Video-Assembly-hd"
 
 - `OPC_VAULT_ROOT`：业务资料库，容器内统一映射为 `/vault`。
 - `OPC_DOCKER_DATA_ROOT`：Docker 持久配置和 Agent 数据。
-- `VIDEO_ASSEMBLY_WORK_ROOT`：9998 的装配记录、缓存及运行资料。
+- `VIDEO_ASSEMBLY_WORK_ROOT`：9995 片段合成的装配记录、缓存及运行资料。
 
 启动脚本会在已挂载且可写的上一级目录或盘符下自动创建这三个根目录，并根据 `storage-template` 补齐空白业务资料库结构和根目录 `CLAUDE.md`。重复启动只补充缺失目录和缺失模板文件，不会覆盖已有文件。外置盘未挂载时脚本会拒绝创建和启动，避免误写回电脑内置盘。
 
@@ -62,31 +62,29 @@ Windows PowerShell：
 | 端口 | 服务 |
 |---:|---|
 | 8888 | 集合控制台 |
-| 9991 | 视频采集 |
-| 9992 | 脚本解析 |
+| 9992 | 视频下载与脚本解析 |
 | 9993 | 脚本产出 |
 | 9994 | 脚本适配 |
-| 9995 | 片段产出 |
+| 9995 | 片段产出与片段合成 |
 | 9996 | 成品管理 |
 | 9997 | 产品脚本改写 |
-| 9998 | 片段合成 |
 | 9999 | 钩子与 CTA 脚本适配 |
 | 10000 | AI＋实拍混剪 |
-| 10001 | 混剪参考视频采集 |
 | 10002 | 混剪参考视频解析 |
 | 10003 | 钩子与 CTA 脚本复刻裂变 |
 | 10004 | 配音 |
 | 10005 | 自动发布流水线 |
-| 15991 | 9991 可视浏览器 |
-| 16001 | 10001 可视浏览器 |
+| 10006 | 脚本创作与适配（线路 1–3，当前开放 Omni） |
 
-9991 和 10001 勾选“显示浏览器”后，开始任务时会自动打开对应的 Docker 浏览器画面，可手动处理登录、验证码和滑块。未勾选时使用无头模式。
+原 9991 与 10001 采集服务已停止编排，纯 AI 和混剪线路都从 9992 的 URL 下载与解析入口开始。`Video-Collection` 与 `Hybrid-Video-Collection` 源码目录仍保留，需要恢复 FastMoss 自动采集时可重新接入。
+
+10006 是新的统一脚本入口：线路 1 完成复刻或裂变，线路 2 先做产品改写再复刻或裂变，线路 3 完成钩子或 CTA 的复刻或裂变；三条线路都直接输出 9995 可读取的 Omni 适配稿，不再落盘普通中间脚本。Grok 与 Veo 尚未完成提示词审核，页面中保持不可选。9993、9994、9997、9999、10003 暂时保留作回退，待 10006 的真实生产任务验证稳定后再移除。
 
 ## 数据边界
 
 - 业务输入输出：`OPC_VAULT_ROOT`
 - 容器配置和 Agent 状态：`OPC_DOCKER_DATA_ROOT`
-- 9998 旧装配记录：`VIDEO_ASSEMBLY_WORK_ROOT`
+- 9995 片段合成装配记录：`VIDEO_ASSEMBLY_WORK_ROOT`
 - 产品映射库：`Finished-Video-Manager/config/product_mappings.json`，属于本机数据，不应提交到 Git。
 - Docker 镜像、构建缓存和容器层仍由 Docker Desktop 管理；如需迁移它们，请在 Docker Desktop 中修改磁盘映像位置。
 
@@ -96,7 +94,7 @@ Windows PowerShell：
 docker compose ps
 ./scripts/docker_health.sh
 docker compose logs --tail=200 console
-docker compose logs --tail=200 video-assembly
+docker compose logs --tail=200 video-generation
 ```
 
 若外置盘盘符或挂载点变化，只修改 `.env` 中的三个宿主机路径，再重新执行启动命令。不要在 Agent 内保存旧的宿主机绝对路径。

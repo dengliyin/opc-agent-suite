@@ -45,10 +45,10 @@ MARKET_NAMES = {
 UNSPECIFIED_MARKET = "未标注"
 ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = ROOT.parent
-ASSEMBLY_RUNTIME = WORKSPACE_ROOT / "Video-Assembly-hd" / "runtime"
+ASSEMBLY_RUNTIME = WORKSPACE_ROOT / "Video-Generation" / "assembly" / "runtime"
 CAPTION_TOOL_ROOT = ROOT / "vendor" / "tiktok-karaoke-captions"
 CAPTION_TOOL_PATH = CAPTION_TOOL_ROOT / "caption.py"
-GSAP_SOURCE = WORKSPACE_ROOT / "Video-Assembly-hd" / "vendor" / "gsap.min.js"
+GSAP_SOURCE = WORKSPACE_ROOT / "Video-Generation" / "assembly" / "vendor" / "gsap.min.js"
 COUNTRY_LANGUAGE_CODES = {
     "AT": "de",
     "BE": "nl",

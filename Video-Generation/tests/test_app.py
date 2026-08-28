@@ -111,6 +111,21 @@ def test_omni_page_has_product_reference_fastest_mode():
     assert "功能6 一键完整流程（1→2→3）" in response.text
 
 
+def test_portal_exposes_integrated_assembly_entry():
+    client = TestClient(app_module.app)
+
+    portal = client.get("/")
+    assembly = client.get("/assembly")
+    state = client.get("/assembly/api/state")
+
+    assert portal.status_code == 200
+    assert 'href="/assembly"' in portal.text
+    assert assembly.status_code == 200
+    assert "9995 · 片段合成" in assembly.text
+    assert state.status_code == 200
+    assert "report" in state.json()
+
+
 def test_update_concurrency_is_per_agent(monkeypatch):
     omni = FakeManager()
     grok = FakeManager()

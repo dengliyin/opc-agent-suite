@@ -12,6 +12,7 @@ from agent.files import (
     find_product_references,
     image_output_current,
     scan_scripts,
+    script_country_code,
     script_to_dict,
     storyboard_image_path,
     video_output_path,
@@ -74,6 +75,16 @@ def test_reference_matching_and_output_names(tmp_path: Path) -> None:
     assert character_image_path(md_path, 2, grok_settings.artifact_prefix).name == "demo-片段2-人物图.png"
     assert storyboard_image_path(md_path, 2, grok_settings.artifact_prefix).name == "demo-片段2-故事版.png"
     assert video_output_path(grok_settings, "SIMC染发棒", md_path, 2).name == "demo-片段2-grok.mp4"
+
+
+def test_script_country_code_requires_product_followed_by_valid_code() -> None:
+    product = "SIMC04-SIMC泡泡染"
+
+    assert script_country_code(product, f"omni-复刻-{product}-US-creator-123.md") == "US"
+    assert script_country_code(product, f"omni-裂变-{product}-MY-creator-456.md") == "MY"
+    assert script_country_code(product, f"omni-复刻-{product}-UK-creator-789.md") == "UK"
+    assert script_country_code(product, f"omni-复刻-{product}-ZZ-creator-000.md") == ""
+    assert script_country_code(product, "omni-071_Japan_Tea_Ceremony_Master.md") == ""
 
 
 def test_suppressed_script_stays_for_upstream_but_disappears_until_rewritten(tmp_path: Path) -> None:

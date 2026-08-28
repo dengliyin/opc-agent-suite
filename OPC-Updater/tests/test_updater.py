@@ -140,6 +140,7 @@ class UpdaterTests(unittest.TestCase):
                     "product-script-rewrite",
                     "hybrid-script-adaptation",
                     "hybrid-script-generation",
+                    "unified-script-agent",
                 ),
                 "otu": ("video-generation",),
                 "grok": ("video-generation",),

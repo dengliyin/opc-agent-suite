@@ -24,7 +24,14 @@ from .files import (
     summarize_catalog,
     video_output_path,
 )
-from .markdown_parser import Segment, build_direct_video_prompt, build_product_video_prompt, build_video_prompt, character_source_segment_index
+from .markdown_parser import (
+    Segment,
+    build_direct_video_prompt,
+    build_product_video_prompt,
+    build_storyboard_image_prompt,
+    build_video_prompt,
+    character_source_segment_index,
+)
 from .product_lock import (
     build_storyboard_product_lock_prompt,
     has_current_storyboard_product_lock,
@@ -1083,13 +1090,35 @@ class JobManager:
                 shutil.copy2(source, output)
             return f"复用片段{source_index}人物图"
 
-        self._validate_generated_image_or_retry(
-            job_id,
-            lambda: image_client.generate_from_prompt(
+        reference_sources = []
+        for source_index in segment.character_reference_segment_indices:
+            if source_index >= segment.index:
+                raise RuntimeError(f"人物参考来源必须早于当前片段：Segment {source_index}")
+            source = character_image_path(script.md_path, source_index, self.settings.artifact_prefix)
+            if not _image_output_current_for_api(image_settings, source, image_api):
+                expected_aspect = _expected_image_aspect_for_api(image_settings, image_api)
+                if source.exists():
+                    raise RuntimeError(f"参考源人物图比例不是 {expected_aspect}：片段{source_index}，请先重新运行源片段")
+                raise RuntimeError(f"参考源人物图不存在：片段{source_index}")
+            reference_sources.append(source)
+
+        if reference_sources:
+            generate = lambda: image_client.generate_with_references(
+                _image_prompt_with_aspect_guard(segment.character_prompt, _expected_image_aspect_for_api(image_settings, image_api)),
+                reference_sources,
+                output,
+                progress=lambda message: self._log(job_id, "info", f"片段{segment.index} {self.settings.character_display_label}：{message}"),
+            )
+        else:
+            generate = lambda: image_client.generate_from_prompt(
                 _image_prompt_with_aspect_guard(segment.character_prompt, _expected_image_aspect_for_api(image_settings, image_api)),
                 output,
                 progress=lambda message: self._log(job_id, "info", f"片段{segment.index} {self.settings.character_display_label}：{message}"),
-            ),
+            )
+
+        self._validate_generated_image_or_retry(
+            job_id,
+            generate,
             output,
             image_settings,
             image_api,
@@ -1132,7 +1161,7 @@ class JobManager:
         storyboard_size = "" if image_api == "grok" else image_settings.image_size
         locked_prompt = build_storyboard_product_lock_prompt(
             script.product_name,
-            segment.storyboard_prompt,
+            build_storyboard_image_prompt(segment),
             storyboard_size,
             storyboard_aspect_ratio,
         )
@@ -1215,18 +1244,15 @@ class JobManager:
         self._log(
             job_id,
             "info",
-            f"片段{segment.index} {self.settings.video_display_label}：使用故事版图 + 当前片段完整脚本，prompt {len(video_prompt)} 字符",
+            f"片段{segment.index} {self.settings.video_display_label}：故事板仅作导演参考 + 当前片段完整脚本，禁止整页故事板进入成片",
         )
         if video_api == "grok":
-            character_path = character_image_path(script.md_path, segment.index, self.settings.artifact_prefix)
-            extra_references = [path for path in [script.reference_image, character_path] if path is not None and path.exists()]
             omni_client.generate_video(
                 video_prompt,
                 storyboard_path,
                 output,
                 progress=lambda message: self._log(job_id, "info", f"片段{segment.index} {self.settings.video_display_label}：{message}"),
                 duration=_segment_duration_seconds(segment, video_settings.grok_video_duration),
-                reference_paths=extra_references,
             )
         else:
             omni_client.generate_video(

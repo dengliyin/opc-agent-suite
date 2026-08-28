@@ -301,6 +301,58 @@ def test_process_character_copies_detailed_current_segment_reuse(tmp_path: Path)
     assert image_client.reference_calls == []
 
 
+def test_process_character_regenerates_from_declared_reference_boards(tmp_path: Path) -> None:
+    settings = settings_for(tmp_path)
+    product_dir = settings.script_root / "P1"
+    product_dir.mkdir(parents=True)
+    md_path = product_dir / "script.md"
+    first_segment = Segment(
+        index=1,
+        title="# Segment 1：00:00 - 00:10",
+        time_range="00:00 - 00:10",
+        raw_text="",
+        character_prompt="角色ID：character_01\n生成方式：首次生成\n参考来源：无",
+        storyboard_prompt="story",
+    )
+    second_segment = Segment(
+        index=2,
+        title="# Segment 2：00:00 - 00:10",
+        time_range="00:00 - 00:10",
+        raw_text="",
+        character_prompt="角色ID：character_02\n生成方式：首次生成\n参考来源：无",
+        storyboard_prompt="story",
+    )
+    merged_segment = Segment(
+        index=3,
+        title="# Segment 3：00:00 - 00:10",
+        time_range="00:00 - 00:10",
+        raw_text="",
+        character_prompt=(
+            "角色ID：character_01、character_02、character_03\n"
+            "生成方式：新角色合并\n"
+            "参考来源：Segment 1、Segment 2\n"
+            "保持旧角色身份不变，加入 character_03 并重新生成合成参考板。"
+        ),
+        storyboard_prompt="story",
+    )
+    script = type("Script", (), {"md_path": md_path, "segments": [first_segment, second_segment, merged_segment]})()
+    first_source = character_image_path(md_path, 1, settings.artifact_prefix)
+    second_source = character_image_path(md_path, 2, settings.artifact_prefix)
+    Image.new("RGB", (1024, 768), (12, 34, 56)).save(first_source)
+    Image.new("RGB", (1024, 768), (65, 43, 21)).save(second_source)
+    image_client = FakeImageClient()
+    manager = JobManager(settings)
+    manager._jobs["job_merge"] = {"logs": []}
+
+    result = manager._process_character("job_merge", image_client, script, merged_segment, overwrite=False)
+
+    assert result == "已生成"
+    assert image_client.prompt_calls == []
+    assert len(image_client.reference_calls) == 1
+    assert image_client.reference_calls[0][1] == [first_source, second_source]
+    assert image_client.reference_calls[0][2] == character_image_path(md_path, 3, settings.artifact_prefix)
+
+
 def test_process_character_retries_invalid_grok_aspect_and_keeps_only_valid_output(tmp_path: Path) -> None:
     settings = replace(
         settings_for(tmp_path),
@@ -445,7 +497,16 @@ def test_process_storyboard_uses_only_product_reference_and_character(tmp_path: 
         time_range="00:00 - 00:01",
         raw_text='### 镜头 1\n* **[音频文案]** "hello"',
         character_prompt="prompt",
-        storyboard_prompt="story",
+        storyboard_prompt="""旧版说明：上方产品参考区，下方纯视觉拼贴。
+### 镜头 1 (00:00.000 - 00:01.000)
+- [主体] character_01
+- [在场景中] 普通客厅
+- [做什么动作] 拿起产品
+- [镜头语言] 中景固定机位
+- [光线] 自然光
+- [细节] 右手持物
+- [画面风格/氛围] 真实手机实拍
+- [音频文案] hello""",
     )
     script = type(
         "Script",
@@ -483,6 +544,9 @@ def test_process_storyboard_uses_only_product_reference_and_character(tmp_path: 
     assert result == "已生成"
     assert len(image_client.reference_calls) == 1
     assert image_client.reference_calls[0][1] == [reference, character]
+    assert "逐镜头执行单" in image_client.reference_calls[0][0]
+    assert "- [音频文案] hello" in image_client.reference_calls[0][0]
+    assert "旧版说明：上方产品参考区" not in image_client.reference_calls[0][0]
     assert "产品视觉参考图 1 张 + 人物图 1 张" in [entry["message"] for entry in refreshed["logs"]][0]
 
 
@@ -542,11 +606,12 @@ def test_process_video_logs_progress_with_job_id(tmp_path: Path) -> None:
 
     assert result == "已生成"
     assert omni_client.calls
-    assert "完整脚本" in omni_client.calls[0][0]
-    assert "[音频文案]" in omni_client.calls[0][0]
+    assert "故事板执行单" in omni_client.calls[0][0]
+    assert "不是视频首帧" in omni_client.calls[0][0]
+    assert "当前片段完整脚本" in omni_client.calls[0][0]
     assert "hello" in omni_client.calls[0][0]
-    assert "产品参考图强制锁定说明" not in omni_client.calls[0][0]
-    assert any("故事版图 + 当前片段完整脚本" in entry["message"] for entry in refreshed["logs"])
+    assert omni_client.calls[0][3] == []
+    assert any("故事板仅作导演参考 + 当前片段完整脚本" in entry["message"] for entry in refreshed["logs"])
     assert any("fake video progress" in entry["message"] for entry in refreshed["logs"])
 
 

@@ -35,6 +35,19 @@ body {
 
 button, input, select { font: inherit; letter-spacing: 0; }
 button { color: var(--ink); }
+.backLink {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 3px 3px 0 rgba(16, 16, 16, .12);
+  font-size: 11px;
+  font-weight: 780;
+  text-decoration: none;
+}
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid rgba(179, 220, 60, .55); outline-offset: 2px; }
 
 header {

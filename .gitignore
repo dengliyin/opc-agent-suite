@@ -49,12 +49,12 @@ Finished-Video-Manager/config/product_mappings.json
 Video-Collection/data/product_info_options.json
 Script-Generation/runtime/
 Script-Generation/workflow_configs/unified_console/runtime/
-Video-Assembly-hd/data/
-Video-Assembly-hd/media/
-Video-Assembly-hd/runs/
+Video-Generation/assembly/data/
+Video-Generation/assembly/media/
+Video-Generation/assembly/runs/
 
 # Offline renderer binaries are installed separately.
-Video-Assembly-hd/runtime/
+Video-Generation/assembly/runtime/
 
 # Large media and generated archives
 **/*.mp4

@@ -241,11 +241,11 @@ class PipelineRunner:
         return result
 
     def _assemble(self, task_id: str, spec: dict[str, Any], export_dirs: list[str]) -> list[str]:
-        root = self.workspace_root / "Video-Assembly-hd"
+        root = self.workspace_root / "Video-Generation"
         outputs = []
         for script_dir in export_dirs:
             command = [
-                self._component_python("Video-Assembly-hd"), str(root / "app" / "video_assembly.py"),
+                self._component_python("Video-Generation"), str(root / "assembly" / "video_assembly.py"),
                 "assemble", "--script-dir", script_dir, "--caption-mode", spec["caption_mode"],
             ]
             try:

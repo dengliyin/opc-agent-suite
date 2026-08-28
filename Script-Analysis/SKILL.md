@@ -1,19 +1,19 @@
 ---
 name: Script-Analysis
-description: Self-contained short-video teardown agent for TikTok, Reels, and cross-border ecommerce videos. Use when Codex needs to analyze a user-provided MP4/MOV video with Gemini 3.0, using only this skill folder's local prompt, knowledge base, API settings, output contract, and scripts, then produce structured teardown Markdown for script generation.
+description: Self-contained short-video download and teardown agent for TikTok, Reels, and cross-border ecommerce videos. Use when Codex needs to download standard TikTok video URLs or analyze a user-provided MP4/MOV video with Gemini 3.0, using only this skill folder's local prompt, knowledge base, API settings, output contract, and scripts, then produce structured teardown Markdown for script generation.
 ---
 
 # Video Teardown Agent
 
 ## Overview
 
-Use this skill as a standalone video teardown agent. All configuration must live inside the `Script-Analysis` folder in the suite:
+Use this skill as a standalone video download and teardown agent. All analysis configuration must live inside the `Script-Analysis` folder in the suite:
 
 ```text
 opc-agent-suite/Script-Analysis/
 ```
 
-Do not read prompt, knowledge-base, API, model, or output-contract configuration from OPC project folders, WeChat temp folders, or any other external project. The only normal external input is the user-provided video file or video directory.
+Do not read prompt, knowledge-base, API, model, or output-contract configuration from OPC project folders, WeChat temp folders, or any other external project. The only normal external inputs are standard TikTok video URLs and user-provided video files or directories.
 
 ## Folder Contract
 
@@ -28,6 +28,7 @@ references/
   teardown-output-contract.md      # required output format and acceptance checklist
 scripts/
   analyze_video.py                 # standalone Gemini video teardown runner
+  url_downloader.py                # standard TikTok URL downloader through Kolsprite
   web_app.py                       # local visual web interface
 web/
   index.html                       # browser UI
@@ -45,7 +46,9 @@ outputs/
 
 - Use only files under the skill folder for configuration.
 - Copy any user-provided prompt or knowledge-base file into `config/` before using it; never point config at a temporary external path.
-- Keep the workflow narrow: video in, structured teardown Markdown out.
+- Keep the workflow narrow: TikTok URL or local video in, structured teardown Markdown out.
+- The Web UI selects either the pure-AI line or the hybrid line. Product choices are shared, but business paths are fixed and separate per line; the browser never accepts arbitrary queue paths.
+- Pure-AI URL downloads save under `VIDEO_TEARDOWN_INPUT_ROOT/<product>/`. Hybrid downloads save under `HYBRID_VIDEO_TEARDOWN_INPUT_ROOT/<混剪-钩子|混剪-CTA>/<product>/`. Both refresh the selected line's teardown queue and never start model analysis automatically.
 - Do not invent transcript, timecodes, price claims, performance data, or product claims.
 - Use `[product]` as the generic product token unless the user explicitly wants product-specific wording.
 - Verify with concrete artifacts: Markdown teardown, raw JSON response, and run summary.
@@ -70,7 +73,7 @@ For one video:
 .venv/bin/python scripts/analyze_video.py /absolute/path/to/video.mp4
 ```
 
-In the manual web flow, any local path outside the skill folder must be copied into `inputs/` before the runner starts. Manual-run intermediate outputs stay under `outputs/`. In the suite queue flow, business input and final output use `VIDEO_TEARDOWN_INPUT_ROOT` and `VIDEO_TEARDOWN_OUTPUT_ROOT`, falling back to `config/paths.local.json` when those environment variables are absent.
+In the manual web flow, any local path outside the skill folder must be copied into `inputs/` before the runner starts. Manual-run intermediate outputs stay under `outputs/`. In the suite queue flow, the pure-AI line uses `VIDEO_TEARDOWN_INPUT_ROOT` and `VIDEO_TEARDOWN_OUTPUT_ROOT`; the hybrid line uses `HYBRID_VIDEO_TEARDOWN_INPUT_ROOT` and `HYBRID_VIDEO_TEARDOWN_OUTPUT_ROOT`. Only the pure-AI line falls back to `config/paths.local.json` when its environment variables are absent.
 
 For a folder:
 
@@ -138,7 +141,7 @@ outputs/<YYYYMMDD_HHMMSS>/
   run_summary.json
 ```
 
-Suite queue runs move the final Markdown into `VIDEO_TEARDOWN_OUTPUT_ROOT` (or the `script_dir` fallback from `config/paths.local.json`).
+Suite queue runs move the final Markdown into the selected line's fixed output root. Pure-AI outputs are grouped by product. Hybrid outputs preserve `<混剪-钩子|混剪-CTA>/<product>/`.
 
 If the user asks for a summary after a run, report the output paths, success/failure count, and high-level findings. Do not paste the full teardown unless requested.
 

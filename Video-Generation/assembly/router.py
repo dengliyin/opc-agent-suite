@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import argparse
 import copy
 import json
-import mimetypes
 import os
 import signal
 import subprocess
@@ -12,18 +10,38 @@ import sys
 import threading
 import time
 import uuid
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlparse
 
-import video_assembly as core
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+
+from . import video_assembly as core
 
 
 APP_ROOT = Path(__file__).resolve().parents[1]
-STATIC_ROOT = APP_ROOT / "static"
-CONFIRMED_REPORT_PATH = APP_ROOT / "data" / "confirmed-report.json"
+ASSEMBLY_ROOT = Path(__file__).resolve().parent
+CONFIRMED_REPORT_PATH = ASSEMBLY_ROOT / "data" / "confirmed-report.json"
 MAX_LOG_LINES = 800
+router = APIRouter(prefix="/assembly/api", tags=["assembly"])
+
+
+class AssemblyRequest(BaseModel):
+    confirmed: bool = False
+    scan_id: str = ""
+    script_dirs: list[str] = Field(default_factory=list)
+    caption_mode: str = core.DEFAULT_CAPTION_MODE
+
+
+class CleanupRequest(BaseModel):
+    confirmed: bool = False
+    verified: bool = False
+    scan_id: str = ""
+    script_dirs: list[str] = Field(default_factory=list)
+
+
+class OpenPathRequest(BaseModel):
+    path: str = ""
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -350,141 +368,89 @@ def allowed_local_path(value: str) -> Path:
     return path
 
 
-class Handler(BaseHTTPRequestHandler):
-    server_version = "VideoAssemblyOffline/1.0"
-
-    def log_message(self, _format: str, *_args: Any) -> None:
-        return
-
-    def _json(self, status: int, payload: dict[str, Any]) -> None:
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _file(self, path: Path) -> None:
-        if not path.is_file():
-            self.send_error(404)
-            return
-        body = path.read_bytes()
-        content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-        self.send_response(200)
-        self.send_header("Content-Type", f"{content_type}; charset=utf-8" if content_type.startswith("text/") else content_type)
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _body(self) -> dict[str, Any]:
-        length = int(self.headers.get("Content-Length") or 0)
-        if length > 1_000_000:
-            raise ValueError("请求内容过大")
-        raw = self.rfile.read(length) if length else b"{}"
-        payload = json.loads(raw.decode("utf-8"))
-        if not isinstance(payload, dict):
-            raise ValueError("请求格式无效")
-        return payload
-
-    def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API.
-        parsed = urlparse(self.path)
-        try:
-            if parsed.path == "/":
-                self._file(STATIC_ROOT / "index.html")
-            elif parsed.path.startswith("/static/"):
-                relative = Path(unquote(parsed.path.removeprefix("/static/")))
-                target = (STATIC_ROOT / relative).resolve()
-                if STATIC_ROOT.resolve() not in target.parents:
-                    raise ValueError("静态资源路径无效")
-                self._file(target)
-            elif parsed.path == "/health":
-                self._json(200, {"status": "ok"})
-            elif parsed.path == "/api/state":
-                report = read_report()
-                checks = runtime_checks()
-                self._json(
-                    200,
-                    {
-                        "report": report,
-                        "job": JOB.snapshot(),
-                        "checks": checks,
-                        "offline_ready": all(item["ok"] for item in checks),
-                        "outputs": output_items(report),
-                        "app_root": str(APP_ROOT),
-                    },
-                )
-            elif parsed.path == "/api/job":
-                self._json(200, {"job": JOB.snapshot()})
-            elif parsed.path == "/api/outputs":
-                self._json(200, {"outputs": output_items(), "root": str(core.OUTPUT_ROOT)})
-            else:
-                self.send_error(404)
-        except (OSError, ValueError, RuntimeError) as exc:
-            self._json(400, {"error": str(exc)})
-
-    def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API.
-        parsed = urlparse(self.path)
-        try:
-            payload = self._body()
-            if parsed.path == "/api/scan":
-                if JOB.snapshot()["running"]:
-                    raise RuntimeError("拼接运行中，暂不能重新扫描")
-                report = scan_now()
-                self._json(200, {"report": report, "outputs": output_items(report)})
-            elif parsed.path == "/api/assemble":
-                if payload.get("confirmed") is not True:
-                    raise ValueError("需要明确确认后才能开始拼接")
-                checks = runtime_checks()
-                if not all(item["ok"] for item in checks):
-                    raise RuntimeError("离线运行依赖不完整，请先检查左侧状态")
-                report, selected = confirmed_report(
-                    str(payload.get("scan_id") or ""),
-                    [str(path) for path in payload.get("script_dirs", [])],
-                    str(payload.get("caption_mode") or core.DEFAULT_CAPTION_MODE),
-                )
-                self._json(202, {"job": JOB.start(report, selected)})
-            elif parsed.path == "/api/cleanup":
-                if JOB.snapshot()["running"]:
-                    raise RuntimeError("拼接运行中，暂不能清理素材")
-                if payload.get("confirmed") is not True or payload.get("verified") is not True:
-                    raise ValueError("需要确认成品可用后才能清理素材")
-                selected = confirmed_cleanup_items(
-                    str(payload.get("scan_id") or ""),
-                    [str(path) for path in payload.get("script_dirs", [])],
-                )
-                result = core.cleanup_items(selected)
-                report = scan_now()
-                self._json(200, {**result, "report": report, "outputs": output_items(report)})
-            elif parsed.path == "/api/cancel":
-                self._json(200, {"job": JOB.cancel()})
-            elif parsed.path == "/api/open":
-                path = allowed_local_path(str(payload.get("path") or ""))
-                subprocess.Popen(["open", str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                self._json(200, {"opened": str(path)})
-            else:
-                self.send_error(404)
-        except json.JSONDecodeError:
-            self._json(400, {"error": "请求 JSON 无效"})
-        except (OSError, ValueError, RuntimeError) as exc:
-            self._json(400, {"error": str(exc)})
+def api_error(exc: Exception) -> HTTPException:
+    return HTTPException(status_code=400, detail=str(exc))
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="完全离线的片段合成智能体 Web UI")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=9998)
-    args = parser.parse_args()
-    server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"片段合成智能体：{args.host}:{args.port}", flush=True)
+@router.get("/state")
+def state() -> dict[str, Any]:
+    report = read_report()
+    checks = runtime_checks()
+    return {
+        "report": report,
+        "job": JOB.snapshot(),
+        "checks": checks,
+        "offline_ready": all(item["ok"] for item in checks),
+        "outputs": output_items(report),
+        "app_root": str(APP_ROOT),
+    }
+
+
+@router.get("/job")
+def job() -> dict[str, Any]:
+    return {"job": JOB.snapshot()}
+
+
+@router.get("/outputs")
+def outputs() -> dict[str, Any]:
+    return {"outputs": output_items(), "root": str(core.OUTPUT_ROOT)}
+
+
+@router.post("/scan")
+def scan() -> dict[str, Any]:
     try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        server.server_close()
+        if JOB.snapshot()["running"]:
+            raise RuntimeError("拼接运行中，暂不能重新扫描")
+        report = scan_now()
+        return {"report": report, "outputs": output_items(report)}
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise api_error(exc) from exc
 
 
-if __name__ == "__main__":
-    main()
+@router.post("/assemble", status_code=202)
+def assemble(request: AssemblyRequest) -> dict[str, Any]:
+    try:
+        if not request.confirmed:
+            raise ValueError("需要明确确认后才能开始拼接")
+        checks = runtime_checks()
+        if not all(item["ok"] for item in checks):
+            raise RuntimeError("离线运行依赖不完整，请先检查左侧状态")
+        report, selected = confirmed_report(
+            request.scan_id,
+            request.script_dirs,
+            request.caption_mode,
+        )
+        return {"job": JOB.start(report, selected)}
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise api_error(exc) from exc
+
+
+@router.post("/cleanup")
+def cleanup(request: CleanupRequest) -> dict[str, Any]:
+    try:
+        if JOB.snapshot()["running"]:
+            raise RuntimeError("拼接运行中，暂不能清理素材")
+        if not request.confirmed or not request.verified:
+            raise ValueError("需要确认成品可用后才能清理素材")
+        selected = confirmed_cleanup_items(request.scan_id, request.script_dirs)
+        result = core.cleanup_items(selected)
+        report = scan_now()
+        return {**result, "report": report, "outputs": output_items(report)}
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise api_error(exc) from exc
+
+
+@router.post("/cancel")
+def cancel() -> dict[str, Any]:
+    return {"job": JOB.cancel()}
+
+
+@router.post("/open")
+def open_path(request: OpenPathRequest) -> dict[str, Any]:
+    try:
+        path = allowed_local_path(request.path)
+        opener = "open" if sys.platform == "darwin" else "xdg-open"
+        subprocess.Popen([opener, str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return {"opened": str(path)}
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise api_error(exc) from exc

@@ -92,3 +92,15 @@ opc_engine/features/script_generation/
 ```
 
 OPC 总控制台位于相邻的 `OPC-Console`，默认端口为 `8888`。
+
+## 统一脚本创作与适配（10006）
+
+同一 Docker 镜像还提供新的统一入口：
+
+```bash
+python3 -m opc_engine.features.unified_script_agent.web --host 0.0.0.0 --port 10006
+```
+
+10006 只读取根目录唯一提示词 `opc_shared/prompts/unified_script_generation_adaptation_prompt.md`，按任务组合公共、复刻、裂变、产品改写和 Omni 区块。它覆盖线路 1、线路 2、线路 3，并直接写入 9995 的 Omni 适配脚本目录，不保存 `03产品脚本` 或混剪 `03复刻裂变脚本` 中间稿。当前只开放已经封版的 Omni；Grok 与 Veo 保持禁用。
+
+首次进入页面不会自动扫描资料库。点击“扫描资料库”建立持久化索引后再选择来源脚本。复刻结果已存在且通过下游格式校验时默认复用；裂变每批最多执行 3 条，每条独立校验，失败条目缩小为单条补跑。裂变编号保存在 Docker 私有数据目录，即使删除输出文件也不会从 1 重新开始。

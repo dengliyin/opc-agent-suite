@@ -11,10 +11,10 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "app"))
+sys.path.insert(0, str(ROOT))
 
-import server  # noqa: E402
-import video_assembly as core  # noqa: E402
+from assembly import router as server  # noqa: E402
+from assembly import video_assembly as core  # noqa: E402
 
 
 class CoreTests(unittest.TestCase):
@@ -279,7 +279,7 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(output_bytes, b"captioned")
 
     def test_karaoke_style_matches_reference_size_and_position(self) -> None:
-        caption_path = ROOT / "vendor" / "tiktok-karaoke-captions" / "caption.py"
+        caption_path = ROOT / "assembly" / "vendor" / "tiktok-karaoke-captions" / "caption.py"
         spec = importlib.util.spec_from_file_location("karaoke_caption", caption_path)
         module = importlib.util.module_from_spec(spec)
         assert spec.loader is not None
@@ -407,9 +407,9 @@ class CoreTests(unittest.TestCase):
         captioner.assert_called_once()
 
     def test_ui_contract_includes_caption_modes_without_text_stickers(self) -> None:
-        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
-        javascript = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
-        css = (ROOT / "static" / "styles.css").read_text(encoding="utf-8")
+        html = (ROOT / "static" / "assembly" / "index.html").read_text(encoding="utf-8")
+        javascript = (ROOT / "static" / "assembly" / "app.js").read_text(encoding="utf-8")
+        css = (ROOT / "static" / "assembly" / "styles.css").read_text(encoding="utf-8")
         ids = re.findall(r'\bid="([^"]+)"', html)
 
         self.assertEqual(len(ids), len(set(ids)))

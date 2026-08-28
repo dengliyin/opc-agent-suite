@@ -1,6 +1,6 @@
 # 混剪参考视频解析智能体
 
-从 `Hybrid-Script-Analysis` 完整复制出的独立 Agent，用于扫描10001下载的混剪钩子/CTA参考视频，并把 Markdown 解析结果写入对应的类型和产品目录。
+从 `Hybrid-Script-Analysis` 完整复制出的独立 Agent，用于扫描9992下载的混剪钩子/CTA参考视频，并把 Markdown 解析结果写入对应的类型和产品目录。
 
 ## 功能
 

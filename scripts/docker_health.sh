@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-LABELS=("控制台" "视频采集" "脚本解析" "脚本产出" "脚本适配" "片段产出" "成品管理" "产品脚本改写" "片段合成" "钩子与CTA脚本适配" "AI＋实拍混剪" "混剪参考视频采集" "混剪参考视频解析" "钩子与CTA脚本复刻裂变" "配音" "自动发布流水线")
-PORTS=(8888 9991 9992 9993 9994 9995 9996 9997 9998 9999 10000 10001 10002 10003 10004 10005)
-PATHS=("health" "health" "health" "health" "health" "health" "health" "health" "health" "health" "health" "health" "health" "health" "health" "health")
+LABELS=("控制台" "脚本解析" "脚本产出" "脚本适配" "片段产出与合成" "成品管理" "产品脚本改写" "钩子与CTA脚本适配" "AI＋实拍混剪" "混剪参考视频解析" "钩子与CTA脚本复刻裂变" "配音" "自动发布流水线" "脚本创作与适配")
+PORTS=(8888 9992 9993 9994 9995 9996 9997 9999 10000 10002 10003 10004 10005 10006)
+PATHS=("health" "health" "health" "health" "health" "health" "health" "health" "health" "health" "health" "health" "health" "health")
 
 FAILED=0
 for index in "${!PORTS[@]}"; do

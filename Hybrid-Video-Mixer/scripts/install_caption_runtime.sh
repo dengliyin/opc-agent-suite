@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
-RUNTIME_ROOT="${HYBRID_MIX_RUNTIME_ROOT:-${ROOT_DIR}/../Video-Assembly-hd/runtime}"
+RUNTIME_ROOT="${HYBRID_MIX_RUNTIME_ROOT:-${ROOT_DIR}/../Video-Generation/assembly/runtime}"
 MODEL_KEY="${VIDEO_ASSEMBLY_WHISPER_MODEL:-medium}"
 
 if [ ! -x "$PYTHON_BIN" ]; then

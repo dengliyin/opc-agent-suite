@@ -76,6 +76,23 @@ class Segment:
         return _character_indices(self.character_prompt)
 
     @property
+    def character_generation_mode(self) -> str:
+        match = re.search(r"^\s*生成方式\s*[：:]\s*(?P<mode>[^\n]+)$", self.character_prompt, re.MULTILINE)
+        return match.group("mode").strip() if match else ""
+
+    @property
+    def character_reference_segment_indices(self) -> Tuple[int, ...]:
+        match = re.search(r"^\s*参考来源\s*[：:]\s*(?P<sources>[^\n]+)$", self.character_prompt, re.MULTILINE)
+        if match is None or match.group("sources").strip() == "无":
+            return ()
+        return tuple(
+            dict.fromkeys(
+                int(source.group(1))
+                for source in re.finditer(r"Segment\s*0*(\d+)", match.group("sources"), re.IGNORECASE)
+            )
+        )
+
+    @property
     def defined_character_indices(self) -> Tuple[int, ...]:
         prompt = self.character_prompt
         explicit: List[int] = []
@@ -100,6 +117,14 @@ def _character_indices(value: str) -> Tuple[int, ...]:
 def character_source_segment_index(segments: List[Segment], segment: Segment) -> int:
     if not segment.reuses_character:
         return segment.index
+    explicit_sources = segment.character_reference_segment_indices
+    if explicit_sources:
+        if len(explicit_sources) > 1:
+            joined = "、".join(f"片段{index}" for index in explicit_sources)
+            raise ValueError(f"直接复用只能读取一张人物参考板，当前指定了 {joined}")
+        if explicit_sources[0] >= segment.index:
+            raise ValueError(f"人物参考来源必须早于当前片段：Segment {explicit_sources[0]}")
+        return explicit_sources[0]
     referenced = segment.referenced_character_indices
     if not referenced:
         return 1
@@ -172,15 +197,43 @@ def _extract_prompts(block: str) -> Tuple[str, str]:
     return character_prompt, storyboard_prompt
 
 
+def build_storyboard_image_prompt(segment: Segment) -> str:
+    shot_match = re.search(r"^#{1,6}\s*镜头\s*\d+\b.*$", segment.storyboard_prompt, re.MULTILINE)
+    if shot_match is None:
+        raise ValueError(f"片段{segment.index}未找到镜头脚本，无法生成故事版图")
+    shot_script = segment.storyboard_prompt[shot_match.start() :].strip()
+    return (
+        f"生成一张竖版9:16的《Segment {segment.index}｜分镜故事板》逐镜头执行单。"
+        f"本段时间为{segment.time_range}。输入图1只用于锁定产品外观；输入图2只用于锁定人物、特殊主体或场景一致性；"
+        "两张参考图不得在成品中单独做成产品陈列区、人物陈列区或参考图展示区。"
+        "页面顶部使用简洁标题栏；下方按时间顺序从上到下排列镜头行，镜头行数量必须与脚本完全一致。"
+        "每个镜头行左侧为该镜头最有代表性的单一画面，右侧为白底信息区，最右侧为时长色条；"
+        "左上角显示两位镜头编号，信息区显示完整起止时间，时长色条显示由起止时间计算出的准确时长。"
+        "白底信息区必须严格按脚本原文依次显示八个字段：主体、在场景中、做什么动作、镜头语言、光线、细节、画面风格/氛围、音频文案。"
+        "不得改名、合并、删减、增加或自行推断字段，也不得改成画面内容、动作/景别、构图、拍摄方式、声音、台词等另一套结构。"
+        "八字段允许换行但不得截断；音频文案只显示在白底信息区，不得叠加到镜头画面中成为字幕或贴纸。"
+        "每个镜头画面只表现一个代表性瞬间，不得使用无标注照片拼贴、九宫格、分屏、画中画、动作阶段拼贴、产品目录或促销信息图。"
+        "保持相邻镜头的人物、产品、场景、持物手、光线、相对位置和运动方向连续。"
+        "仅在脚本明确要求产品出镜的镜头中显示产品，产品外观必须与输入图1一致。\n\n"
+        "当前片段镜头脚本：\n"
+        f"{shot_script}"
+    )
+
+
 def build_video_prompt(segment: Segment) -> str:
     return (
-        "请根据参考故事版图片生成一段真实商业带货短视频片段。"
-        "保持参考图中的人物、产品外观、场景、镜头顺序和动作一致；"
-        "严格参考脚本中每个镜头的时间段、主体、动作、镜头语言、细节和音频文案节奏；"
-        "音频文案只作为镜头节奏和语境参考，不要生成字幕、贴纸或画面文字。"
+        "输入图片是一张导演使用的分镜故事板执行单，只用于理解镜头画面和镜头顺序，不是视频首帧，也不是成片画面。"
+        "成片必须从00:00直接进入镜头1左侧代表画面，并按脚本时间依次切换为单一9:16全屏镜头。"
+        "严禁在成片中出现、保留或动画化整张故事板、标题栏、白底信息区、文字、镜头编号、时间、时长色条、边框、多格排版或表格；"
+        "不得从故事板整页开始后再放大、裁切或转场进入镜头。"
+        "严格按照下面完整脚本中的镜头数量、起止时间、主体、场景、动作、镜头语言、光线、细节、画面风格和音频文案执行；"
+        "不得省略、合并、重排或新增镜头。"
+        "相邻镜头保持人物、产品、场景状态和动作衔接一致。"
+        "音频文案只作为人声内容和节奏依据，不得生成字幕、贴纸或其他画面文字。"
         f"{VIDEO_AUDIO_LANGUAGE_GUARD}"
         f"{CAMERA_VISIBILITY_GUARD}"
-        "画面自然真实，适合竖屏短视频带货，不要新增与脚本冲突的元素。\n\n"
+        f"{DIRECT_VIDEO_LAYOUT_GUARD}"
+        "画面自然真实，适合竖屏短视频带货。\n\n"
         "当前片段完整脚本如下：\n"
         f"{segment.raw_text}"
     )

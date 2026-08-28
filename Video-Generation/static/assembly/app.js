@@ -1,4 +1,5 @@
 const $ = (id) => document.getElementById(id);
+const API_ROOT = '/assembly/api';
 
 let state = { report: null, job: null, checks: [], outputs: [], app_root: '' };
 let activeStatus = 'missing';
@@ -70,12 +71,12 @@ function updateCaptionMode() {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
+  const response = await fetch(`${API_ROOT}${path}`, {
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
     ...options,
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || `请求失败：${response.status}`);
+  if (!response.ok) throw new Error(data.error || data.detail || `请求失败：${response.status}`);
   return data;
 }
 
@@ -282,7 +283,7 @@ function render() {
 
 async function refreshState(showError = true) {
   try {
-    state = await api('/api/state');
+    state = await api('/state');
     render();
     managePolling();
   } catch (error) {
@@ -294,7 +295,7 @@ async function scan() {
   $('scanBtn').disabled = true;
   $('queueState').textContent = '正在扫描';
   try {
-    const data = await api('/api/scan', { method: 'POST', body: '{}' });
+    const data = await api('/scan', { method: 'POST', body: '{}' });
     state.report = data.report;
     state.outputs = data.outputs || state.outputs;
     selected = new Set(reportItems('missing').map((item) => item.script_dir));
@@ -352,7 +353,7 @@ async function cleanupMedia() {
   if (!$('cleanupVerified').checked) return;
   $('confirmCleanupBtn').disabled = true;
   try {
-    const data = await api('/api/cleanup', {
+    const data = await api('/cleanup', {
       method: 'POST',
       body: JSON.stringify({
         confirmed: true,
@@ -376,7 +377,7 @@ async function cleanupMedia() {
 async function startAssembly() {
   $('confirmRunBtn').disabled = true;
   try {
-    const data = await api('/api/assemble', {
+    const data = await api('/assemble', {
       method: 'POST',
       body: JSON.stringify({
         confirmed: true,
@@ -400,7 +401,7 @@ async function startAssembly() {
 
 async function cancelJob() {
   try {
-    const data = await api('/api/cancel', { method: 'POST', body: '{}' });
+    const data = await api('/cancel', { method: 'POST', body: '{}' });
     state.job = data.job;
     renderJob();
     renderQueueState();
@@ -413,7 +414,7 @@ async function cancelJob() {
 async function openPath(path) {
   if (!path) return;
   try {
-    await api('/api/open', { method: 'POST', body: JSON.stringify({ path }) });
+    await api('/open', { method: 'POST', body: JSON.stringify({ path }) });
   } catch (error) {
     showToast(error.message, true);
   }
@@ -424,7 +425,7 @@ function managePolling() {
   if (running && !pollTimer) {
     pollTimer = setInterval(async () => {
       try {
-        const data = await api('/api/job');
+        const data = await api('/job');
         state.job = data.job;
         renderJob();
         renderQueueState();

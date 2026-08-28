@@ -1,8 +1,11 @@
+import re
+
 import pytest
 
 from agent.markdown_parser import (
     build_direct_video_prompt,
     build_product_video_prompt,
+    build_storyboard_image_prompt,
     build_video_prompt,
     character_source_segment_index,
     parse_segments,
@@ -108,6 +111,8 @@ def test_current_segment_reuse_allows_detailed_source_description() -> None:
         """# Segment 1：00:00.000 - 00:10.000
 ## A. 人物造型参考板提示词
 角色ID：character_01、character_02
+生成方式：首次生成
+参考来源：无
 本段首次生成 character_01 与 character_02 人物造型参考板。
 ## B. 故事板图片提示词
 故事提示词
@@ -115,6 +120,8 @@ def test_current_segment_reuse_allows_detailed_source_description() -> None:
 # Segment 2：00:00.000 - 00:10.000
 ## A. 人物造型参考板提示词
 角色ID：character_01、character_02
+生成方式：直接复用
+参考来源：Segment 1
 本段复用 Segment 1 中已生成的同一张人物造型参考板（包含 character_01 与 character_02），不需要重新生成人物造型参考板。
 ## B. 故事板图片提示词
 故事提示词
@@ -122,8 +129,59 @@ def test_current_segment_reuse_allows_detailed_source_description() -> None:
     )
 
     assert segments[1].reuses_character is True
+    assert segments[1].character_generation_mode == "直接复用"
+    assert segments[1].character_reference_segment_indices == (1,)
     assert segments[1].referenced_character_indices == (1, 2)
     assert character_source_segment_index(segments, segments[1]) == 1
+
+
+def test_parse_character_state_update_and_merge_reference_sources() -> None:
+    segments = parse_segments(
+        """# Segment 1：00:00.000 - 00:05.000
+## A. 人物造型参考板提示词
+角色ID：character_01
+生成方式：首次生成
+参考来源：无
+本段首次生成 character_01 的人物造型参考板。
+## B. 故事板图片提示词
+故事提示词
+
+# Segment 2：00:00.000 - 00:05.000
+## A. 人物造型参考板提示词
+角色ID：character_02
+生成方式：首次生成
+参考来源：无
+本段首次生成 character_02 的人物造型参考板。
+## B. 故事板图片提示词
+故事提示词
+
+# Segment 3：00:00.000 - 00:05.000
+## A. 人物造型参考板提示词
+角色ID：character_01
+生成方式：状态更新
+参考来源：Segment 1
+保持 character_01 身份不变，重新生成当前外观状态参考板。
+## B. 故事板图片提示词
+故事提示词
+
+# Segment 4：00:00.000 - 00:05.000
+## A. 人物造型参考板提示词
+角色ID：character_01、character_02、character_03
+生成方式：新角色合并
+参考来源：Segment 3、Segment 2
+保持旧角色身份不变，并加入 character_03，生成同一张合成参考板。
+## B. 故事板图片提示词
+故事提示词
+"""
+    )
+
+    assert segments[2].reuses_character is False
+    assert segments[2].character_generation_mode == "状态更新"
+    assert segments[2].character_reference_segment_indices == (1,)
+    assert segments[2].defined_character_indices == (1,)
+    assert segments[3].character_generation_mode == "新角色合并"
+    assert segments[3].character_reference_segment_indices == (3, 2)
+    assert segments[3].defined_character_indices == (1, 2, 3)
 
 
 def test_parse_segments_accepts_combined_multi_character_board_and_reuse() -> None:
@@ -193,17 +251,146 @@ def test_character_source_segment_uses_definition_segment_not_character_number()
     assert character_source_segment_index(segments, segments[2]) == 2
 
 
-def test_build_video_prompt_contains_segment_script() -> None:
+def test_parse_segments_accepts_unified_omni_downstream_contract() -> None:
+    segments = parse_segments(
+        """#
+## 每段生成提示词
+
+# Segment 1：00:00.000 - 00:05.000
+## A. 人物造型参考板提示词
+角色ID：character_01、character_02
+生成方式：首次生成
+参考来源：无
+本段首次生成 character_01 与 character_02 的同一张人物造型参考板。
+## B. 故事板图片提示词
+图1是当前产品参考图，图2是当前 Segment 的人物或特殊主体一致性参考板。
+下面是本段镜头脚本（已过滤字段）:
+### 镜头 1 (00:00.000 - 00:05.000)
+- [主体] character_01 与 character_02
+- [在场景中] 普通客厅
+- [做什么动作] 展示图1中的该产品
+- [镜头语言] 中景
+- [光线] 自然光
+- [细节] 生活化细节
+- [画面风格/氛围] 真实手机实拍
+- [音频文案] Hello.
+
+# Segment 2：00:00.000 - 00:05.000
+## A. 人物造型参考板提示词
+角色ID：character_01、character_02
+生成方式：直接复用
+参考来源：Segment 1
+本段复用 Segment 1 中已生成的同一张人物造型参考板（包含 character_01 与 character_02），不需要重新生成人物造型参考板。
+## B. 故事板图片提示词
+图1是当前产品参考图，图2是当前 Segment 复用的人物或特殊主体一致性参考板。
+下面是本段镜头脚本（已过滤字段）:
+### 镜头 1 (00:00.000 - 00:05.000)
+- [主体] character_01 与 character_02
+- [在场景中] 相同客厅
+- [做什么动作] 继续展示
+- [镜头语言] 近景
+- [光线] 自然光
+- [细节] 外观一致
+- [画面风格/氛围] 真实手机实拍
+- [音频文案] No voiceover.
+
+# Segment 3：00:00.000 - 00:05.000
+## A. 人物造型参考板提示词
+角色ID：无
+生成方式：无人物场景
+参考来源：无
+本段无需要保持一致的人物或特殊主体，不分配 character。
+生成一张竖版 9:16 的无人物场景一致性参考板。
+## B. 故事板图片提示词
+图1是当前产品参考图，图2是当前 Segment 的无人物场景一致性参考板。
+下面是本段镜头脚本（已过滤字段）:
+### 镜头 1 (00:00.000 - 00:05.000)
+- [主体] 图1中的该产品
+- [在场景中] 无人空镜
+- [做什么动作] 产品静置
+- [镜头语言] 特写
+- [光线] 柔和光
+- [细节] 产品外观由图1决定
+- [画面风格/氛围] 真实商业带货
+- [音频文案] 无人物口播、无旁白、无对白、无歌词。
+"""
+    )
+
+    assert len(segments) == 3
+    assert segments[0].defined_character_indices == (1, 2)
+    assert segments[0].character_generation_mode == "首次生成"
+    assert segments[1].reuses_character is True
+    assert segments[1].character_generation_mode == "直接复用"
+    assert segments[1].character_reference_segment_indices == (1,)
+    assert segments[1].referenced_character_indices == (1, 2)
+    assert character_source_segment_index(segments, segments[1]) == 1
+    assert segments[2].character_generation_mode == "无人物场景"
+    assert segments[2].defined_character_indices == ()
+    expected_fields = [
+        "主体",
+        "在场景中",
+        "做什么动作",
+        "镜头语言",
+        "光线",
+        "细节",
+        "画面风格/氛围",
+        "音频文案",
+    ]
+    for segment in segments:
+        actual_fields = re.findall(
+            r"^- \[([^\]]+)\] ",
+            segment.storyboard_prompt,
+            flags=re.MULTILINE,
+        )
+        assert actual_fields == expected_fields
+        assert "### 镜头 1" in build_direct_video_prompt(segment)
+
+
+def test_build_video_prompt_treats_storyboard_as_director_reference_only() -> None:
     segment = parse_segments(SAMPLE)[0]
     prompt = build_video_prompt(segment)
 
-    assert "真实商业带货短视频片段" in prompt
+    assert "不是视频首帧，也不是成片画面" in prompt
+    assert "严禁在成片中出现、保留或动画化整张故事板" in prompt
+    assert "不得从故事板整页开始后再放大、裁切或转场进入镜头" in prompt
+    assert "不得省略、合并、重排或新增镜头" in prompt
     assert "### 镜头 1" in prompt
-    assert "音频与语言控制规则" in prompt
-    assert "不得翻译、改写、补写、扩写或新增任何未在[音频文案]中出现的人声内容" in prompt
-    assert "无人物口播、无旁白、无对白、无歌词" in prompt
-    assert "拍摄设备可见性规则" in prompt
-    assert "不得把拍摄设备、支撑物、固定物或其倒影作为画面内容生成" in prompt
+    assert "当前片段完整脚本" in prompt
+
+
+def test_build_storyboard_image_prompt_replaces_legacy_layout_with_eight_field_sheet() -> None:
+    segment = parse_segments(
+        """# Segment 1：00:00.000 - 00:02.500
+
+## A. 人物造型参考板提示词
+
+人物提示词
+
+## B. 故事板图片提示词
+
+上方产品参考区占约25%，下方使用纯视觉照片拼贴。
+
+### 镜头 1 (00:00.000 - 00:02.500)
+
+- [主体] character_01
+- [在场景中] 普通客厅
+- [做什么动作] 拿起产品
+- [镜头语言] 中景固定机位
+- [光线] 自然光
+- [细节] 右手持物
+- [画面风格/氛围] 真实手机实拍
+- [音频文案] Hello.
+"""
+    )[0]
+
+    prompt = build_storyboard_image_prompt(segment)
+
+    assert "逐镜头执行单" in prompt
+    assert "主体、在场景中、做什么动作、镜头语言、光线、细节、画面风格/氛围、音频文案" in prompt
+    assert "### 镜头 1 (00:00.000 - 00:02.500)" in prompt
+    assert "- [音频文案] Hello." in prompt
+    assert "上方产品参考区占约25%" not in prompt
+    assert "纯视觉照片拼贴" not in prompt
 
 
 def test_build_direct_video_prompt_locks_order_and_references() -> None:

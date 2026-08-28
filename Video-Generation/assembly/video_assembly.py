@@ -20,9 +20,10 @@ from pathlib import Path
 from typing import Iterable
 
 
-APP_ROOT = Path(__file__).resolve().parents[1]
-RUNTIME_ROOT = APP_ROOT / "runtime"
-VENDOR_ROOT = APP_ROOT / "vendor"
+ASSEMBLY_ROOT = Path(__file__).resolve().parent
+APP_ROOT = ASSEMBLY_ROOT.parent
+RUNTIME_ROOT = ASSEMBLY_ROOT / "runtime"
+VENDOR_ROOT = ASSEMBLY_ROOT / "vendor"
 CAPTION_TOOL_ROOT = VENDOR_ROOT / "tiktok-karaoke-captions"
 CAPTION_TOOL_PATH = CAPTION_TOOL_ROOT / "caption.py"
 VAULT_ROOT = Path(
@@ -40,9 +41,9 @@ OUTPUT_ROOT = Path(
         str(VAULT_ROOT / "wiki" / "视频" / "成品视频"),
     )
 ).expanduser()
-WORK_ROOT = Path(os.environ.get("VIDEO_ASSEMBLY_WORK_ROOT", str(APP_ROOT)))
+WORK_ROOT = Path(os.environ.get("VIDEO_ASSEMBLY_WORK_ROOT", str(ASSEMBLY_ROOT)))
 REPORT_PATH = Path(
-    os.environ.get("VIDEO_ASSEMBLY_REPORT_PATH", str(APP_ROOT / "data" / "latest-scan.json"))
+    os.environ.get("VIDEO_ASSEMBLY_REPORT_PATH", str(ASSEMBLY_ROOT / "data" / "latest-scan.json"))
 )
 
 VIDEO_EXTS = {".mp4", ".mov", ".m4v"}

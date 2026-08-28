@@ -31,37 +31,33 @@ x-common-environment: &common-environment
   HYBRID_PRODUCT_AUDIO_ROOT: /vault/wiki/视频/AI实拍混剪/06音频文件
   HYBRID_REAL_FOOTAGE_ROOT: /vault/wiki/视频/AI实拍混剪/07实拍素材
   HYBRID_MIX_WORK_ROOT: /vault/wiki/视频/AI实拍混剪/08混剪工作区
-  OPC_HOT_VIDEO_AGENT_URL: http://video-collection:9991/
   OPC_VIDEO_TEARDOWN_AGENT_URL: http://script-analysis:9992/
   OPC_SCRIPT_PRODUCTION_AGENT_URL: http://script-generation:9993/
   OPC_SCRIPT_ADAPTATION_AGENT_URL: http://script-adaptation:9994/
   OPC_VIDEO_OUTPUT_AGENT_URL: http://video-generation:9995/
   OPC_FINISHED_VIDEO_MANAGER_URL: http://finished-video-manager:9996/
   OPC_PRODUCT_SCRIPT_REWRITE_URL: http://product-script-rewrite:9997/
-  OPC_VIDEO_ASSEMBLY_AGENT_URL: http://video-assembly:9998/
   OPC_HYBRID_SCRIPT_ADAPTATION_AGENT_URL: http://hybrid-script-adaptation:9999/
   OPC_HYBRID_VIDEO_MIXER_AGENT_URL: http://hybrid-video-mixer:10000/
-  OPC_HYBRID_VIDEO_COLLECTION_AGENT_URL: http://hybrid-video-collection:10001/
   OPC_HYBRID_SCRIPT_ANALYSIS_AGENT_URL: http://hybrid-script-analysis:10002/
   OPC_HYBRID_SCRIPT_GENERATION_AGENT_URL: http://hybrid-script-generation:10003/
   OPC_HYBRID_AUDIO_GENERATION_AGENT_URL: http://hybrid-audio-generation:10004/
   OPC_AUTO_PUBLISH_PIPELINE_URL: http://auto-publish-pipeline:10005/
+  OPC_UNIFIED_SCRIPT_AGENT_URL: http://unified-script-agent:10006/
   OPC_UPDATER_URL: http://opc-updater:18888
-  OPC_HOT_VIDEO_AGENT_URL_PUBLIC: http://${OPC_PUBLIC_HOST:-localhost}:9991/
   OPC_VIDEO_TEARDOWN_AGENT_URL_PUBLIC: http://${OPC_PUBLIC_HOST:-localhost}:9992/
   OPC_SCRIPT_PRODUCTION_AGENT_URL_PUBLIC: http://${OPC_PUBLIC_HOST:-localhost}:9993/
   OPC_SCRIPT_ADAPTATION_AGENT_URL_PUBLIC: http://${OPC_PUBLIC_HOST:-localhost}:9994/
   OPC_VIDEO_OUTPUT_AGENT_URL_PUBLIC: http://${OPC_PUBLIC_HOST:-localhost}:9995/
   OPC_FINISHED_VIDEO_MANAGER_URL_PUBLIC: http://${OPC_PUBLIC_HOST:-localhost}:9996/
   OPC_PRODUCT_SCRIPT_REWRITE_URL_PUBLIC: http://${OPC_PUBLIC_HOST:-localhost}:9997/
-  OPC_VIDEO_ASSEMBLY_AGENT_URL_PUBLIC: http://${OPC_PUBLIC_HOST:-localhost}:9998/
   OPC_HYBRID_SCRIPT_ADAPTATION_AGENT_URL_PUBLIC: http://${OPC_PUBLIC_HOST:-localhost}:9999/
   OPC_HYBRID_VIDEO_MIXER_AGENT_URL_PUBLIC: http://${OPC_PUBLIC_HOST:-localhost}:10000/
-  OPC_HYBRID_VIDEO_COLLECTION_AGENT_URL_PUBLIC: http://${OPC_PUBLIC_HOST:-localhost}:10001/
   OPC_HYBRID_SCRIPT_ANALYSIS_AGENT_URL_PUBLIC: http://${OPC_PUBLIC_HOST:-localhost}:10002/
   OPC_HYBRID_SCRIPT_GENERATION_AGENT_URL_PUBLIC: http://${OPC_PUBLIC_HOST:-localhost}:10003/
   OPC_HYBRID_AUDIO_GENERATION_AGENT_URL_PUBLIC: http://${OPC_PUBLIC_HOST:-localhost}:10004/
   OPC_AUTO_PUBLISH_PIPELINE_URL_PUBLIC: http://${OPC_PUBLIC_HOST:-localhost}:10005/
+  OPC_UNIFIED_SCRIPT_AGENT_URL_PUBLIC: http://${OPC_PUBLIC_HOST:-localhost}:10006/
 
 x-common-service: &common-service
   restart: unless-stopped
@@ -121,33 +117,19 @@ services:
       - "${OPC_DOCKER_BIND:-127.0.0.1}:8888:8888"
     depends_on:
       - opc-updater
-      - video-collection
       - script-analysis
       - script-generation
       - script-adaptation
       - video-generation
       - finished-video-manager
       - product-script-rewrite
-      - video-assembly
       - hybrid-script-adaptation
       - hybrid-video-mixer
-      - hybrid-video-collection
       - hybrid-script-analysis
       - hybrid-script-generation
       - hybrid-audio-generation
       - auto-publish-pipeline
-
-  video-collection:
-    <<: *common-service
-    build:
-      context: .
-      args: {SERVICE_DIR: Video-Collection, INSTALL_PLAYWRIGHT: "1", SYSTEM_PACKAGES: "xvfb x11vnc novnc websockify fluxbox"}
-    working_dir: /workspace/Video-Collection
-    command: ["/workspace/scripts/start_visible_browser.sh", "python", "-u", "-m", "hot_video_agent", "web", "--host", "0.0.0.0", "--port", "9991"]
-    environment: {<<: *common-environment, SERVICE_PORT: "9991", HEALTH_PATH: /health, OPC_BROWSER_VIEWER_PORT: "15991"}
-    ports:
-      - "${OPC_DOCKER_BIND:-127.0.0.1}:9991:9991"
-      - "${OPC_DOCKER_BIND:-127.0.0.1}:15991:6080"
+      - unified-script-agent
 
   script-analysis:
     <<: *common-service
@@ -175,11 +157,23 @@ services:
 
   video-generation:
     <<: *common-service
-    build: {context: ., args: {SERVICE_DIR: Video-Generation}}
+    shm_size: 512mb
+    build:
+      context: .
+      target: hyperframes
+      args:
+        SERVICE_DIR: Video-Generation
+        INSTALL_PLAYWRIGHT: "1"
+        SYSTEM_PACKAGES: ffmpeg
     working_dir: /workspace/Video-Generation
     command: ["python", "-u", "-m", "uvicorn", "agent.app:app", "--host", "0.0.0.0", "--port", "9995"]
-    environment: {<<: *common-environment, SERVICE_PORT: "9995", HEALTH_PATH: /health}
+    environment: {<<: *common-environment, SERVICE_PORT: "9995", HEALTH_PATH: /health, VIDEO_ASSEMBLY_WORK_ROOT: /assembly-work}
     ports: ["${OPC_DOCKER_BIND:-127.0.0.1}:9995:9995"]
+    volumes:
+      - "${OPC_VAULT_ROOT:?Set OPC_VAULT_ROOT in .env}:/vault"
+      - "${VIDEO_ASSEMBLY_WORK_ROOT:?Set VIDEO_ASSEMBLY_WORK_ROOT in .env}:/assembly-work"
+      - "${OPC_DOCKER_DATA_ROOT:?Set OPC_DOCKER_DATA_ROOT in .env}/config:/config"
+      - "${OPC_DOCKER_DATA_ROOT:?Set OPC_DOCKER_DATA_ROOT in .env}/video-assembly-data:/workspace/Video-Generation/assembly/data"
 
   finished-video-manager:
     <<: *common-service
@@ -204,26 +198,6 @@ services:
     environment: {<<: *common-environment, SERVICE_PORT: "9997", HEALTH_PATH: /health}
     ports: ["${OPC_DOCKER_BIND:-127.0.0.1}:9997:9997"]
 
-  video-assembly:
-    <<: *common-service
-    shm_size: 512mb
-    build:
-      context: .
-      target: hyperframes
-      args:
-        SERVICE_DIR: Video-Assembly-hd
-        INSTALL_PLAYWRIGHT: "1"
-        SYSTEM_PACKAGES: ffmpeg
-    working_dir: /workspace/Video-Assembly-hd
-    command: ["python", "-u", "app/server.py", "--host", "0.0.0.0", "--port", "9998"]
-    environment: {<<: *common-environment, SERVICE_PORT: "9998", HEALTH_PATH: /health, VIDEO_ASSEMBLY_WORK_ROOT: /assembly-work}
-    ports: ["${OPC_DOCKER_BIND:-127.0.0.1}:9998:9998"]
-    volumes:
-      - "${OPC_VAULT_ROOT:?Set OPC_VAULT_ROOT in .env}:/vault"
-      - "${VIDEO_ASSEMBLY_WORK_ROOT:?Set VIDEO_ASSEMBLY_WORK_ROOT in .env}:/assembly-work"
-      - "${OPC_DOCKER_DATA_ROOT:?Set OPC_DOCKER_DATA_ROOT in .env}/config:/config"
-      - "${OPC_DOCKER_DATA_ROOT:?Set OPC_DOCKER_DATA_ROOT in .env}/video-assembly-data:/workspace/Video-Assembly-hd/data"
-
   hybrid-script-adaptation:
     <<: *common-service
     build: {context: ., args: {SERVICE_DIR: Hybrid-Script-Adaptation}}
@@ -239,18 +213,6 @@ services:
     command: ["python", "-u", "app/server.py", "--host", "0.0.0.0", "--port", "10000"]
     environment: {<<: *common-environment, SERVICE_PORT: "10000", HEALTH_PATH: /health}
     ports: ["${OPC_DOCKER_BIND:-127.0.0.1}:10000:10000"]
-
-  hybrid-video-collection:
-    <<: *common-service
-    build:
-      context: .
-      args: {SERVICE_DIR: Hybrid-Video-Collection, INSTALL_PLAYWRIGHT: "1", SYSTEM_PACKAGES: "xvfb x11vnc novnc websockify fluxbox"}
-    working_dir: /workspace/Hybrid-Video-Collection
-    command: ["/workspace/scripts/start_visible_browser.sh", "python", "-u", "-m", "hot_video_agent", "web", "--host", "0.0.0.0", "--port", "10001"]
-    environment: {<<: *common-environment, SERVICE_PORT: "10001", HEALTH_PATH: /health, OPC_BROWSER_VIEWER_PORT: "16001"}
-    ports:
-      - "${OPC_DOCKER_BIND:-127.0.0.1}:10001:10001"
-      - "${OPC_DOCKER_BIND:-127.0.0.1}:16001:6080"
 
   hybrid-script-analysis:
     <<: *common-service
@@ -296,5 +258,13 @@ services:
       - "${OPC_DOCKER_DATA_ROOT:?Set OPC_DOCKER_DATA_ROOT in .env}/config:/config"
       - "${OPC_DOCKER_DATA_ROOT:?Set OPC_DOCKER_DATA_ROOT in .env}/auto-publish-data:/workspace/Auto-Publish-Pipeline/data"
       - "${OPC_DOCKER_DATA_ROOT:?Set OPC_DOCKER_DATA_ROOT in .env}/finished-video-data:/workspace/Finished-Video-Manager/data"
-      - "${OPC_DOCKER_DATA_ROOT:?Set OPC_DOCKER_DATA_ROOT in .env}/video-assembly-data:/workspace/Video-Assembly-hd/data"
+      - "${OPC_DOCKER_DATA_ROOT:?Set OPC_DOCKER_DATA_ROOT in .env}/video-assembly-data:/workspace/Video-Generation/assembly/data"
       - ./Finished-Video-Manager/config:/workspace/Finished-Video-Manager/config
+
+  unified-script-agent:
+    <<: *common-service
+    build: {context: ., args: {SERVICE_DIR: Script-Generation}}
+    working_dir: /workspace/Script-Generation
+    command: ["python", "-u", "-m", "opc_engine.features.unified_script_agent.web", "--host", "0.0.0.0", "--port", "10006"]
+    environment: {<<: *common-environment, SERVICE_PORT: "10006", HEALTH_PATH: /health}
+    ports: ["${OPC_DOCKER_BIND:-127.0.0.1}:10006:10006"]

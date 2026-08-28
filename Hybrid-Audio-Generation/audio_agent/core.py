@@ -12,7 +12,7 @@ from typing import Callable
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = ROOT.parent
-ASSEMBLY_RUNTIME = WORKSPACE_ROOT / "Video-Assembly-hd" / "runtime"
+ASSEMBLY_RUNTIME = WORKSPACE_ROOT / "Video-Generation" / "assembly" / "runtime"
 DEFAULT_SPEED = 1.2
 SUPPORTED_VOICES = (
     {"id": "ef_dora", "name": "Dora · 女声", "language": "es", "markets": ["ES"]},

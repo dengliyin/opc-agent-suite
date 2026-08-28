@@ -26,12 +26,12 @@ Script-Generation/runtime
 OPC-Console/runtime
 Auto-Publish-Pipeline/data
 Finished-Video-Manager/data
-Video-Assembly-hd/data
-Video-Assembly-hd/media
-Video-Assembly-hd/runs
+Video-Generation/assembly/data
+Video-Generation/assembly/media
+Video-Generation/assembly/runs
 **/*.mp4
 **/*.mov
 **/*.m4v
 **/*.webm
-Video-Assembly-hd/runtime
+Video-Generation/assembly/runtime
 Finished-Video-Manager/config/product_mappings.json

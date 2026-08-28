@@ -13,7 +13,7 @@ def read(relative: str) -> str:
 def test_all_compose_agents_use_lightweight_health_endpoints() -> None:
     compose = read("docker-compose.yml")
 
-    assert compose.count("HEALTH_PATH: /health") == 16
+    assert compose.count("HEALTH_PATH: /health") == 14
     assert "HEALTH_PATH: /api/" not in compose
 
 
@@ -31,6 +31,7 @@ def test_high_volume_agents_use_persistent_vault_snapshots() -> None:
         "Hybrid-Video-Mixer/app/server.py",
         "Hybrid-Audio-Generation/audio_agent/web.py",
         "Auto-Publish-Pipeline/auto_publish_pipeline/web.py",
+        "Script-Generation/opc_engine/features/unified_script_agent/core.py",
     )
 
     for relative in files:
@@ -48,7 +49,6 @@ def test_video_generation_initial_page_load_does_not_refresh_catalog() -> None:
 
 
 def test_video_assembly_does_not_scan_on_process_start() -> None:
-    source = read("Video-Assembly-hd/app/server.py")
-    main_body = source.split("def main() -> None:", 1)[1]
+    source = read("Video-Generation/assembly/router.py")
 
-    assert "scan_now()" not in main_body
+    assert "\nscan_now()\n" not in source

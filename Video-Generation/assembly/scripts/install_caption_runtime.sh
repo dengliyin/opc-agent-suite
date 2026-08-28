@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
+APP_ROOT="$(cd "${ROOT_DIR}/.." && pwd)"
+PYTHON_BIN="${PYTHON_BIN:-${APP_ROOT}/.venv/bin/python}"
 MODEL_KEY="${VIDEO_ASSEMBLY_WHISPER_MODEL:-medium}"
 
 if [ ! -x "$PYTHON_BIN" ]; then
@@ -25,8 +26,8 @@ export PATH="$RUNTIME_BIN:$PATH"
 mkdir -p "$RUNTIME_BIN" "$UV_CACHE_DIR" "$HF_HOME"
 
 "$PYTHON_BIN" -m pip install --disable-pip-version-check uv
-install -m 755 "$ROOT_DIR/.venv/bin/uv" "$RUNTIME_BIN/uv"
-install -m 755 "$ROOT_DIR/.venv/bin/uvx" "$RUNTIME_BIN/uvx"
+install -m 755 "$APP_ROOT/.venv/bin/uv" "$RUNTIME_BIN/uv"
+install -m 755 "$APP_ROOT/.venv/bin/uvx" "$RUNTIME_BIN/uvx"
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT

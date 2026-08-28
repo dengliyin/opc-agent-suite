@@ -74,7 +74,7 @@ def ffmpeg_path() -> Path:
     if configured and Path(configured).is_file():
         return Path(configured)
     executable = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
-    bundled = APP_ROOT.parent / "Video-Assembly-hd" / "runtime" / "bin" / executable
+    bundled = APP_ROOT.parent / "Video-Generation" / "assembly" / "runtime" / "bin" / executable
     if bundled.is_file():
         return bundled
     direct = shutil.which("ffmpeg")

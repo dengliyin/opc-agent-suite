@@ -25,9 +25,11 @@ class ConsoleBoundaryTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = load_console_module()
 
-    def test_console_orchestrates_exactly_fifteen_agents(self):
-        self.assertEqual(len(self.app.SERVICES), 15)
+    def test_console_orchestrates_exactly_thirteen_agents(self):
+        self.assertEqual(len(self.app.SERVICES), 13)
         self.assertEqual(set(self.app.ROUTE_TO_SERVICE.values()), set(self.app.SERVICES))
+        self.assertNotIn("compose", self.app.SERVICES)
+        self.assertNotIn("/compose", self.app.ROUTE_TO_SERVICE)
 
     def test_services_only_expose_navigation_and_health_metadata(self):
         forbidden = {"cwd", "command", "launch_cwd", "launch_agent_label", "windows_task_name"}
@@ -44,18 +46,18 @@ class ConsoleBoundaryTests(unittest.TestCase):
         with mock.patch.dict(
             self.app.os.environ,
             {
-                "OPC_HOT_VIDEO_AGENT_URL": "http://video-collection:9991/",
-                "OPC_HOT_VIDEO_AGENT_URL_PUBLIC": "http://localhost:9991/",
+                "OPC_VIDEO_TEARDOWN_AGENT_URL": "http://script-analysis:9992/",
+                "OPC_VIDEO_TEARDOWN_AGENT_URL_PUBLIC": "http://localhost:9992/",
             },
         ):
-            service = self.app.build_services()["collect"]
+            service = self.app.build_services()["analyze"]
 
-        self.assertEqual(service["health_url"], "http://video-collection:9991/")
-        self.assertEqual(service["url"], "http://localhost:9991/")
+        self.assertEqual(service["health_url"], "http://script-analysis:9992/")
+        self.assertEqual(service["url"], "http://localhost:9992/")
 
     def test_service_status_is_read_only(self):
         with mock.patch.object(self.app, "service_running", return_value=True):
-            status = self.app.service_status("collect")
+            status = self.app.service_status("analyze")
 
         self.assertTrue(status["running"])
         self.assertNotIn("controllable", status)
@@ -73,7 +75,7 @@ class ConsoleBoundaryTests(unittest.TestCase):
 
     def test_command_line_healthcheck_uses_business_probe_paths(self):
         healthcheck = (WORKSPACE_ROOT / "scripts" / "docker_health.sh").read_text(encoding="utf-8")
-        self.assertEqual(healthcheck.count('"health"'), 16)
+        self.assertEqual(healthcheck.count('"health"'), 14)
         self.assertIn('[[ "$status" =~ ^2 ]]', healthcheck)
 
     def test_console_cards_are_navigation_only(self):
@@ -83,19 +85,25 @@ class ConsoleBoundaryTests(unittest.TestCase):
         self.assertNotIn("Compose 管理", html)
         self.assertIn(">打开</a>", html)
 
-    def test_console_groups_agents_into_four_workflow_lines(self):
+    def test_console_shows_each_primary_agent_once_without_workflow_lines(self):
         html = self.app.INDEX_HTML
-        self.assertIn("线路 1 · 爆款复刻", html)
-        self.assertIn("线路 2 · 产品脚本改写", html)
-        self.assertIn("线路 3 · AI＋实拍混剪", html)
-        self.assertIn("线路 4 · 自动发布", html)
-        self.assertIn("统一归口 · 成品管理与发布", html)
+        self.assertIn("OPC 大 Agent 控制台", html)
+        self.assertNotIn("线路 1 · 爆款复刻", html)
+        self.assertNotIn("统一归口 · 成品管理与发布", html)
+        self.assertIn(
+            "const dashboardAgentIds=['analyze','unified_script','assemble','hybrid_voice','hybrid_mix','finished','auto_publish'];",
+            html,
+        )
+        for primary_agent in ("analyze", "unified_script", "assemble", "hybrid_voice", "hybrid_mix", "finished", "auto_publish"):
+            self.assertEqual(html.count(f"'{primary_agent}'"), 1)
+        for legacy_agent in ("script", "adapt", "rewrite", "hybrid_adapt", "hybrid_analyze", "hybrid_script"):
+            self.assertNotIn(f"'{legacy_agent}'", html)
 
     def test_agent_cards_are_compact_and_equal_sized(self):
         html = self.app.INDEX_HTML
-        self.assertNotIn('<p class="desc">', html)
-        self.assertIn("grid-template-columns:repeat(6,minmax(0,1fr))", html)
-        self.assertIn(".card{display:flex;flex-direction:column;height:160px", html)
+        self.assertIn("grid-template-columns:repeat(3,minmax(0,1fr))", html)
+        self.assertIn(".card{display:flex;flex-direction:column;min-height:210px", html)
+        self.assertIn('${esc(service.description)}', html)
 
     def test_console_exposes_global_path_settings_page(self):
         self.assertIn('href="/settings/paths"', self.app.INDEX_HTML)
@@ -103,7 +111,10 @@ class ConsoleBoundaryTests(unittest.TestCase):
         self.assertIn("/api/global-paths", self.app.PATH_SETTINGS_HTML)
         group_labels = {group["label"] for group in self.app.GLOBAL_PATH_GROUPS}
         self.assertIn("9992 · 脚本解析", group_labels)
-        self.assertIn("9998 · 片段合成", group_labels)
+        self.assertIn("10006 → 9995 · 适配稿与片段产出", group_labels)
+        group = next(group for group in self.app.GLOBAL_PATH_GROUPS if group["id"] == "9995")
+        self.assertIn("VIDEO_ASSEMBLY_PENDING_ROOT", group["keys"])
+        self.assertIn("VIDEO_ASSEMBLY_OUTPUT_ROOT", group["keys"])
         self.assertIn("10000 · AI＋实拍混剪", group_labels)
 
     def test_console_exposes_global_ai_settings_page(self):
@@ -117,7 +128,7 @@ class ConsoleBoundaryTests(unittest.TestCase):
         self.assertIn("/api/ai-agent-restart", self.app.AI_SETTINGS_HTML)
         restart_labels = {group["id"]: group["restart_label"] for group in self.app.GLOBAL_AI_GROUPS}
         self.assertEqual(restart_labels["video_analysis"], "重启 9992、10002")
-        self.assertEqual(restart_labels["text"], "重启 9993、9994、9997、9999、10003")
+        self.assertEqual(restart_labels["text"], "重启 10006 与旧脚本 Agent")
         self.assertEqual(restart_labels["otu"], "重启 9995")
         self.assertEqual(restart_labels["grok"], "重启 9995")
 

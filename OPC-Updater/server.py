@@ -28,21 +28,19 @@ PROJECT_NAME = os.environ.get("OPC_COMPOSE_PROJECT", "opc-agent-suite")
 
 CORE_SERVICES = (
     "console",
-    "video-collection",
     "script-analysis",
     "script-generation",
     "script-adaptation",
     "video-generation",
     "finished-video-manager",
     "product-script-rewrite",
-    "video-assembly",
     "hybrid-script-adaptation",
     "hybrid-video-mixer",
-    "hybrid-video-collection",
     "hybrid-script-analysis",
     "hybrid-script-generation",
     "hybrid-audio-generation",
     "auto-publish-pipeline",
+    "unified-script-agent",
 )
 
 AI_RESTART_GROUPS = {
@@ -53,6 +51,7 @@ AI_RESTART_GROUPS = {
         "product-script-rewrite",
         "hybrid-script-adaptation",
         "hybrid-script-generation",
+        "unified-script-agent",
     ),
     "otu": ("video-generation",),
     "grok": ("video-generation",),

@@ -3,10 +3,6 @@ services:
     ports: !override
       - "127.0.0.1:18888:8888"
 
-  video-collection:
-    ports: !override
-      - "127.0.0.1:19991:9991"
-
   script-analysis:
     ports: !override
       - "127.0.0.1:19992:9992"
@@ -31,10 +27,6 @@ services:
     ports: !override
       - "127.0.0.1:19997:9997"
 
-  video-assembly:
-    ports: !override
-      - "127.0.0.1:19998:9998"
-
   hybrid-script-adaptation:
     ports: !override
       - "127.0.0.1:19999:9999"
@@ -42,10 +34,6 @@ services:
   hybrid-video-mixer:
     ports: !override
       - "127.0.0.1:20000:10000"
-
-  hybrid-video-collection:
-    ports: !override
-      - "127.0.0.1:20001:10001"
 
   hybrid-script-analysis:
     ports: !override
@@ -62,3 +50,7 @@ services:
   auto-publish-pipeline:
     ports: !override
       - "127.0.0.1:20005:10005"
+
+  unified-script-agent:
+    ports: !override
+      - "127.0.0.1:20006:10006"

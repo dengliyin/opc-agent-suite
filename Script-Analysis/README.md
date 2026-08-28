@@ -5,6 +5,10 @@
 ## 功能
 
 - 本地 Web 可视化界面
+- 批量粘贴 TikTok URL，通过 Kolsprite 下载无水印 MP4
+- 下载完成后自动刷新待拆解队列，不自动消耗模型额度
+- 在同一页面切换“纯 AI 视频”与“AI＋实拍混剪”；混剪继续区分钩子和 CTA
+- 两条线路共用产品选择，但分别使用各自固定的输入、输出目录
 - 按产品文件夹扫描视频目录和脚本目录
 - 通过视频 ID 查重，跳过已拆解视频
 - 支持选择全部、单个产品、多个产品或单条视频处理
@@ -29,6 +33,7 @@ references/
   teardown-output-contract.md
 scripts/
   analyze_video.py
+  url_downloader.py
   auto_runner.py
   start_background.sh
   stop_background.sh
@@ -93,20 +98,20 @@ python3 scripts/analyze_video.py /absolute/path/to/video.mp4
 
 ## 默认业务目录
 
-在 OPC Agent Suite 中，Web 队列优先读取全局环境变量：
+在 OPC Agent Suite 中，Web 队列根据页面选择的内容线路读取固定的全局环境变量：
 
 ```text
-VIDEO_TEARDOWN_INPUT_ROOT
-VIDEO_TEARDOWN_OUTPUT_ROOT
+纯 AI 视频：VIDEO_TEARDOWN_INPUT_ROOT → VIDEO_TEARDOWN_OUTPUT_ROOT
+AI＋实拍混剪：HYBRID_VIDEO_TEARDOWN_INPUT_ROOT → HYBRID_VIDEO_TEARDOWN_OUTPUT_ROOT
 ```
 
-未提供全局环境变量时，独立运行的 9992 会回退到 `config/paths.local.json`。复制示例配置：
+纯 AI 线路未提供全局环境变量时，独立运行的 9992 会回退到 `config/paths.local.json`。复制示例配置：
 
 ```bash
 cp config/paths.example.json config/paths.local.json
 ```
 
-然后把 `video_dir` 和 `script_dir` 改成自己的本机目录。这两个目录也可以在前端输入框中临时修改。目录下可以继续按产品名称分文件夹，输出会保存到脚本目录的对应产品文件夹下。`inputs/` 和 `outputs/` 只保存手动任务副本和处理中间文件，不属于需要人工维护的业务路径。
+然后把 `video_dir` 和 `script_dir` 改成自己的本机目录。网页不展示也不接受临时目录输入，避免两条线路串目录。纯 AI 按 `<产品名>` 归档；混剪按 `<混剪-钩子|混剪-CTA>/<产品名>` 归档。`inputs/` 和 `outputs/` 只保存手动任务副本和处理中间文件，不属于需要人工维护的业务路径。
 
 ## 输出命名
 

@@ -2,14 +2,15 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
+APP_ROOT="$(cd "${ROOT_DIR}/.." && pwd)"
+PYTHON_BIN="${PYTHON_BIN:-${APP_ROOT}/.venv/bin/python}"
 
 if [ ! -x "$PYTHON_BIN" ]; then
   PYTHON_BIN="$(command -v python3)"
 fi
 
-"$PYTHON_BIN" -m compileall -q "$ROOT_DIR/app"
-"$PYTHON_BIN" -m unittest discover -s "$ROOT_DIR/tests" -p 'test_*.py'
+"$PYTHON_BIN" -m compileall -q "$ROOT_DIR"
+"$PYTHON_BIN" -m unittest discover -s "$APP_ROOT/tests" -p 'test_assembly.py'
 
 for path in \
   "$ROOT_DIR/runtime/bin/node" \
@@ -48,7 +49,7 @@ if [ -z "$FFMPEG_VERSION" ] || [ "$FFMPEG_VERSION" != "$FFPROBE_VERSION" ]; then
 fi
 
 if rg --pcre2 -n 'https?://(?!127\.0\.0\.1|localhost)|pnpm[[:space:]]+dlx|npx[[:space:]]+hyperframes' \
-  "$ROOT_DIR/app" "$ROOT_DIR/static" "$ROOT_DIR/scripts"; then
+  "$ROOT_DIR" "$APP_ROOT/static/assembly"; then
   echo "检测到运行时代码中的联网引用" >&2
   exit 1
 fi
