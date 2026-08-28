@@ -241,7 +241,7 @@ h2 {
 
 .workspace {
   display: grid;
-  grid-template-columns: 320px minmax(430px, 1fr) 420px;
+  grid-template-columns: minmax(340px, 34fr) minmax(520px, 40fr) minmax(360px, 26fr);
   gap: 14px;
   padding: 14px;
   align-items: start;
@@ -1857,7 +1857,7 @@ h2 {
 }
 
 .workspace {
-  grid-template-columns: 320px minmax(430px, 1fr) 420px;
+  grid-template-columns: minmax(340px, 34fr) minmax(520px, 40fr) minmax(360px, 26fr);
   gap: 14px;
   padding: 14px;
 }
@@ -2181,6 +2181,10 @@ td.running-cell {
 }
 
 @media (max-width: 1180px) {
+  .workspace {
+    grid-template-columns: minmax(280px, 1fr) minmax(430px, 1.5fr);
+  }
+
   .portal-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2195,6 +2199,10 @@ td.running-cell {
   .settings-workspace,
   .portal-shell {
     padding: 12px;
+  }
+
+  .workspace {
+    grid-template-columns: 1fr;
   }
 
   .toolbar {
