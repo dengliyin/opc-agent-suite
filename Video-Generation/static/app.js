@@ -725,6 +725,7 @@ function renderJobs() {
   const activeJob = activeOrLatestJob(jobs);
   if (!activeJob) {
     $("#jobState").textContent = "无任务";
+    $("#jobProgress").hidden = true;
     $("#jobProgress span").style.width = "0%";
     $("#jobLogs").innerHTML = `<div class="empty-state">暂无日志</div>`;
     updateToolbarState(null);
@@ -732,6 +733,7 @@ function renderJobs() {
   }
 
   const percent = activeJob.total ? Math.round((activeJob.done / activeJob.total) * 100) : 0;
+  $("#jobProgress").hidden = false;
   const errorSuffix = activeJob.errors?.length ? ` · ${activeJob.errors.length} 错误` : "";
   $("#jobState").textContent = `${jobStatusLabel(activeJob)} · 处理 ${activeJob.done}/${activeJob.total} · ${percent}%${errorSuffix}`;
   $("#jobProgress span").style.width = `${Math.min(100, percent)}%`;
