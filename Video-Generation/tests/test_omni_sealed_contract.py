@@ -20,6 +20,7 @@ EXPECTED_FIELDS = [
     "细节",
     "画面风格/氛围",
     "音频文案",
+    "背景音乐",
 ]
 
 
@@ -61,6 +62,7 @@ def _segment(
 - [细节] 人物、产品状态和持物手保持一致
 - [画面风格/氛围] 真实手机实拍
 - [音频文案] {audio}
+- [背景音乐] 无
 """
 
 
@@ -88,7 +90,7 @@ def test_omni_prompt_locks_sealed_duration_and_audio_rules() -> None:
     assert "可提取字幕引号内原文作为口播" not in omni
 
 
-def test_omni_storyboard_is_a_labeled_shot_sheet_using_existing_eight_fields() -> None:
+def test_omni_storyboard_is_a_labeled_shot_sheet_using_nine_fields() -> None:
     prompt = UNIFIED_PROMPT.read_text(encoding="utf-8")
     omni = prompt.split("<!-- OPC_BLOCK:MODEL_OMNI:START -->", 1)[1].split(
         "<!-- OPC_BLOCK:MODEL_OMNI:END -->",
@@ -97,7 +99,7 @@ def test_omni_storyboard_is_a_labeled_shot_sheet_using_existing_eight_fields() -
 
     assert "逐镜头分镜故事板执行单" in omni
     assert "不得在最终故事板中单独做成产品陈列区" in omni
-    assert "代表画面、八字段信息区、镜头编号、起止时间和准确时长" in omni
+    assert "代表画面、九字段信息区、镜头编号、起止时间和准确时长" in omni
     assert "不得改成示例图中的“画面内容、动作/景别、构图、拍摄方式、声音、台词”等另一套字段" in omni
     assert "无标注照片拼贴" in omni
 

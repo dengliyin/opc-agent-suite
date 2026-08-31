@@ -274,6 +274,7 @@ def test_parse_segments_accepts_unified_omni_downstream_contract() -> None:
 - [细节] 生活化细节
 - [画面风格/氛围] 真实手机实拍
 - [音频文案] Hello.
+- [背景音乐] 无
 
 # Segment 2：00:00.000 - 00:05.000
 ## A. 人物造型参考板提示词
@@ -293,6 +294,7 @@ def test_parse_segments_accepts_unified_omni_downstream_contract() -> None:
 - [细节] 外观一致
 - [画面风格/氛围] 真实手机实拍
 - [音频文案] No voiceover.
+- [背景音乐] 无版权轻快音乐
 
 # Segment 3：00:00.000 - 00:05.000
 ## A. 人物造型参考板提示词
@@ -313,6 +315,7 @@ def test_parse_segments_accepts_unified_omni_downstream_contract() -> None:
 - [细节] 产品外观由图1决定
 - [画面风格/氛围] 真实商业带货
 - [音频文案] 无人物口播、无旁白、无对白、无歌词。
+- [背景音乐] 无
 """
     )
 
@@ -335,6 +338,7 @@ def test_parse_segments_accepts_unified_omni_downstream_contract() -> None:
         "细节",
         "画面风格/氛围",
         "音频文案",
+        "背景音乐",
     ]
     for segment in segments:
         actual_fields = re.findall(
@@ -358,7 +362,7 @@ def test_build_video_prompt_treats_storyboard_as_director_reference_only() -> No
     assert "当前片段完整脚本" in prompt
 
 
-def test_build_storyboard_image_prompt_replaces_legacy_layout_with_eight_field_sheet() -> None:
+def test_build_storyboard_image_prompt_replaces_legacy_layout_with_nine_field_sheet() -> None:
     segment = parse_segments(
         """# Segment 1：00:00.000 - 00:02.500
 
@@ -386,11 +390,36 @@ def test_build_storyboard_image_prompt_replaces_legacy_layout_with_eight_field_s
     prompt = build_storyboard_image_prompt(segment)
 
     assert "逐镜头执行单" in prompt
-    assert "主体、在场景中、做什么动作、镜头语言、光线、细节、画面风格/氛围、音频文案" in prompt
+    assert "主体、在场景中、做什么动作、镜头语言、光线、细节、画面风格/氛围、音频文案、背景音乐" in prompt
     assert "### 镜头 1 (00:00.000 - 00:02.500)" in prompt
     assert "- [音频文案] Hello." in prompt
+    assert "- [背景音乐] 无" in prompt
     assert "上方产品参考区占约25%" not in prompt
     assert "纯视觉照片拼贴" not in prompt
+
+
+def test_legacy_eight_field_music_instruction_is_mapped_to_background_music() -> None:
+    segment = parse_segments(
+        """# Segment 1：00:00.000 - 00:02.500
+## A. 人物造型参考板提示词
+人物提示词
+## B. 故事板图片提示词
+### 镜头 1 (00:00.000 - 00:02.500)
+- [主体] character_01
+- [在场景中] 普通客厅
+- [做什么动作] 展示产品
+- [镜头语言] 中景
+- [光线] 自然光
+- [细节] 动作清晰
+- [画面风格/氛围] 真实手机实拍
+- [音频文案] 无口播，仅保留背景音乐。
+"""
+    )[0]
+
+    prompt = build_direct_video_prompt(segment)
+
+    assert "- [背景音乐] 无版权音乐氛围" in prompt
+    assert "背景音乐只服从[背景音乐]字段" in prompt
 
 
 def test_build_direct_video_prompt_locks_order_and_references() -> None:

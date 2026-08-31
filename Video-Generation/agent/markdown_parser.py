@@ -15,7 +15,9 @@ VIDEO_AUDIO_LANGUAGE_GUARD = (
     "音频与语言控制规则：只允许使用脚本中[音频文案]字段明确给出的原文语言和原文内容；"
     "不得翻译、改写、补写、扩写或新增任何未在[音频文案]中出现的人声内容。"
     "当[音频文案]标记为无口播、仅音乐或仅环境声时，必须保持无人物口播、无旁白、无对白、无歌词；"
-    "只允许自然环境声或无版权纯背景音乐。"
+    "只允许与镜头动作一致的自然环境声。"
+    "背景音乐只服从[背景音乐]字段；标记为无时不得生成背景音乐，"
+    "标记了音乐氛围时只能生成与描述一致的无版权纯背景音乐，不得使用具体歌曲、歌手或受保护音乐。"
 )
 
 CAMERA_VISIBILITY_GUARD = (
@@ -197,11 +199,34 @@ def _extract_prompts(block: str) -> Tuple[str, str]:
     return character_prompt, storyboard_prompt
 
 
+def _ensure_background_music_field(value: str) -> str:
+    """Keep existing eight-field adaptations usable by treating missing BGM as none."""
+    blocks = re.split(r"(?=^#{1,6}\s*镜头\s*\d+\b)", str(value or ""), flags=re.MULTILINE)
+    normalized: List[str] = []
+    for block in blocks:
+        if not re.match(r"^#{1,6}\s*镜头\s*\d+\b", block) or re.search(r"\[背景音乐\]", block):
+            normalized.append(block)
+            continue
+        def add_background_music(match: re.Match[str]) -> str:
+            audio = match.group("audio")
+            background_music = "无版权音乐氛围" if re.search(r"仅音乐|仅保留背景音乐|背景音乐|\bBGM\b", audio, re.IGNORECASE) else "无"
+            return f"{audio}\n- [背景音乐] {background_music}"
+
+        block = re.sub(
+            r"(?m)^(?P<audio>\s*[-*]\s*(?:\*\*)?\[音频文案\](?:\*\*)?\s*[：:]?.*)$",
+            add_background_music,
+            block,
+            count=1,
+        )
+        normalized.append(block)
+    return "".join(normalized)
+
+
 def build_storyboard_image_prompt(segment: Segment) -> str:
     shot_match = re.search(r"^#{1,6}\s*镜头\s*\d+\b.*$", segment.storyboard_prompt, re.MULTILINE)
     if shot_match is None:
         raise ValueError(f"片段{segment.index}未找到镜头脚本，无法生成故事版图")
-    shot_script = segment.storyboard_prompt[shot_match.start() :].strip()
+    shot_script = _ensure_background_music_field(segment.storyboard_prompt[shot_match.start() :].strip())
     return (
         f"生成一张竖版9:16的《Segment {segment.index}｜分镜故事板》逐镜头执行单。"
         f"本段时间为{segment.time_range}。输入图1只用于锁定产品外观；输入图2只用于锁定人物、特殊主体或场景一致性；"
@@ -209,9 +234,9 @@ def build_storyboard_image_prompt(segment: Segment) -> str:
         "页面顶部使用简洁标题栏；下方按时间顺序从上到下排列镜头行，镜头行数量必须与脚本完全一致。"
         "每个镜头行左侧为该镜头最有代表性的单一画面，右侧为白底信息区，最右侧为时长色条；"
         "左上角显示两位镜头编号，信息区显示完整起止时间，时长色条显示由起止时间计算出的准确时长。"
-        "白底信息区必须严格按脚本原文依次显示八个字段：主体、在场景中、做什么动作、镜头语言、光线、细节、画面风格/氛围、音频文案。"
+        "白底信息区必须严格按脚本原文依次显示九个字段：主体、在场景中、做什么动作、镜头语言、光线、细节、画面风格/氛围、音频文案、背景音乐。"
         "不得改名、合并、删减、增加或自行推断字段，也不得改成画面内容、动作/景别、构图、拍摄方式、声音、台词等另一套结构。"
-        "八字段允许换行但不得截断；音频文案只显示在白底信息区，不得叠加到镜头画面中成为字幕或贴纸。"
+        "九字段允许换行但不得截断；音频文案和背景音乐只显示在白底信息区，不得叠加到镜头画面中成为字幕或贴纸。"
         "每个镜头画面只表现一个代表性瞬间，不得使用无标注照片拼贴、九宫格、分屏、画中画、动作阶段拼贴、产品目录或促销信息图。"
         "保持相邻镜头的人物、产品、场景、持物手、光线、相对位置和运动方向连续。"
         "仅在脚本明确要求产品出镜的镜头中显示产品，产品外观必须与输入图1一致。\n\n"
@@ -221,21 +246,22 @@ def build_storyboard_image_prompt(segment: Segment) -> str:
 
 
 def build_video_prompt(segment: Segment) -> str:
+    normalized_script = _ensure_background_music_field(segment.raw_text)
     return (
         "输入图片是一张导演使用的分镜故事板执行单，只用于理解镜头画面和镜头顺序，不是视频首帧，也不是成片画面。"
         "成片必须从00:00直接进入镜头1左侧代表画面，并按脚本时间依次切换为单一9:16全屏镜头。"
         "严禁在成片中出现、保留或动画化整张故事板、标题栏、白底信息区、文字、镜头编号、时间、时长色条、边框、多格排版或表格；"
         "不得从故事板整页开始后再放大、裁切或转场进入镜头。"
-        "严格按照下面完整脚本中的镜头数量、起止时间、主体、场景、动作、镜头语言、光线、细节、画面风格和音频文案执行；"
+        "严格按照下面完整脚本中的镜头数量、起止时间、主体、场景、动作、镜头语言、光线、细节、画面风格、音频文案和背景音乐执行；"
         "不得省略、合并、重排或新增镜头。"
         "相邻镜头保持人物、产品、场景状态和动作衔接一致。"
-        "音频文案只作为人声内容和节奏依据，不得生成字幕、贴纸或其他画面文字。"
+        "音频文案只作为人声内容和节奏依据，背景音乐只作为声音轨要求；两者都不得生成字幕、贴纸或其他画面文字。"
         f"{VIDEO_AUDIO_LANGUAGE_GUARD}"
         f"{CAMERA_VISIBILITY_GUARD}"
         f"{DIRECT_VIDEO_LAYOUT_GUARD}"
         "画面自然真实，适合竖屏短视频带货。\n\n"
         "当前片段完整脚本如下：\n"
-        f"{segment.raw_text}"
+        f"{normalized_script}"
     )
 
 
@@ -243,7 +269,7 @@ def build_direct_video_prompt(segment: Segment) -> str:
     shot_match = re.search(r"^#{1,6}\s*镜头\s*\d+\b.*$", segment.raw_text, re.MULTILINE)
     if shot_match is None:
         raise ValueError(f"片段{segment.index}未找到镜头脚本，无法运行功能4")
-    shot_script = segment.raw_text[shot_match.start() :].strip()
+    shot_script = _ensure_background_music_field(segment.raw_text[shot_match.start() :].strip())
     technical_padding = _technical_padding_control(segment.raw_text)
     technical_padding_prompt = ""
     if technical_padding:
@@ -276,7 +302,7 @@ def build_product_video_prompt(segment: Segment) -> str:
     shot_match = re.search(r"^#{1,6}\s*镜头\s*\d+\b.*$", segment.raw_text, re.MULTILINE)
     if shot_match is None:
         raise ValueError(f"片段{segment.index}未找到镜头脚本，无法运行功能5极速模式")
-    shot_script = segment.raw_text[shot_match.start() :].strip()
+    shot_script = _ensure_background_music_field(segment.raw_text[shot_match.start() :].strip())
     technical_padding = _technical_padding_control(segment.raw_text)
     technical_padding_prompt = ""
     if technical_padding:

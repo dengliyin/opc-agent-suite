@@ -7,3 +7,81 @@
 .layout{grid-template-columns:minmax(0,1fr) 330px;align-items:start}.routeLayout{grid-template-columns:minmax(320px,.72fr) minmax(0,1.28fr)}.pathBox{padding:0;border:1px solid #0003}.pathRow{display:grid;grid-template-columns:68px minmax(0,1fr);gap:8px;padding:8px 10px;border-bottom:1px solid #0002}.pathRow:last-child{border-bottom:0}.pathRow b{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif}.sourceStatus{display:flex;gap:6px;min-height:22px;margin-top:6px}.statusPill{border:1px solid currentColor;padding:2px 7px;font-size:11px;font-weight:700}.statusPill.done{color:var(--green);background:#eff9ef}.statusPill.todo{color:var(--muted);background:var(--soft)}.statusPill.mutation{color:var(--amber);background:#fff8df}.jobsPanel{height:auto!important;max-height:calc(100vh - 98px)}.jobsPanel.idle{padding-bottom:5px}.jobsPanel.idle pre,.jobsPanel.idle .outputs{display:none}.jobsPanel pre{height:260px;min-height:150px;flex:none}.jobsPanel .empty{padding:8px 0}
 @media(max-width:1100px){.layout{grid-template-columns:1fr}.routeLayout{grid-template-columns:1fr}}
 .autoProduct{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:10px;padding:10px 12px;border:1px solid #0005;background:var(--soft);font-size:12px}.autoProduct strong{overflow-wrap:anywhere}.autoProduct[hidden],#targetProductField[hidden]{display:none}
+
+/* Unified script workbench: five-step form left, queue and switchable details right. */
+main{max-width:1800px;padding:10px 18px}
+.statusbar{min-height:62px;margin-bottom:10px;padding:11px 14px;border-radius:11px}
+.layout{grid-template-columns:minmax(820px,1.25fr) minmax(620px,1fr);gap:12px;align-items:start}
+.workspace{gap:8px}
+.panel{padding:12px 16px}
+.panelTitle{margin:0 0 10px;padding:0;background:transparent!important}
+.panelTitle>b{font-size:17px}
+.panelTitle>span{display:flex;gap:26px;align-items:center}
+.routeLayout{display:block}
+.routeGrid{grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.routeGrid .choice{height:60px;min-height:60px;margin-top:1px;padding:7px 12px;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:center}
+.routeGrid .choice input{margin:0}
+.routeGrid .choice span{gap:3px}
+.choice span{display:grid;gap:7px;min-width:0}
+.choice small{display:block;color:var(--muted);font-size:12px;font-weight:500;line-height:1.25}
+.sourceSelectionRow{display:grid;grid-template-columns:minmax(210px,.65fr) minmax(360px,1.35fr) auto;gap:18px;align-items:end}
+.sourceSelectionRow>*{min-width:0}
+.sourceStatus{height:37px;min-height:37px;margin:4px 0 0;padding:6px 4px;align-items:center;flex-wrap:nowrap}
+.sourceStatus .statusPill{white-space:nowrap}
+.modeRow{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(240px,.9fr);gap:14px}
+.modeRow .modeChoice{height:60px;min-height:60px;margin:0;padding:7px 12px;display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:center}
+.modeRow .modeChoice input{width:auto;margin:0}
+.modeRow .modeChoice span{gap:3px}
+.variantBox{height:60px;min-height:60px;margin:0;padding:7px 12px;border:1px solid var(--line);border-radius:10px;background:#0d1116;display:grid;grid-template-columns:minmax(0,1fr) 92px auto;gap:10px;align-items:center}
+.variantBox span{display:grid;gap:6px}
+.variantBox small{color:var(--muted);font-size:11px;font-weight:500;white-space:nowrap}
+.variantBox input{height:36px;margin:0;text-align:center}
+.variantBox em{font-style:normal;color:var(--muted)}
+.variantBox.disabled{opacity:.7}
+.productInfoRow{display:grid;grid-template-columns:1.15fr .95fr .8fr;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.productInfoRow>*{min-width:0;border-right:1px solid var(--line)}
+.productInfoRow>*:last-child{border-right:0}
+.productField{display:flex;align-items:center;min-height:52px;padding:0 14px}
+.productField .autoProduct{width:100%;height:auto;margin:0;padding:0;border:0;background:transparent;white-space:nowrap}
+.productField .autoProduct strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.productField #targetProductField{width:100%;margin:0}
+.productInfoCell{display:grid;align-content:center;gap:5px;padding:9px 16px;font-size:12px}
+.productInfoCell span{color:var(--muted)}
+.productInfoCell strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.productInfoCell.ready strong{color:var(--green)}
+.productInfoCell.pending strong{color:var(--amber)}
+.marketRow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px}
+.marketRow label{min-width:0}
+.marketRow select,.marketRow input{height:40px}
+.workspace>.panel:last-child{padding:11px 16px}
+.submitRow{min-height:58px}
+.readySummary{display:flex;align-items:center;gap:12px;min-width:0}
+.readySummary>div{display:grid;gap:5px;min-width:0}
+.readySummary>div>span{color:var(--muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.readyIcon{width:30px;height:30px;display:grid;place-items:center;border:1px solid var(--line);border-radius:50%;color:var(--blue);font-size:20px}
+.submitRow button.primary{min-width:214px;padding:13px 18px;color:#fff;background:linear-gradient(135deg,#3478ee,#1557d6);border-color:#3478ee;font-weight:700}
+.sideRail{height:calc(100vh - 98px);min-height:0;position:sticky;top:86px;display:grid;grid-template-rows:minmax(250px,34%) minmax(0,66%);gap:8px}
+.jobsPanel{position:static;top:auto;align-self:stretch;height:auto!important;max-height:none;min-height:0;overflow:hidden}
+.jobsPanel .panelTitle>span{justify-content:space-between;flex:1;margin-left:28px}
+.jobs{display:grid;align-content:start;gap:10px;max-height:none;min-height:0;overflow:auto}
+.job{display:grid;grid-template-columns:38px minmax(0,1fr) auto 72px 16px;gap:10px;align-items:center;height:30px;min-height:30px;padding:3px 10px;border-radius:10px!important;box-shadow:none!important}
+.jobNumber{font-size:14px}
+.jobTitle{margin:0;font-size:12px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.jobStatus{font-size:12px;font-weight:750;white-space:nowrap}
+.jobAge{color:var(--muted);font-size:11px;text-align:right;white-space:nowrap}
+.jobArrow{color:var(--muted);font-size:22px}
+.detailPanel{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.detailHeader{display:flex;align-items:center;gap:16px;margin-bottom:10px;border-bottom:1px solid var(--line)}
+.detailHeader .panelTitle{flex:0 0 auto;margin:0}
+.detailTabs{display:flex;align-self:stretch;gap:14px;margin:0}
+.detailTabs button{padding:4px 8px;border:0;border-bottom:2px solid transparent;border-radius:0!important;background:transparent!important;color:var(--muted)!important;font-size:12px}
+.detailTabs button.active{color:var(--blue)!important;border-bottom-color:var(--blue)}
+.detailView{display:flex;flex:1;min-height:0;flex-direction:column}
+.detailView[hidden]{display:none}
+.detailView pre{height:auto;min-height:0;flex:1;margin:0;border:1px solid var(--line)}
+.sourcePreviewHead{display:flex;justify-content:space-between;gap:12px;margin-bottom:6px;font-size:12px}
+.sourcePreviewHead span{color:var(--green);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sourcePreviewPath{min-height:16px;margin:0 0 7px;color:var(--muted);font:10px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
+@media(min-width:1501px){.workspace>.panel:not(:last-child){padding-block:8px}.workspace>.panel:not(:last-child)>.panelTitle{margin-bottom:6px}}
+@media(max-width:1500px){body{height:auto!important;overflow:auto!important}main{height:auto!important;display:block!important}.layout{grid-template-columns:1fr}.workspace{overflow:visible}.sideRail{position:static;height:820px;grid-template-rows:300px minmax(0,1fr)}}
+@media(max-width:800px){.routeGrid,.sourceSelectionRow,.modeRow,.productInfoRow,.marketRow{grid-template-columns:1fr}.productInfoRow>*{border-right:0;border-bottom:1px solid var(--line)}.productInfoRow>*:last-child{border-bottom:0}.job{grid-template-columns:34px minmax(0,1fr) auto 16px}.jobAge{display:none}.panelTitle{align-items:flex-start;flex-direction:column}.panelTitle>span{margin-left:0!important;gap:10px}.submitRow{align-items:stretch;flex-direction:column}.submitRow button.primary{width:100%}.sideRail{height:900px}}

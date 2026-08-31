@@ -47,6 +47,7 @@ OMNI_FIELDS = (
     "细节",
     "画面风格/氛围",
     "音频文案",
+    "背景音乐",
 )
 COUNTRY_LANGUAGES = {
     "US": "英语（美式）",
@@ -450,6 +451,18 @@ def _validated_file(value: str, root: Path, label: str) -> Path:
     return path
 
 
+def source_preview_payload(route: str, source_path: str) -> dict[str, str]:
+    if route not in ROUTE_LABELS:
+        raise ValueError("请选择线路 1、线路 2 或线路 3")
+    current = storage_paths()
+    source = _validated_file(source_path, _allowed_source_root(route, current), "来源脚本")
+    return {
+        "name": source.name,
+        "path": source.as_posix(),
+        "content": source.read_text(encoding="utf-8", errors="ignore"),
+    }
+
+
 def _product_info_path(product: str, current: StoragePaths) -> Path:
     return current.product_info_root / f"{product}-产品信息.md"
 
@@ -599,7 +612,7 @@ def validate_omni_markdown(text: str) -> list[str]:
             fields = [field.group("name") for field in FIELD_RE.finditer(shot_block)]
             if fields != list(OMNI_FIELDS):
                 issues.append(
-                    f"Segment {number} 镜头 {shot_number} 必须恰好按顺序包含 8 个字段"
+                    f"Segment {number} 镜头 {shot_number} 必须恰好按顺序包含 9 个字段"
                 )
     return list(dict.fromkeys(issues))
 

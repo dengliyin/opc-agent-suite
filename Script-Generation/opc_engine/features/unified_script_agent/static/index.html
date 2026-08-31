@@ -34,61 +34,82 @@
           <div class="panelTitle"><b>1. 选择生产线路</b><span>决定业务输入、输出位置和产品资料规则</span></div>
           <div class="routeLayout">
             <div class="routeGrid">
-              <label class="choice"><input type="radio" name="route" value="route1" checked><strong>线路 1 · 爆款复刻</strong></label>
-              <label class="choice"><input type="radio" name="route" value="route2"><strong>线路 2 · 产品脚本改写</strong></label>
-              <label class="choice"><input type="radio" name="route" value="route3"><strong>线路 3 · AI＋实拍混剪</strong></label>
+              <label class="choice"><input type="radio" name="route" value="route1" checked><span><strong>线路 1 · 爆款复刻</strong><small>同类爆款脚本，直接复刻或裂变适配</small></span></label>
+              <label class="choice"><input type="radio" name="route" value="route2"><span><strong>线路 2 · 产品脚本改写</strong><small>替换目标产品，再复刻或裂变适配</small></span></label>
+              <label class="choice"><input type="radio" name="route" value="route3"><span><strong>线路 3 · AI＋实拍混剪</strong><small>混剪解析脚本直接生成 Omni 适配稿</small></span></label>
             </div>
-            <div class="pathBox" id="pathBox"></div>
+            <div class="pathBox" id="pathBox" hidden></div>
           </div>
         </section>
 
-        <section class="panel grid2">
-          <div>
-            <div class="panelTitle"><b>2. 选择来源脚本</b><span>首屏只读索引，不会自动全量扫描资料库</span></div>
+        <section class="panel">
+          <div class="panelTitle"><b>2. 选择来源脚本</b><span>首屏只读索引，不会自动全量扫描资料库</span></div>
+          <div class="sourceSelectionRow">
             <label>来源产品<select id="sourceProduct"></select></label>
             <label>来源脚本<select id="sourceScript" required></select></label>
             <div class="sourceStatus" id="sourceStatus"></div>
-            <div class="hint" id="sourceHint"></div>
-          </div>
-          <div>
-            <div class="panelTitle"><b>3. 选择创作方式</b><span>裂变按每批最多 3 条执行，合格结果立即保存</span></div>
-            <div class="modeRow">
-              <label class="choice compact"><input type="radio" name="mode" value="clone" checked><strong>复刻</strong></label>
-              <label class="choice compact"><input type="radio" name="mode" value="mutation"><strong>裂变</strong></label>
-            </div>
-            <label id="variantField">裂变数量<input id="variantCount" type="number" min="1" max="99" value="3"></label>
           </div>
         </section>
 
-        <section class="panel grid2">
-          <div>
-            <div class="panelTitle"><b>4. 产品资料</b><span id="productRule">自动使用来源产品资料</span></div>
-            <div class="autoProduct" id="autoProduct"><span>自动使用来源产品</span><strong id="autoTargetProduct">正在读取…</strong></div>
-            <label id="targetProductField">目标产品<select id="targetProduct"></select></label>
+        <section class="panel">
+          <div class="panelTitle"><b>3. 选择创作方式</b><span>裂变按每批最多 3 条执行，合格结果立即保存</span></div>
+          <div class="modeRow">
+            <label class="choice modeChoice"><input type="radio" name="mode" value="clone" checked><span><strong>复刻</strong><small>直接复刻来源脚本内容</small></span></label>
+            <label class="choice modeChoice"><input type="radio" name="mode" value="mutation"><span><strong>裂变</strong><small>在复刻基础上生成差异化版本</small></span></label>
+            <label class="variantBox" id="variantField"><span><strong>裂变条数</strong><small>按需填写，不限 3 的倍数</small></span><input id="variantCount" type="number" min="1" max="99" value="3" disabled><em>条</em></label>
           </div>
-          <div>
-            <div class="panelTitle"><b>5. 市场与模型</b><span>Omni 规则与输出格式已经封版</span></div>
-            <div class="grid2 tight">
-              <label>国家/地区<select id="targetMarket"></select></label>
-              <label>目标语言<input id="targetLanguage" type="text" placeholder="按国家自动匹配，可手动修改"></label>
+        </section>
+
+        <section class="panel">
+          <div class="panelTitle"><b>4. 产品资料</b><span id="productRule">自动使用来源产品资料</span></div>
+          <div class="productInfoRow">
+            <div class="productField">
+              <div class="autoProduct" id="autoProduct"><span>自动使用来源产品</span><strong id="autoTargetProduct">正在读取…</strong></div>
+              <label id="targetProductField">目标产品<select id="targetProduct"></select></label>
             </div>
+            <div class="productInfoCell"><span>产品资料来源</span><strong id="productFactSummary">自动使用来源产品资料</strong></div>
+            <div class="productInfoCell ready" id="productReadyCell"><span>资料状态</span><strong id="productReadyStatus">◎ 已就绪</strong></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panelTitle"><b>5. 市场与模型</b><span>Omni 规则与输出格式已经封版</span></div>
+          <div class="marketRow">
+            <label>国家/地区<select id="targetMarket"></select></label>
+            <label>目标语言<input id="targetLanguage" type="text" placeholder="按国家自动匹配，可手动修改"></label>
             <label>视频模型<select id="targetModel"><option value="omni">Omni（已开放）</option><option disabled>Grok（待审核）</option><option disabled>Veo（待审核）</option></select></label>
           </div>
         </section>
 
         <section class="panel">
           <div class="submitRow">
-            <span id="formMessage">请选择参数后创建任务。</span>
-            <button class="primary" id="submitButton" type="submit">创建并执行任务</button>
+            <div class="readySummary"><span class="readyIcon">◇</span><div><strong id="formMessage">准备就绪，可以创建任务</strong><span id="taskSummary">请选择来源脚本和市场</span></div></div>
+            <button class="primary" id="submitButton" type="submit">▷&nbsp; 创建并执行任务</button>
           </div>
         </section>
       </form>
 
-      <aside class="panel jobsPanel idle">
-        <div class="panelTitle"><b>任务队列</b><span id="queueStatus">暂无任务</span></div>
-        <div id="jobs" class="jobs"></div>
-        <pre id="jobLog">选择任务后查看运行日志</pre>
-        <div id="outputs" class="outputs"></div>
+      <aside class="sideRail">
+        <section class="panel jobsPanel idle">
+          <div class="panelTitle"><b>任务队列</b><span><span id="queueStatus">暂无任务</span><span id="selectedJobStatus">当前未选择任务</span></span></div>
+          <div id="jobs" class="jobs"></div>
+        </section>
+
+        <section class="panel detailPanel">
+          <div class="detailHeader">
+            <div class="panelTitle"><b>运行详情</b></div>
+            <div class="detailTabs">
+              <button class="active" id="logTab" type="button">任务日志</button>
+              <button id="sourceTab" type="button">来源脚本</button>
+            </div>
+          </div>
+          <div class="detailView active" id="logView"><pre id="jobLog">选择任务后查看运行日志</pre></div>
+          <div class="detailView" id="sourceView" hidden>
+            <div class="sourcePreviewHead"><b>来源脚本内容</b><span id="sourcePreviewStatus">请选择来源脚本</span></div>
+            <div class="sourcePreviewPath" id="sourcePreviewPath"></div>
+            <pre id="sourcePreview">选择来源脚本后在这里显示 Markdown 全文</pre>
+          </div>
+        </section>
       </aside>
     </div>
   </main>
