@@ -219,6 +219,19 @@ class Handler(BaseHTTPRequestHandler):
             json_response(self, 200, core.state_payload(refresh=refresh))
         elif parsed.path == "/api/jobs":
             json_response(self, 200, jobs().snapshot())
+        elif parsed.path == "/api/source-preview":
+            query = urllib.parse.parse_qs(parsed.query)
+            try:
+                json_response(
+                    self,
+                    200,
+                    core.source_preview_payload(
+                        str((query.get("route") or [""])[0]),
+                        str((query.get("path") or [""])[0]),
+                    ),
+                )
+            except ValueError as exc:
+                json_response(self, 400, {"error": str(exc)})
         elif parsed.path == "/health":
             json_response(self, 200, {"ok": True, "service": "Unified-Script-Agent", "port": DEFAULT_PORT})
         else:

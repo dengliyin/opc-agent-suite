@@ -546,6 +546,7 @@ def test_process_storyboard_uses_only_product_reference_and_character(tmp_path: 
     assert image_client.reference_calls[0][1] == [reference, character]
     assert "逐镜头执行单" in image_client.reference_calls[0][0]
     assert "- [音频文案] hello" in image_client.reference_calls[0][0]
+    assert "- [背景音乐] 无" in image_client.reference_calls[0][0]
     assert "旧版说明：上方产品参考区" not in image_client.reference_calls[0][0]
     assert "产品视觉参考图 1 张 + 人物图 1 张" in [entry["message"] for entry in refreshed["logs"]][0]
 

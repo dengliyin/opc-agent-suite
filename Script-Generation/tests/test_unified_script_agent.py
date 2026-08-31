@@ -39,6 +39,7 @@ VALID_OMNI = """#
 - [细节] 动作清晰稳定
 - [画面风格/氛围] 真实生活化
 - [音频文案] No more waiting.
+- [背景音乐] 无
 """
 
 
@@ -115,6 +116,16 @@ def test_page_has_no_task_notes_field() -> None:
     assert 'class="panel jobsPanel idle"' in index_html
     assert 'id="autoProduct"' in index_html
     assert 'id="targetProductField"' in index_html
+    assert 'class="sideRail"' in index_html
+    assert 'class="detailTabs"' in index_html
+    assert 'id="logTab"' in index_html
+    assert 'id="sourceTab"' in index_html
+    assert 'id="sourcePreview"' in index_html
+    assert index_html.index('id="taskForm"') < index_html.index('class="sideRail"')
+    assert 'id="sourceHint"' not in index_html
+    assert 'id="outputs"' not in index_html
+    assert index_html.index('name="mode" value="clone"') < index_html.index('name="mode" value="mutation"')
+    assert index_html.index('name="mode" value="mutation"') < index_html.index('id="variantField"')
     app_js = (static_root / "app.js").read_text(encoding="utf-8")
     assert "notes:" not in app_js
     assert "counts?.pure" not in app_js
@@ -122,16 +133,40 @@ def test_page_has_no_task_notes_field() -> None:
     assert "pathRow" in app_js
     assert "refreshedJobs" in app_js
     assert "route()==='route1'?source.product" in app_js
+    assert "/api/source-preview" in app_js
+    assert "variantCount').disabled=!mutation" in app_js
+    assert "$('#outputs')" not in app_js
+
+
+def test_source_preview_reads_only_selected_source_inside_current_route(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = configure_storage(monkeypatch, tmp_path)
+    source = paths["pure_source"] / "P1" / "US-author-1234567890123-demo.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("# 来源脚本\n完整内容", encoding="utf-8")
+
+    preview = core.source_preview_payload("route1", str(source))
+
+    assert preview == {
+        "name": source.name,
+        "path": source.as_posix(),
+        "content": "# 来源脚本\n完整内容",
+    }
+    outside = tmp_path / "outside.md"
+    outside.write_text("不允许读取", encoding="utf-8")
+    with pytest.raises(ValueError, match="不在当前线路允许的资料库目录内"):
+        core.source_preview_payload("route1", str(outside))
 
 
 def test_omni_contract_validator_accepts_exact_downstream_format() -> None:
     assert core.validate_omni_markdown(VALID_OMNI) == []
 
 
-def test_omni_contract_validator_rejects_missing_eight_field() -> None:
+def test_omni_contract_validator_rejects_missing_ninth_field() -> None:
     broken = VALID_OMNI.replace("- [细节] 动作清晰稳定\n", "")
     issues = core.validate_omni_markdown(broken)
-    assert any("恰好按顺序包含 8 个字段" in issue for issue in issues)
+    assert any("恰好按顺序包含 9 个字段" in issue for issue in issues)
 
 
 def test_route3_writes_directly_to_hybrid_omni_layout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
