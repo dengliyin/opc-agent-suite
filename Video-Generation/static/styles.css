@@ -2320,3 +2320,82 @@ td.running-cell {
     min-height: 150px;
   }
 }
+
+/* Keep live task details readable inside the shared dark agent console. */
+body.opc-agent .job-detail .metric,
+body.opc-agent .job-detail .job-current,
+body.opc-agent .job-detail .script-run-list,
+body.opc-agent .job-list .job-row {
+  border-color: #36414d;
+  background: #151b22;
+  color: #f3f5f7;
+}
+
+body.opc-agent .job-detail .metric span,
+body.opc-agent .job-detail .job-current .muted,
+body.opc-agent .job-detail .script-run-heading,
+body.opc-agent .job-detail .script-run-detail,
+body.opc-agent .job-list .job-row {
+  color: #aeb8c4;
+}
+
+body.opc-agent .job-detail .metric strong,
+body.opc-agent .job-detail .script-run-heading strong,
+body.opc-agent .job-detail .script-run-name,
+body.opc-agent .job-detail .current-message,
+body.opc-agent .job-list .job-row strong {
+  color: #f3f5f7;
+}
+
+body.opc-agent .job-detail .current-line span,
+body.opc-agent .job-detail .asset-summary span {
+  border: 1px solid #3b4653;
+  background: #202936;
+  color: #dce3ea;
+}
+
+body.opc-agent .job-detail .script-run-row,
+body.opc-agent .job-list .job-row.queued {
+  border-color: #4b5662;
+  background: #1b222b;
+}
+
+body.opc-agent .job-detail .metric.ok,
+body.opc-agent .job-detail .script-run-row.running,
+body.opc-agent .job-detail .script-run-row.retry,
+body.opc-agent .job-list .job-row.running {
+  border-color: #34735b;
+  background: #12271f;
+}
+
+body.opc-agent .job-detail .metric.warn,
+body.opc-agent .job-detail .script-run-row.canceled,
+body.opc-agent .job-list .job-row.canceled,
+body.opc-agent .job-list .job-row.queued {
+  border-color: #725a2d;
+  background: #2a2113;
+}
+
+body.opc-agent .job-detail .metric.error,
+body.opc-agent .job-detail .script-run-row.failed,
+body.opc-agent .job-list .job-row.failed {
+  border-color: #743d46;
+  background: #2b171a;
+}
+
+body.opc-agent .job-detail .script-run-row.running .script-run-state,
+body.opc-agent .job-detail .script-run-row.retry .script-run-state,
+body.opc-agent .job-detail .script-run-row.done .script-run-state,
+body.opc-agent .job-detail .metric.ok strong {
+  color: #69d7a9;
+}
+
+body.opc-agent .job-detail .metric.warn strong,
+body.opc-agent .job-detail .script-run-row.canceled .script-run-state {
+  color: #efc46f;
+}
+
+body.opc-agent .job-detail .metric.error strong,
+body.opc-agent .job-detail .script-run-row.failed .script-run-state {
+  color: #ff8f99;
+}
