@@ -99,6 +99,13 @@ class AppHeaderTest(unittest.TestCase):
         self.assertIn('preload="none"', HTML)
         self.assertNotIn('preload="metadata"', HTML)
 
+    def test_queue_selection_keeps_existing_video_players(self) -> None:
+        self.assertIn('data-video-id="${escapeAttr(v.id)}"', HTML)
+        self.assertIn('function refreshQueueSelectionUi()', HTML)
+        toggle_block = HTML.split('function toggleQueueVideo(event, id)', 1)[1].split('function clearQueueSelection()', 1)[0]
+        self.assertIn('refreshQueueSelectionUi();', toggle_block)
+        self.assertNotIn('render();', toggle_block)
+
     def test_product_mapping_options_use_product_info_catalog(self) -> None:
         self.assertIn("products = payload.products || [];", PRODUCT_ID_HTML)
         self.assertNotIn("fetch('/api/state')", PRODUCT_ID_HTML)

@@ -3253,7 +3253,7 @@ HTML = r"""<!doctype html>
         return;
       }
       host.innerHTML = videos.map(v => `
-        <div class="videoCard ${v.id === selectedVideo ? 'active' : ''} ${v.published ? 'published' : ''} ${selectedVideoOrder.includes(v.id) ? 'selectedForQueue' : ''}" onclick="selectVideo('${escapeAttr(v.id)}')">
+        <div class="videoCard ${v.id === selectedVideo ? 'active' : ''} ${v.published ? 'published' : ''} ${selectedVideoOrder.includes(v.id) ? 'selectedForQueue' : ''}" data-video-id="${escapeAttr(v.id)}" onclick="selectVideo('${escapeAttr(v.id)}')">
           ${v.published ? '<div class="publishedFlag">已发布</div>' : ''}
           ${queuedVideoPaths.has(v.path) ? '<div class="queueFlag">队列中</div>' : ''}
           <video src="${escapeAttr(v.video_url)}" poster="${escapeAttr(v.thumbnail_url)}" preload="none" muted controls></video>
@@ -3279,6 +3279,29 @@ HTML = r"""<!doctype html>
       return selectedVideoOrder.map(id => state.videos.find(video => video.id === id)).filter(Boolean);
     }
 
+    function refreshQueueSelectionUi() {
+      document.querySelectorAll('#videoGrid .videoCard[data-video-id]').forEach(card => {
+        const orderIndex = selectedVideoOrder.indexOf(card.dataset.videoId);
+        const control = card.querySelector('.videoSelectControl');
+        const checkbox = control?.querySelector('input[type="checkbox"]');
+        let orderFlag = control?.querySelector('.orderFlag');
+        card.classList.toggle('selectedForQueue', orderIndex >= 0);
+        if (checkbox) checkbox.checked = orderIndex >= 0;
+        if (orderIndex < 0) {
+          orderFlag?.remove();
+          return;
+        }
+        if (!orderFlag) {
+          orderFlag = document.createElement('span');
+          orderFlag.className = 'orderFlag';
+          control.insertBefore(orderFlag, checkbox);
+        }
+        orderFlag.textContent = String(orderIndex + 1);
+      });
+      renderSelectionBar();
+      renderPublishContext();
+    }
+
     function toggleQueueVideo(event, id) {
       event.stopPropagation();
       const video = state.videos.find(item => item.id === id);
@@ -3286,12 +3309,12 @@ HTML = r"""<!doctype html>
       const index = selectedVideoOrder.indexOf(id);
       if (index >= 0) selectedVideoOrder.splice(index, 1);
       else selectedVideoOrder.push(id);
-      render();
+      refreshQueueSelectionUi();
     }
 
     function clearQueueSelection() {
       selectedVideoOrder = [];
-      render();
+      refreshQueueSelectionUi();
     }
 
     function selectAllVisibleVideos() {
@@ -3299,7 +3322,7 @@ HTML = r"""<!doctype html>
       filteredVideos().forEach(video => {
         if (!known.has(video.id)) selectedVideoOrder.push(video.id);
       });
-      render();
+      refreshQueueSelectionUi();
     }
 
     function renderSelectionBar() {
