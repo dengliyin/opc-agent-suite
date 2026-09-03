@@ -97,12 +97,19 @@ class UrlDownloaderTests(unittest.TestCase):
         self.assertIn("minmax(280px, 0.8fr)", stylesheet)
         self.assertIn("minmax(400px, 1.2fr)", stylesheet)
 
-    def test_pending_queue_cards_follow_dark_agent_theme(self):
+    def test_dynamic_agent_cards_follow_dark_theme(self):
         html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
         stylesheet = (ROOT / "web" / "app.css").read_text(encoding="utf-8")
 
-        self.assertIn("app.css?v=queue-contrast-20260903", html)
-        self.assertIn("body.opc-agent .product-queue", stylesheet)
+        self.assertIn("app.css?v=agent-contrast-audit-20260903", html)
+        for selector in (
+            "body.opc-agent .product-queue",
+            "body.opc-agent .item",
+            "body.opc-agent .file-result",
+            "body.opc-agent .item.missing",
+            "body.opc-agent #configEditor",
+        ):
+            self.assertIn(selector, stylesheet)
         self.assertIn("background: var(--surface);", stylesheet)
 
     def test_hybrid_download_and_script_paths_keep_material_type(self):

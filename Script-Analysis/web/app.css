@@ -735,7 +735,9 @@ input[type="checkbox"] {
   background: transparent;
 }
 
-body.opc-agent .product-queue {
+body.opc-agent .product-queue,
+body.opc-agent .item,
+body.opc-agent .file-result {
   color: var(--text);
   background: var(--surface);
   border-color: var(--line);
@@ -748,6 +750,30 @@ body.opc-agent .video-select {
 
 body.opc-agent .video-select {
   border-top-color: var(--line-soft);
+}
+
+body.opc-agent .item:hover,
+body.opc-agent .item.active {
+  color: var(--text);
+  background: var(--accent-soft);
+  border-color: var(--blue);
+}
+
+body.opc-agent .item.skipped,
+body.opc-agent .file-result.pending {
+  color: var(--text);
+  background: var(--surface-soft);
+}
+
+body.opc-agent .item.missing {
+  color: var(--text);
+  background: #2a2113;
+  border-color: #725a2d;
+}
+
+body.opc-agent #configEditor {
+  color: var(--text);
+  background: #0d1117;
 }
 
 @media (max-width: 1180px) {
