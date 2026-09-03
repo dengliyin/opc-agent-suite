@@ -735,6 +735,21 @@ input[type="checkbox"] {
   background: transparent;
 }
 
+body.opc-agent .product-queue {
+  color: var(--text);
+  background: var(--surface);
+  border-color: var(--line);
+}
+
+body.opc-agent .product-select,
+body.opc-agent .video-select {
+  color: var(--text);
+}
+
+body.opc-agent .video-select {
+  border-top-color: var(--line-soft);
+}
+
 @media (max-width: 1180px) {
   .shell {
     grid-template-columns: 280px 360px 340px 400px;
