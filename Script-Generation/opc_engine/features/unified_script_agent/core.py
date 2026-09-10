@@ -38,6 +38,15 @@ SHOT_RE = re.compile(
     r"(?P<start>\d{2}:\d{2}\.\d{3})\s*-\s*(?P<end>\d{2}:\d{2}\.\d{3})\)\s*$"
 )
 FIELD_RE = re.compile(r"(?m)^- \[(?P<name>[^\]]+)\]\s+(?P<value>\S.*)$")
+SEEDANCE_SHOT_RE = re.compile(r"(?m)^###\s*(?P<number>\d{2})\s*｜\s*(?P<title>\S.*?)\s*$")
+SEEDANCE_FIELD_RE = re.compile(r"(?m)^\*\*(?P<name>[^*：:]+)[：:]\*\*\s*$")
+SEEDANCE_TIME_RE = re.compile(
+    r"^(?P<start>\d{2}:\d{2}\.\d{3})\s*[–-]\s*(?P<end>\d{2}:\d{2}\.\d{3})"
+    r"\s*｜\s*(?P<duration>\d+(?:\.\d+)?)\s*秒$"
+)
+SEGMENT_RANGE_RE = re.compile(
+    r"^(?P<start>\d{2}:\d{2}\.\d{3})\s*[–-]\s*(?P<end>\d{2}:\d{2}\.\d{3})$"
+)
 OMNI_FIELDS = (
     "主体",
     "在场景中",
@@ -48,6 +57,20 @@ OMNI_FIELDS = (
     "画面风格/氛围",
     "音频文案",
     "背景音乐",
+)
+SEEDANCE_FIELDS = (
+    "画面内容",
+    "动作/景别",
+    "构图",
+    "拍摄方式",
+    "声音",
+    "台词",
+    "时间",
+)
+SEEDANCE_FIELD_NAME_PATTERN = "|".join(re.escape(name) for name in SEEDANCE_FIELDS)
+SEEDANCE_LOOSE_FIELD_RE = re.compile(
+    rf"(?m)^[ \t]*(?:-\s*)?(?:\*\*(?P<bold_name>{SEEDANCE_FIELD_NAME_PATTERN})(?:[：:]?)\*\*[：:]?"
+    rf"|(?P<plain_name>{SEEDANCE_FIELD_NAME_PATTERN})[：:])(?:[ \t]+(?P<value>\S.*))?$"
 )
 COUNTRY_LANGUAGES = {
     "US": "英语（美式）",
@@ -76,7 +99,7 @@ ROUTE_LABELS = {
     "route3": "线路 3 · AI＋实拍混剪",
 }
 MODE_LABELS = {"clone": "复刻", "mutation": "裂变"}
-MODEL_LABELS = {"omni": "Omni"}
+MODEL_LABELS = {"omni": "Omni", "seedance": "Seedance"}
 _HISTORY_LOCK = threading.RLock()
 
 
@@ -86,9 +109,11 @@ class StoragePaths:
     pure_source_root: Path
     pure_generation_root: Path
     pure_output_root: Path
+    pure_seedance_output_root: Path
     hybrid_source_root: Path
     hybrid_generation_root: Path
     hybrid_output_root: Path
+    hybrid_seedance_output_root: Path
     product_info_root: Path
     mistake_book_root: Path
     prompt_path: Path
@@ -109,6 +134,9 @@ def storage_paths() -> StoragePaths:
         pure_output_root=Path(
             os.environ.get("SCRIPT_ROOT", vault / "wiki/视频/纯AI视频/04适配脚本/omni")
         ).expanduser(),
+        pure_seedance_output_root=Path(
+            os.environ.get("SEEDANCE_SCRIPT_ROOT", vault / "wiki/视频/纯AI视频/04适配脚本/seedance")
+        ).expanduser(),
         hybrid_source_root=Path(
             os.environ.get("HYBRID_SCRIPT_GENERATION_INPUT_ROOT", vault / "wiki/视频/AI实拍混剪/02解析脚本")
         ).expanduser(),
@@ -120,6 +148,12 @@ def storage_paths() -> StoragePaths:
         ).expanduser(),
         hybrid_output_root=Path(
             os.environ.get("HYBRID_OMNI_SCRIPT_ROOT", vault / "wiki/视频/AI实拍混剪/04适配脚本/omni")
+        ).expanduser(),
+        hybrid_seedance_output_root=Path(
+            os.environ.get(
+                "HYBRID_SEEDANCE_SCRIPT_ROOT",
+                vault / "wiki/视频/AI实拍混剪/04适配脚本/seedance",
+            )
         ).expanduser(),
         product_info_root=Path(
             os.environ.get("PRODUCT_INFO_ROOT", vault / "wiki/产品/产品信息")
@@ -342,7 +376,7 @@ def state_payload(refresh: bool = False) -> dict[str, Any]:
         },
         "model": {
             "selected": "omni",
-            "available": ["omni"],
+            "available": ["omni", "seedance"],
             "pending": ["grok", "veo"],
             "text_model": profile["model"],
             "has_api_key": bool(profile["api_key"]),
@@ -350,7 +384,7 @@ def state_payload(refresh: bool = False) -> dict[str, Any]:
         "prompt": {
             "path": current.prompt_path.as_posix(),
             "exists": current.prompt_path.is_file(),
-            "production_models": ["omni"],
+            "production_models": ["omni", "seedance"],
         },
         "country_languages": COUNTRY_LANGUAGES,
     }
@@ -364,7 +398,17 @@ def load_prompt_blocks(path: Path | None = None) -> tuple[str, dict[str, str]]:
     matches = list(PROMPT_BLOCK_RE.finditer(text))
     blocks = {match.group("name"): match.group("body").strip() for match in matches}
     preamble = text[: matches[0].start()].strip() if matches else ""
-    required = {"COMMON", "CLONE", "MUTATION", "PRODUCT_REWRITE", "MODEL_OMNI", "REPAIR"}
+    required = {
+        "COMMON",
+        "CLONE",
+        "MUTATION",
+        "PRODUCT_REWRITE",
+        "MODEL_OMNI",
+        "MODEL_SEEDANCE",
+        "SEEDANCE_FINAL_CONTRACT",
+        "REPAIR",
+        "REPAIR_SEEDANCE",
+    }
     missing = sorted(required - blocks.keys())
     if missing:
         raise RuntimeError("统一提示词缺少区块: " + "、".join(missing))
@@ -376,15 +420,15 @@ def selected_block_names(route: str, mode: str, model: str = "omni") -> list[str
         raise ValueError("请选择线路 1、线路 2 或线路 3")
     if mode not in MODE_LABELS:
         raise ValueError("请选择复刻或裂变")
-    if model != "omni":
-        raise ValueError("当前只有 Omni 已完成审核并开放生产；Grok 和 Veo 暂不可选")
+    if model not in MODEL_LABELS:
+        raise ValueError("当前只有 Omni 和 Seedance 已开放生产；Grok 和 Veo 暂不可选")
     names = ["COMMON"]
     if route == "route2":
         names.append("PRODUCT_REWRITE")
     names.append("CLONE")
     if mode == "mutation":
         names.append("MUTATION")
-    names.append("MODEL_OMNI")
+    names.append("MODEL_OMNI" if model == "omni" else "MODEL_SEEDANCE")
     return names
 
 
@@ -410,7 +454,7 @@ def assemble_prompt(
         "VARIANT_COUNT": str(payload.get("variant_count") or 1),
         "VARIANT_NUMBER": str(variant_number or "不适用"),
         "CONTENT_SUBTYPE": str(payload.get("content_type") or "纯AI").strip(),
-        "MODEL_SEGMENT_SECONDS": "10",
+        "MODEL_SEGMENT_SECONDS": "15" if model == "seedance" else "10",
         "TECHNICAL_PADDING_REQUIREMENT": "无",
     }
     variable_lines = "\n".join(f"- `{key}`：{value}" for key, value in values.items())
@@ -433,7 +477,10 @@ def assemble_prompt(
 </SOURCE_SCRIPT>
 """
     selected = "\n\n---\n\n".join(blocks[name] for name in names)
-    return f"{preamble}\n\n{selected}\n\n---\n\n{runtime}".strip() + "\n"
+    document = f"{preamble}\n\n{selected}\n\n---\n\n{runtime}".strip()
+    if model == "seedance":
+        document += f"\n\n---\n\n{blocks['SEEDANCE_FINAL_CONTRACT']}"
+    return document.strip() + "\n"
 
 
 def _allowed_source_root(route: str, current: StoragePaths) -> Path:
@@ -617,8 +664,142 @@ def validate_omni_markdown(text: str) -> list[str]:
     return list(dict.fromkeys(issues))
 
 
-def _repair_prompt(candidate: str, issues: list[str]) -> str:
+def validate_seedance_markdown(text: str) -> list[str]:
+    content = clean_model_markdown(text)
+    issues: list[str] = []
+    if not re.match(r"^#\s*\n## 每段生成提示词\s*$", "\n".join(content.splitlines()[:2])):
+        issues.append("文件必须以 # 和 ## 每段生成提示词 两行开头")
+    segments = list(SEGMENT_RE.finditer(content))
+    if not segments:
+        return issues + ["没有找到任何 # Segment 段落"]
+    numbers = [int(match.group("number")) for match in segments]
+    if numbers != list(range(1, len(numbers) + 1)):
+        issues.append("Segment 编号必须从 1 开始连续递增")
+
+    for index, match in enumerate(segments):
+        number = int(match.group("number"))
+        block = content[match.start() : segments[index + 1].start() if index + 1 < len(segments) else len(content)]
+        segment_range = SEGMENT_RANGE_RE.fullmatch(match.group("range").strip())
+        segment_end: float | None = None
+        if segment_range is None:
+            issues.append(f"Segment {number} 标题时间格式不正确")
+        else:
+            segment_start = _seconds(segment_range.group("start"))
+            segment_end = _seconds(segment_range.group("end"))
+            if abs(segment_start) > 0.001:
+                issues.append(f"Segment {number} 标题必须从 00:00.000 开始")
+            if segment_end <= segment_start or segment_end > 15.002:
+                issues.append(f"Segment {number} 有效内容时长必须大于 0 且不超过 15 秒")
+
+        a_heading = block.find("## A. 人物造型参考板提示词")
+        b_heading = block.find("## B. 故事板图片提示词")
+        if a_heading < 0 or b_heading < 0 or b_heading <= a_heading:
+            issues.append(f"Segment {number} 缺少按顺序排列的 A 区和 B 区")
+            continue
+        a_body = block[a_heading:b_heading]
+        positions = [a_body.find(label) for label in ("角色ID：", "生成方式：", "参考来源：")]
+        if any(position < 0 for position in positions) or positions != sorted(positions):
+            issues.append(f"Segment {number} A 区必须依次包含角色ID、生成方式和参考来源")
+
+        b_body = block[b_heading:]
+        shots = list(SEEDANCE_SHOT_RE.finditer(b_body))
+        if not shots:
+            issues.append(f"Segment {number} B 区没有可识别的 Seedance 镜头")
+            continue
+        shot_numbers = [int(shot.group("number")) for shot in shots]
+        if shot_numbers != list(range(1, len(shots) + 1)):
+            issues.append(f"Segment {number} Seedance 镜头编号必须从 01 开始连续递增")
+
+        previous_end = 0.0
+        for shot_index, shot in enumerate(shots):
+            shot_number = int(shot.group("number"))
+            shot_block = b_body[
+                shot.end() : shots[shot_index + 1].start() if shot_index + 1 < len(shots) else len(b_body)
+            ]
+            fields = list(SEEDANCE_FIELD_RE.finditer(shot_block))
+            field_names = [field.group("name").strip() for field in fields]
+            if field_names != list(SEEDANCE_FIELDS):
+                issues.append(f"Segment {number} 镜头 {shot_number:02d} 必须恰好按顺序包含 7 个字段")
+                continue
+
+            values: list[str] = []
+            for field_index, field in enumerate(fields):
+                value_end = fields[field_index + 1].start() if field_index + 1 < len(fields) else len(shot_block)
+                value = shot_block[field.end() : value_end].strip()
+                value = re.sub(r"\n?---\s*$", "", value).strip()
+                values.append(value)
+            if any(not value for value in values):
+                issues.append(f"Segment {number} 镜头 {shot_number:02d} 的 7 个字段内容均不能为空")
+                continue
+
+            action_value = values[1]
+            dialogue_value = values[5]
+            if dialogue_value != "无口播。":
+                voiceover = re.search(r"发声方式[：:]\s*画外旁白", action_value)
+                onscreen_speakers = re.findall(
+                    r"发声方式[：:]\s*(character_\d{2})\s*画内说出台词",
+                    action_value,
+                )
+                if bool(voiceover) == bool(onscreen_speakers) or len(onscreen_speakers) > 1:
+                    issues.append(
+                        f"Segment {number} 镜头 {shot_number:02d} 有台词时必须在动作/景别明确唯一发声方式"
+                    )
+                elif voiceover and ("画面内人物不说话" not in action_value or "不做口型" not in action_value):
+                    issues.append(
+                        f"Segment {number} 镜头 {shot_number:02d} 使用画外旁白时必须注明画面内人物不说话、不做口型"
+                    )
+
+            time_value = values[-1].splitlines()[0].strip()
+            time_match = SEEDANCE_TIME_RE.fullmatch(time_value)
+            if time_match is None:
+                issues.append(f"Segment {number} 镜头 {shot_number:02d} 时间格式不正确")
+                continue
+            start = _seconds(time_match.group("start"))
+            end = _seconds(time_match.group("end"))
+            duration = float(time_match.group("duration"))
+            if shot_index == 0 and abs(start) > 0.001:
+                issues.append(f"Segment {number} 镜头 01 必须从 00:00.000 开始")
+            if abs(start - previous_end) > 0.002 or end <= start:
+                issues.append(f"Segment {number} 镜头 {shot_number:02d} 时间必须连续且结束晚于开始")
+            if abs(duration - (end - start)) > 0.002:
+                issues.append(f"Segment {number} 镜头 {shot_number:02d} 标注时长与起止时间不一致")
+            previous_end = end
+
+        if segment_end is not None and shots and abs(previous_end - segment_end) > 0.002:
+            issues.append(f"Segment {number} 最后一个镜头结束时间必须与 Segment 标题一致")
+        if re.search(r"(?m)^\*\*(?:字幕|贴纸|屏幕文字|特效)[：:]\*\*\s*$", b_body):
+            issues.append(f"Segment {number} Seedance 分镜不得输出字幕、贴纸、屏幕文字或特效字段")
+    return list(dict.fromkeys(issues))
+
+
+def _validator_for_model(model: str) -> Callable[[str], list[str]]:
+    return validate_seedance_markdown if model == "seedance" else validate_omni_markdown
+
+
+def normalize_seedance_markdown(markdown: str) -> str:
+    def replace_field(match: re.Match[str]) -> str:
+        header = f"**{match.group('bold_name') or match.group('plain_name')}：**"
+        value = (match.group("value") or "").strip()
+        return f"{header}\n{value}" if value else header
+
+    return SEEDANCE_LOOSE_FIELD_RE.sub(replace_field, markdown)
+
+
+def _repair_prompt(candidate: str, issues: list[str], model: str = "omni") -> str:
     _preamble, blocks = load_prompt_blocks()
+    if model == "seedance":
+        return f"""{blocks['REPAIR_SEEDANCE']}
+
+# 本次 Seedance 修复输入
+
+错误：
+{chr(10).join(f'- {issue}' for issue in issues)}
+
+<REPAIR_CONTEXT>
+{candidate}
+</REPAIR_CONTEXT>
+"""
+    model_label = MODEL_LABELS.get(model, model)
     return f"""{blocks['REPAIR']}
 
 # 本次局部修复输入
@@ -626,7 +807,7 @@ def _repair_prompt(candidate: str, issues: list[str]) -> str:
 错误：
 {chr(10).join(f'- {issue}' for issue in issues)}
 
-请只修正导致上述错误的结构和内容，返回修复后的完整 Omni Markdown，不要解释。
+请只修正导致上述错误的结构和内容，返回修复后的完整 {model_label} Markdown，不要解释。
 
 <REPAIR_CONTEXT>
 {candidate}
@@ -660,8 +841,12 @@ def _call_model(prompt: str, request_kind: str, label: str) -> str:
 def _output_directory(payload: dict[str, Any], current: StoragePaths) -> Path:
     product = safe_output_name(payload["target_product"])
     if payload["route"] != "route3":
+        if payload["model"] == "seedance":
+            return current.pure_seedance_output_root / product
         return current.pure_output_root / product
     source = Path(payload["source_path"])
+    if payload["model"] == "seedance":
+        return current.hybrid_seedance_output_root / payload["content_type"] / product / source.stem
     return current.hybrid_output_root / payload["content_type"] / product / source.stem
 
 
@@ -784,9 +969,10 @@ def _generate_one(
     variant_number: int = 0,
 ) -> dict[str, Any]:
     output_path = output_path_for(payload, variant_number)
+    validator = _validator_for_model(payload["model"])
     if not variant_number and output_path.is_file():
         existing = output_path.read_text(encoding="utf-8", errors="ignore")
-        if not validate_omni_markdown(existing):
+        if not validator(existing):
             progress(f"已有合格适配稿，直接复用：{output_path.name}")
             return {"path": output_path.as_posix(), "name": output_path.name, "reused": True}
 
@@ -802,15 +988,19 @@ def _generate_one(
         label += f" #{variant_number}"
     progress(f"开始调用文本模型：{label}")
     candidate = _call_model(prompt, payload["mode"], label)
-    issues = validate_omni_markdown(candidate)
+    if payload["model"] == "seedance":
+        candidate = normalize_seedance_markdown(candidate)
+    issues = validator(candidate)
     for attempt in range(1, 3):
         if not issues:
             break
         progress(f"{label} 第 {attempt} 次校验未通过，只修复失败内容：{'；'.join(issues[:3])}")
-        candidate = _call_model(_repair_prompt(candidate, issues), "repair", f"{label} 局部修复")
-        issues = validate_omni_markdown(candidate)
+        candidate = _call_model(_repair_prompt(candidate, issues, payload["model"]), "repair", f"{label} 局部修复")
+        if payload["model"] == "seedance":
+            candidate = normalize_seedance_markdown(candidate)
+        issues = validator(candidate)
     if issues:
-        raise RuntimeError("Omni 输出校验失败：" + "；".join(issues))
+        raise RuntimeError(f"{MODEL_LABELS[payload['model']]} 输出校验失败：" + "；".join(issues))
     _write_output(output_path, candidate)
     progress(f"已写入片段产出目录：{output_path}")
     return {"path": output_path.as_posix(), "name": output_path.name, "reused": False}
@@ -830,7 +1020,8 @@ def run_task(payload: dict[str, Any], progress: Callable[[str], None] | None = N
         fact_card = compact_product_fact_card(manual, max_chars=5000)
     lesson_card = _lesson_card(task["target_product"], current)
     log(
-        f"任务已确认：{ROUTE_LABELS[task['route']]} / {MODE_LABELS[task['mode']]} / Omni / "
+        f"任务已确认：{ROUTE_LABELS[task['route']]} / {MODE_LABELS[task['mode']]} / "
+        f"{MODEL_LABELS[task['model']]} / "
         f"{task['target_market']} / {task['target_language']}"
     )
     if task["route"] == "route2":

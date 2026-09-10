@@ -136,7 +136,7 @@ async function createJob(event){
   event.preventDefault();
   const source=currentSource();
   if(!source){$('#formMessage').textContent='请先选择来源脚本';return}
-  const payload={route:route(),mode:mode(),source_path:source.path,target_product:route()==='route1'?source.product:$('#targetProduct').value,target_market:$('#targetMarket').value,target_language:$('#targetLanguage').value,model:'omni',variant_count:Number($('#variantCount').value||1)};
+  const payload={route:route(),mode:mode(),source_path:source.path,target_product:route()==='route1'?source.product:$('#targetProduct').value,target_market:$('#targetMarket').value,target_language:$('#targetLanguage').value,model:$('#targetModel').value,variant_count:Number($('#variantCount').value||1)};
   $('#submitButton').disabled=true;$('#formMessage').textContent='正在创建任务…';
   try{const response=await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const data=await response.json();if(!response.ok)throw new Error(data.error||'创建失败');selectedJob=data.job.id;$('#formMessage').textContent=`任务 #${selectedJob} 已加入队列`;await loadJobs()}
   catch(error){$('#formMessage').textContent=error.message}
