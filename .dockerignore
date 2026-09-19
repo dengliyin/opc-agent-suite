@@ -22,6 +22,7 @@
 **/runs
 .runtime
 .playwright-cli
+Infinite-Canvas-Agent
 Script-Generation/runtime
 OPC-Console/runtime
 Auto-Publish-Pipeline/data

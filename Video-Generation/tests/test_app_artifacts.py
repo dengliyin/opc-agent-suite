@@ -98,9 +98,17 @@ def create_script_with_assets(settings: Settings) -> tuple[Path, list[Path]]:
     video.parent.mkdir(parents=True)
     for path in (character, storyboard, video):
         path.write_bytes(b"asset")
+    storyboard_meta_path(character).write_text("{}", encoding="utf-8")
     storyboard_meta_path(storyboard).write_text("{}", encoding="utf-8")
     storyboard_meta_path(video).write_text("{}", encoding="utf-8")
-    return script, [character, storyboard, storyboard_meta_path(storyboard), video, storyboard_meta_path(video)]
+    return script, [
+        character,
+        storyboard_meta_path(character),
+        storyboard,
+        storyboard_meta_path(storyboard),
+        video,
+        storyboard_meta_path(video),
+    ]
 
 
 def test_delete_scripts_preserves_adapted_script_and_removes_fragment_assets(monkeypatch, tmp_path: Path) -> None:
@@ -117,7 +125,7 @@ def test_delete_scripts_preserves_adapted_script_and_removes_fragment_assets(mon
     result = _delete_scripts("omni", ScriptDeleteRequest(script_paths=[str(script)]))
 
     assert result["scripts_deleted"] == 1
-    assert result["files_deleted"] == 5
+    assert result["files_deleted"] == 6
     assert script.exists()
     assert all(not path.exists() for path in assets)
     assert scan_scripts(settings) == []
@@ -150,16 +158,24 @@ def test_delete_hybrid_script_preserves_markdown_and_removes_fragment_assets(mon
     video.parent.mkdir(parents=True)
     for path in (character, storyboard, video):
         path.write_bytes(b"asset")
+    storyboard_meta_path(character).write_text("{}", encoding="utf-8")
     storyboard_meta_path(storyboard).write_text("{}", encoding="utf-8")
     storyboard_meta_path(video).write_text("{}", encoding="utf-8")
-    assets = [character, storyboard, storyboard_meta_path(storyboard), video, storyboard_meta_path(video)]
+    assets = [
+        character,
+        storyboard_meta_path(character),
+        storyboard,
+        storyboard_meta_path(storyboard),
+        video,
+        storyboard_meta_path(video),
+    ]
     monkeypatch.setattr(app_module, "_settings_for", lambda _provider: settings)
     monkeypatch.setattr(app_module, "_manager_for", lambda _provider: FakeManager())
 
     result = _delete_scripts("hybrid_omni", ScriptDeleteRequest(script_paths=[str(script)]))
 
     assert result["scripts_deleted"] == 1
-    assert result["files_deleted"] == 5
+    assert result["files_deleted"] == 6
     assert script.exists()
     assert all(not path.exists() for path in assets)
     assert scan_scripts(settings) == []
@@ -292,7 +308,8 @@ def test_otu_image_ui_exposes_async_gpt_image_2_and_sync_image2() -> None:
     detail = next(
         item for item in summary["agent_function_map"] if item["agent"] == "Omni 片段产出 Agent"
     )["functions"][0]["option_details"]["otu:image2"]
-    assert detail["endpoint"] == "/v1/images/generations"
+    assert detail["endpoint"] == "/v1/images/edits"
+    assert "产品参考图（图1）" in detail["params"]
     assert detail["controls"][0]["value"] == "720x1280"
     assert {item["value"] for item in detail["controls"][0]["options"]} == {
         "720x1280",

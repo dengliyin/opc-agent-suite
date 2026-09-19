@@ -562,7 +562,9 @@ def test_export_completed_script_copies_script_and_moves_assets_to_completed_roo
     scripts = scan_scripts(settings)
     script = scripts[0]
     for index in [1, 2]:
-        character_image_path(md_path, index).write_bytes(f"character-{index}".encode())
+        character = character_image_path(md_path, index)
+        character.write_bytes(f"character-{index}".encode())
+        write_storyboard_product_lock_meta(character, "P1", reference, 1)
         storyboard = storyboard_image_path(md_path, index)
         storyboard.write_bytes(f"storyboard-{index}".encode())
         write_storyboard_product_lock_meta(storyboard, "P1", reference, 1)
@@ -582,11 +584,13 @@ def test_export_completed_script_copies_script_and_moves_assets_to_completed_roo
     assert export_dir == dated_export_root(settings) / "P1" / md_path.stem
     assert (export_dir / md_path.name).exists()
     assert (export_dir / character_image_path(md_path, 1).name).exists()
+    assert (export_dir / storyboard_meta_path(character_image_path(md_path, 1)).name).exists()
     assert (export_dir / storyboard_image_path(md_path, 1).name).exists()
     assert (export_dir / storyboard_meta_path(storyboard_image_path(md_path, 1)).name).exists()
     assert (export_dir / video_output_path(settings, "P1", md_path, 1).name).exists()
     assert not video_output_path(settings, "P1", md_path, 1).exists()
     assert not character_image_path(md_path, 1).exists()
+    assert not storyboard_meta_path(character_image_path(md_path, 1)).exists()
     assert not storyboard_image_path(md_path, 1).exists()
     assert not storyboard_meta_path(storyboard_image_path(md_path, 1)).exists()
     assert md_path.exists()
@@ -629,6 +633,7 @@ def test_restore_exported_script_moves_images_back_but_leaves_videos_exported_by
     )
     character = character_image_path(md_path, 1)
     character.write_bytes(b"character")
+    write_storyboard_product_lock_meta(character, "P1", reference, 1)
     storyboard = storyboard_image_path(md_path, 1)
     storyboard.write_bytes(b"storyboard")
     write_storyboard_product_lock_meta(storyboard, "P1", reference, 1)
@@ -642,6 +647,7 @@ def test_restore_exported_script_moves_images_back_but_leaves_videos_exported_by
     archived_md_path = archived_script.md_path
 
     assert not character.exists()
+    assert not storyboard_meta_path(character).exists()
     assert not storyboard.exists()
     assert not storyboard_meta_path(storyboard).exists()
     assert not video.exists()
@@ -652,6 +658,7 @@ def test_restore_exported_script_moves_images_back_but_leaves_videos_exported_by
     assert len(result["restored"]) == 1
     assert md_path.exists()
     assert character.exists()
+    assert storyboard_meta_path(character).exists()
     assert storyboard.exists()
     assert storyboard_meta_path(storyboard).exists()
     assert not video.exists()

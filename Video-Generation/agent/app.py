@@ -598,15 +598,16 @@ def _function_option_detail(current: Settings, stage: str, value: str) -> Dict[s
     controls = _function_param_controls(current, stage, value)
     if stage == "characters":
         if api == "grok":
-            endpoint = "/openapi/v2/rhart-image-g-2/text-to-image"
+            endpoint = "/openapi/v2/rhart-image-g-2/image-to-image"
         elif _is_async_gpt_image_model(model):
             endpoint = "/v1/videos → /v1/videos/{task_id}"
         else:
-            endpoint = "/v1/images/generations"
+            endpoint = "/v1/images/edits"
         params = (
-            f"aspectRatio={_control_value(controls, 'image_aspect_ratio')}；resolution={_control_value(controls, 'image_resolution')}"
+            f"aspectRatio={_control_value(controls, 'image_aspect_ratio')}；resolution={_control_value(controls, 'image_resolution')}；参考图=产品参考图（图1）+可选历史人物图"
             if api == "grok"
             else f"size={_control_value(controls, 'image_size')}"
+            + "；参考图=产品参考图（图1）+可选历史人物图"
             + ("；异步任务轮询" if _is_async_gpt_image_model(model) else "")
         )
     elif stage == "storyboards":
@@ -1096,6 +1097,7 @@ def _delete_scripts(provider: str, request: ScriptDeleteRequest) -> Dict[str, An
             deletion_plan.extend(
                 [
                     character_path,
+                    storyboard_meta_path(character_path),
                     storyboard_path,
                     storyboard_meta_path(storyboard_path),
                     video_path,

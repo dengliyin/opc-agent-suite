@@ -421,6 +421,9 @@ def _copy_and_move_script_assets(settings: Settings, script: ScriptFile, target_
         character_path = character_image_path(script.md_path, segment.index, prefix)
         if character_path.exists():
             move_sources.append(character_path)
+            character_meta_path = storyboard_meta_path(character_path)
+            if character_meta_path.exists():
+                move_sources.append(character_meta_path)
         storyboard_path = storyboard_image_path(script.md_path, segment.index, prefix)
         if storyboard_path.exists():
             move_sources.append(storyboard_path)
@@ -458,7 +461,7 @@ def _copy_hybrid_delivery_assets(settings: Settings, script: ScriptFile, target_
     for segment in script.segments:
         character = character_image_path(script.md_path, segment.index, settings.artifact_prefix)
         storyboard = storyboard_image_path(script.md_path, segment.index, settings.artifact_prefix)
-        for path in (character, storyboard, storyboard_meta_path(storyboard)):
+        for path in (character, storyboard_meta_path(character), storyboard, storyboard_meta_path(storyboard)):
             if path.exists():
                 sources.append(path)
     conflicts = [target_dir / source.name for source in sources if (target_dir / source.name).exists()]
@@ -600,6 +603,7 @@ def _restore_moved_assets(settings: Settings, script: ScriptFile, marker: Dict[s
             character_image_path(active_md_path, segment.index, settings.artifact_prefix),
             storyboard_image_path(active_md_path, segment.index, settings.artifact_prefix),
         ]
+        originals.insert(1, storyboard_meta_path(originals[0]))
         originals.append(storyboard_meta_path(originals[-1]))
         if restore_videos:
             originals.append(video_output_path(settings, script.product_name, active_md_path, segment.index))

@@ -33,6 +33,7 @@ from .markdown_parser import (
     character_source_segment_index,
 )
 from .product_lock import (
+    build_character_product_reference_prompt,
     build_storyboard_product_lock_prompt,
     has_current_storyboard_product_lock,
     write_storyboard_product_lock_meta,
@@ -68,11 +69,10 @@ class JobManager:
 
         selected_scripts = _normalize_script_paths(script_paths)
         selected_references = _normalize_reference_images(reference_images)
-        if stage != "characters":
-            scripts = scan_scripts(self.settings)
-            if selected_scripts is not None:
-                scripts = [script for script in scripts if script.md_path.resolve() in selected_scripts]
-            _bind_script_references(scripts, selected_references, require_selection=True)
+        scripts = scan_scripts(self.settings)
+        if selected_scripts is not None:
+            scripts = [script for script in scripts if script.md_path.resolve() in selected_scripts]
+        _bind_script_references(scripts, selected_references, require_selection=True)
         selected_concurrency = _normalize_script_concurrency(script_concurrency, self.settings.script_concurrency)
         job_id = uuid.uuid4().hex[:12]
         now = time.time()
@@ -225,7 +225,7 @@ class JobManager:
             scripts = [script for script in scripts if script.md_path.resolve() in selected_scripts]
             if not scripts:
                 raise ValueError("没有匹配的已勾选脚本")
-        scripts = _bind_script_references(scripts, selected_references, require_selection=stage != "characters")
+        scripts = _bind_script_references(scripts, selected_references, require_selection=True)
         if stage == "smart":
             if overwrite:
                 self._run_relay_pipeline(job_id, selected_scripts, scripts, overwrite)
@@ -262,7 +262,7 @@ class JobManager:
                 self._raise_if_cancelled(job_id)
                 local_failed = False
                 self._set_script_status(job_id, script, "running", f"{_stage_display_label(current_stage)}开始", current_stage)
-                if current_stage in {"storyboards", "videos", "direct_videos", "product_videos"} and script.reference_image is None:
+                if current_stage in {"characters", "storyboards", "videos", "direct_videos", "product_videos"} and script.reference_image is None:
                     self._error(job_id, f"{script.product_name} 缺少产品参考图，跳过{_stage_display_label(current_stage)}：{script.md_path.name}")
                     self._increment(job_id, len(script.segments))
                     self._set_script_status(job_id, script, "failed", f"缺少产品参考图，跳过{_stage_display_label(current_stage)}", current_stage)
@@ -826,7 +826,10 @@ class JobManager:
         if stage == "characters":
             _client, api, image_settings = self._image_client_for("characters")
             output = character_image_path(script.md_path, segment.index, self.settings.artifact_prefix)
-            return not _image_output_current_for_api(image_settings, output, api)
+            return not (
+                has_current_storyboard_product_lock(output, script.product_name, script.reference_image)
+                and _image_output_current_for_api(image_settings, output, api)
+            )
         if stage == "storyboards":
             _client, api, image_settings = self._image_client_for("storyboards")
             output = storyboard_image_path(script.md_path, segment.index, self.settings.artifact_prefix)
@@ -850,8 +853,13 @@ class JobManager:
             return ""
         _client, api, image_settings = self._image_client_for("characters")
         source = character_image_path(script.md_path, source_index, self.settings.artifact_prefix)
-        if _image_output_current_for_api(image_settings, source, api):
+        if (
+            has_current_storyboard_product_lock(source, script.product_name, script.reference_image)
+            and _image_output_current_for_api(image_settings, source, api)
+        ):
             return ""
+        if source.exists() and not has_current_storyboard_product_lock(source, script.product_name, script.reference_image):
+            return f"复用源人物图缺少当前产品锁：片段{source_index}"
         if source.exists():
             expected_aspect = _expected_image_aspect_for_api(image_settings, api)
             return f"复用源人物图比例不是 {expected_aspect}：片段{source_index}"
@@ -1071,15 +1079,24 @@ class JobManager:
         image_settings = image_settings or self.settings
         image_api = image_api or ("grok" if self.settings.provider == "grok" else "otu")
         output = character_image_path(script.md_path, segment.index, self.settings.artifact_prefix)
+        has_product_lock = has_current_storyboard_product_lock(output, script.product_name, script.reference_image)
         if output.exists() and not overwrite:
-            if _image_output_current_for_api(image_settings, output, image_api):
+            if has_product_lock and _image_output_current_for_api(image_settings, output, image_api):
                 return "已存在，跳过"
-            expected_aspect = _expected_image_aspect_for_api(image_settings, image_api)
-            self._log(job_id, "info", f"片段{segment.index} 人物图：旧图比例不是 {expected_aspect}，自动重做")
+            if not has_product_lock:
+                self._log(job_id, "info", f"片段{segment.index} 人物图：旧人物图缺少当前产品锁，自动重做")
+            else:
+                expected_aspect = _expected_image_aspect_for_api(image_settings, image_api)
+                self._log(job_id, "info", f"片段{segment.index} 人物图：旧图比例不是 {expected_aspect}，自动重做")
+
+        if script.reference_image is None:
+            raise RuntimeError(f"{script.product_name} 缺少产品参考图，无法生成人物图")
 
         if segment.reuses_character:
             source_index = character_source_segment_index(script.segments, segment)
             source = character_image_path(script.md_path, source_index, self.settings.artifact_prefix)
+            if not has_current_storyboard_product_lock(source, script.product_name, script.reference_image):
+                raise RuntimeError(f"复用源人物图缺少当前产品锁：片段{source_index}，请先重新运行源片段")
             if not _image_output_current_for_api(image_settings, source, image_api):
                 expected_aspect = _expected_image_aspect_for_api(image_settings, image_api)
                 if source.exists():
@@ -1088,9 +1105,10 @@ class JobManager:
             ensure_parent(output)
             if source.resolve() != output.resolve():
                 shutil.copy2(source, output)
+            write_storyboard_product_lock_meta(output, script.product_name, script.reference_image, 1)
             return f"复用片段{source_index}人物图"
 
-        reference_sources = []
+        character_reference_sources = []
         for source_index in segment.character_reference_segment_indices:
             if source_index >= segment.index:
                 raise RuntimeError(f"人物参考来源必须早于当前片段：Segment {source_index}")
@@ -1100,21 +1118,21 @@ class JobManager:
                 if source.exists():
                     raise RuntimeError(f"参考源人物图比例不是 {expected_aspect}：片段{source_index}，请先重新运行源片段")
                 raise RuntimeError(f"参考源人物图不存在：片段{source_index}")
-            reference_sources.append(source)
+            if not has_current_storyboard_product_lock(source, script.product_name, script.reference_image):
+                raise RuntimeError(f"参考源人物图缺少当前产品锁：片段{source_index}，请先重新运行源片段")
+            character_reference_sources.append(source)
 
-        if reference_sources:
-            generate = lambda: image_client.generate_with_references(
-                _image_prompt_with_aspect_guard(segment.character_prompt, _expected_image_aspect_for_api(image_settings, image_api)),
-                reference_sources,
-                output,
-                progress=lambda message: self._log(job_id, "info", f"片段{segment.index} {self.settings.character_display_label}：{message}"),
-            )
-        else:
-            generate = lambda: image_client.generate_from_prompt(
-                _image_prompt_with_aspect_guard(segment.character_prompt, _expected_image_aspect_for_api(image_settings, image_api)),
-                output,
-                progress=lambda message: self._log(job_id, "info", f"片段{segment.index} {self.settings.character_display_label}：{message}"),
-            )
+        reference_sources = [script.reference_image, *character_reference_sources]
+        character_prompt = build_character_product_reference_prompt(
+            segment.character_prompt,
+            has_character_references=bool(character_reference_sources),
+        )
+        generate = lambda: image_client.generate_with_references(
+            _image_prompt_with_aspect_guard(character_prompt, _expected_image_aspect_for_api(image_settings, image_api)),
+            reference_sources,
+            output,
+            progress=lambda message: self._log(job_id, "info", f"片段{segment.index} {self.settings.character_display_label}：{message}"),
+        )
 
         self._validate_generated_image_or_retry(
             job_id,
@@ -1124,6 +1142,7 @@ class JobManager:
             image_api,
             f"片段{segment.index} 人物图",
         )
+        write_storyboard_product_lock_meta(output, script.product_name, script.reference_image, 1)
         return "已生成"
 
     def _process_storyboard(

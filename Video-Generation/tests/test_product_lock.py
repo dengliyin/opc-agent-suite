@@ -1,10 +1,20 @@
 from pathlib import Path
 
 from agent.product_lock import (
+    build_character_product_reference_prompt,
     build_storyboard_product_lock_prompt,
     has_current_storyboard_product_lock,
     write_storyboard_product_lock_meta,
 )
+
+
+def test_character_prompt_uses_product_as_first_reference_without_forcing_it_on_canvas() -> None:
+    prompt = build_character_product_reference_prompt("人物板不得出现产品", has_character_references=True)
+
+    assert "输入图1是本批脚本所选的产品参考图" in prompt
+    assert "输入图2及后续图片是之前片段的人物参考图" in prompt
+    assert "不得强行把产品画进人物板" in prompt
+    assert prompt.endswith("人物板不得出现产品")
 
 
 def test_storyboard_prompt_locks_product_to_images_without_hardcoded_visuals() -> None:

@@ -171,7 +171,8 @@ def test_cancel_removes_waiting_job_from_queue(tmp_path: Path) -> None:
     assert started == [first["id"]]
 
 
-def test_start_requires_and_records_product_sku_selection(tmp_path: Path) -> None:
+@pytest.mark.parametrize("stage", ["characters", "storyboards"])
+def test_start_requires_and_records_product_sku_selection(tmp_path: Path, stage: str) -> None:
     settings = settings_for(tmp_path)
     product_dir = settings.script_root / "LUX-轻奢戒指"
     product_dir.mkdir(parents=True)
@@ -191,10 +192,10 @@ def test_start_requires_and_records_product_sku_selection(tmp_path: Path) -> Non
     manager._submit_job = lambda _job_id: object()
 
     with pytest.raises(ValueError, match="请先选择本次使用的 SKU"):
-        manager.start("storyboards", script_paths=[str(md_path)])
+        manager.start(stage, script_paths=[str(md_path)])
 
     job = manager.start(
-        "storyboards",
+        stage,
         script_paths=[str(md_path)],
         reference_images={"LUX-轻奢戒指": str(second)},
     )
@@ -254,10 +255,12 @@ def test_process_character_logs_progress_with_job_id(tmp_path: Path) -> None:
     refreshed = manager.get(job_id)
 
     assert result == "已生成"
-    assert len(image_client.prompt_calls) == 1
-    assert "输出比例硬约束" in image_client.prompt_calls[0][0]
-    assert image_client.prompt_calls[0][1] == product_dir / "script-片段1-人物图.png"
-    assert image_client.reference_calls == []
+    assert image_client.prompt_calls == []
+    assert len(image_client.reference_calls) == 1
+    assert "输入图1是本批脚本所选的产品参考图" in image_client.reference_calls[0][0]
+    assert "输出比例硬约束" in image_client.reference_calls[0][0]
+    assert image_client.reference_calls[0][1] == [reference]
+    assert image_client.reference_calls[0][2] == product_dir / "script-片段1-人物图.png"
     assert any("fake progress" in entry["message"] for entry in refreshed["logs"])
 
 
@@ -265,6 +268,9 @@ def test_process_character_copies_detailed_current_segment_reuse(tmp_path: Path)
     settings = settings_for(tmp_path)
     product_dir = settings.script_root / "P1"
     product_dir.mkdir(parents=True)
+    reference = settings.reference_root / "P1.png"
+    reference.parent.mkdir(parents=True)
+    reference.write_bytes(b"ref")
     md_path = product_dir / "script.md"
     source_segment = Segment(
         index=1,
@@ -286,9 +292,14 @@ def test_process_character_copies_detailed_current_segment_reuse(tmp_path: Path)
         ),
         storyboard_prompt="story",
     )
-    script = type("Script", (), {"md_path": md_path, "segments": [source_segment, reused_segment]})()
+    script = type(
+        "Script",
+        (),
+        {"product_name": "P1", "reference_image": reference, "md_path": md_path, "segments": [source_segment, reused_segment]},
+    )()
     source = character_image_path(md_path, 1, settings.artifact_prefix)
     Image.new("RGB", (1024, 768), (12, 34, 56)).save(source)
+    write_storyboard_product_lock_meta(source, "P1", reference, 1)
     image_client = FakeImageClient()
     manager = JobManager(settings)
 
@@ -305,6 +316,9 @@ def test_process_character_regenerates_from_declared_reference_boards(tmp_path: 
     settings = settings_for(tmp_path)
     product_dir = settings.script_root / "P1"
     product_dir.mkdir(parents=True)
+    reference = settings.reference_root / "P1.png"
+    reference.parent.mkdir(parents=True)
+    reference.write_bytes(b"ref")
     md_path = product_dir / "script.md"
     first_segment = Segment(
         index=1,
@@ -335,11 +349,22 @@ def test_process_character_regenerates_from_declared_reference_boards(tmp_path: 
         ),
         storyboard_prompt="story",
     )
-    script = type("Script", (), {"md_path": md_path, "segments": [first_segment, second_segment, merged_segment]})()
+    script = type(
+        "Script",
+        (),
+        {
+            "product_name": "P1",
+            "reference_image": reference,
+            "md_path": md_path,
+            "segments": [first_segment, second_segment, merged_segment],
+        },
+    )()
     first_source = character_image_path(md_path, 1, settings.artifact_prefix)
     second_source = character_image_path(md_path, 2, settings.artifact_prefix)
     Image.new("RGB", (1024, 768), (12, 34, 56)).save(first_source)
     Image.new("RGB", (1024, 768), (65, 43, 21)).save(second_source)
+    write_storyboard_product_lock_meta(first_source, "P1", reference, 1)
+    write_storyboard_product_lock_meta(second_source, "P1", reference, 1)
     image_client = FakeImageClient()
     manager = JobManager(settings)
     manager._jobs["job_merge"] = {"logs": []}
@@ -349,7 +374,8 @@ def test_process_character_regenerates_from_declared_reference_boards(tmp_path: 
     assert result == "已生成"
     assert image_client.prompt_calls == []
     assert len(image_client.reference_calls) == 1
-    assert image_client.reference_calls[0][1] == [first_source, second_source]
+    assert image_client.reference_calls[0][1] == [reference, first_source, second_source]
+    assert "输入图2及后续图片是之前片段的人物参考图" in image_client.reference_calls[0][0]
     assert image_client.reference_calls[0][2] == character_image_path(md_path, 3, settings.artifact_prefix)
 
 
@@ -412,8 +438,10 @@ def test_process_character_retries_invalid_grok_aspect_and_keeps_only_valid_outp
     refreshed = manager.get(job_id)
 
     assert result == "已生成"
-    assert len(image_client.prompt_calls) == 2
-    assert "最终图片必须严格为 9:16" in image_client.prompt_calls[0][0]
+    assert image_client.prompt_calls == []
+    assert len(image_client.reference_calls) == 2
+    assert image_client.reference_calls[0][1] == [reference]
+    assert "最终图片必须严格为 9:16" in image_client.reference_calls[0][0]
     assert Image.open(output).size == (720, 1280)
     assert any("API返回图片不符合要求" in entry["message"] for entry in refreshed["logs"])
 
@@ -475,7 +503,8 @@ def test_process_character_removes_invalid_grok_output_after_retries(tmp_path: P
     with pytest.raises(RuntimeError, match="API平台返回图片不符合要求"):
         manager._process_character(job_id, image_client, script, segment, overwrite=True, image_api="grok", image_settings=settings)
 
-    assert len(image_client.prompt_calls) == 2
+    assert image_client.prompt_calls == []
+    assert len(image_client.reference_calls) == 2
     assert not character_image_path(md_path, 1, settings.artifact_prefix).exists()
 
 
@@ -1513,6 +1542,8 @@ def fake_script(tmp_path: Path, settings: Settings, segment_count: int):
 def prepare_character(script, segment_index: int, settings: Settings) -> Path:
     path = character_image_path(script.md_path, segment_index, settings.artifact_prefix)
     path.write_bytes(b"person")
+    assert script.reference_image is not None
+    write_storyboard_product_lock_meta(path, script.product_name, script.reference_image, 1)
     return path
 
 

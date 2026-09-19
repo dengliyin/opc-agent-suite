@@ -9,6 +9,24 @@ from typing import Optional
 PRODUCT_LOCK_VERSION = 6
 
 
+def build_character_product_reference_prompt(base_prompt: str, has_character_references: bool) -> str:
+    character_reference_note = (
+        "输入图2及后续图片是之前片段的人物参考图，只用于保持人物身份、五官、发型和服装一致。\n"
+        if has_character_references
+        else "本次没有旧人物参考图，人物造型按原人物图提示词生成。\n"
+    )
+    return (
+        "【最高优先级：人物图产品参考输入】\n"
+        "输入图1是本批脚本所选的产品参考图，必须作为唯一合法的产品视觉来源。\n"
+        "如果原人物图提示词明确要求产品出镜、手持或使用，产品外观只能来自输入图1；"
+        "如果原人物图提示词要求人物板不出现产品，则不得强行把产品画进人物板。\n"
+        "不得根据产品名称、脚本文案或模型常识重新设计产品，也不得让人物参考图覆盖产品外观。\n"
+        f"{character_reference_note}\n"
+        "【原人物图提示词】\n"
+        f"{base_prompt}"
+    )
+
+
 def build_storyboard_product_lock_prompt(
     product_name: str,
     base_prompt: str,
