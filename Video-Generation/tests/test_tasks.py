@@ -701,13 +701,20 @@ def test_process_direct_video_uses_character_product_and_script_without_storyboa
     assert result == "已生成"
     assert omni_client.calls
     prompt, primary_reference, _output, extra_references, duration = omni_client.calls[0]
-    assert primary_reference == character
-    assert extra_references == [reference]
+    assert primary_reference == reference
+    assert extra_references == [character]
     assert duration is None
     assert "严格按脚本中每个镜头的时间段" in prompt
     assert "不得省略任何镜头，不得重排镜头顺序" in prompt
     assert "hello" in prompt
-    assert any("人物图 + 产品参考图 + 当前片段镜头脚本" in entry["message"] for entry in refreshed["logs"])
+    assert any("产品主参考图（第1张） + 人物图（第2张） + 当前片段镜头脚本" in entry["message"] for entry in refreshed["logs"])
+
+    reference.write_bytes(b"updated-product-reference")
+    rerun_result = manager._process_direct_video(job_id, omni_client, script, segment, overwrite=False)
+
+    assert rerun_result == "已生成"
+    assert len(omni_client.calls) == 2
+    assert any("产品图片内容或 SKU 已变化，自动重做" in entry["message"] for entry in manager.get(job_id)["logs"])
 
 
 def test_process_direct_video_supports_grok_duration_and_references(tmp_path: Path) -> None:
@@ -770,8 +777,8 @@ def test_process_direct_video_supports_grok_duration_and_references(tmp_path: Pa
 
     assert result == "已生成"
     prompt, primary_reference, _output, extra_references, duration = grok_client.calls[0]
-    assert primary_reference == character
-    assert extra_references == [reference]
+    assert primary_reference == reference
+    assert extra_references == [character]
     assert duration == 8
     assert "严格按脚本中每个镜头的时间段" in prompt
 

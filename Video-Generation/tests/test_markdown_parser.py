@@ -426,8 +426,10 @@ def test_build_direct_video_prompt_locks_order_and_references() -> None:
     segment = parse_segments(SAMPLE)[0]
     prompt = build_direct_video_prompt(segment)
 
-    assert "第一张人物参考图" in prompt
-    assert "第二张产品参考图" in prompt
+    assert "第一张产品主参考图" in prompt
+    assert "第二张人物参考图" in prompt
+    assert "不得覆盖或改写第一张图中的产品" in prompt
+    assert "以第一张产品主参考图为准" in prompt
     assert "不得省略任何镜头" in prompt
     assert "不得重排镜头顺序" in prompt
     assert "音频与语言控制规则" in prompt
@@ -455,7 +457,7 @@ def test_build_product_video_prompt_uses_only_product_reference_and_shot_script(
     assert "### 镜头 1" in prompt
     assert "人物提示词 1" not in prompt
     assert "故事提示词 1" not in prompt
-    assert "第一张人物参考图" not in prompt
+    assert "第二张人物参考图" not in prompt
     assert "始终使用单一全屏画面" in prompt
     assert "禁止分屏、拼贴、网格、画中画" in prompt
     assert "镜头只能按脚本时间顺序依次切换" in prompt

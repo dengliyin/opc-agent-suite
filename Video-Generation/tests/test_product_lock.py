@@ -43,3 +43,17 @@ def test_storyboard_product_lock_metadata_marks_current_output(tmp_path: Path) -
     assert has_current_storyboard_product_lock(storyboard, "Other") is False
     assert has_current_storyboard_product_lock(storyboard, "SIMC染发棒", reference) is True
     assert has_current_storyboard_product_lock(storyboard, "SIMC染发棒", tmp_path / "other.png") is False
+
+
+def test_storyboard_product_lock_detects_reference_content_change_at_same_path(tmp_path: Path) -> None:
+    storyboard = tmp_path / "story.png"
+    storyboard.write_bytes(b"png")
+    reference = tmp_path / "product.png"
+    reference.write_bytes(b"original-reference")
+    write_storyboard_product_lock_meta(storyboard, "SIMC泡泡染", reference, 1)
+
+    assert has_current_storyboard_product_lock(storyboard, "SIMC泡泡染", reference) is True
+
+    reference.write_bytes(b"updated-product-reference")
+
+    assert has_current_storyboard_product_lock(storyboard, "SIMC泡泡染", reference) is False

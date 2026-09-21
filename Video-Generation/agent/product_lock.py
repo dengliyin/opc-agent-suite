@@ -1,12 +1,29 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import time
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
 
-PRODUCT_LOCK_VERSION = 6
+PRODUCT_LOCK_VERSION = 7
+
+
+@lru_cache(maxsize=256)
+def _cached_file_sha256(path: str, mtime_ns: int, size: int) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def product_reference_sha256(product_reference: Path) -> str:
+    resolved = product_reference.resolve()
+    stat = resolved.stat()
+    return _cached_file_sha256(str(resolved), stat.st_mtime_ns, stat.st_size)
 
 
 def build_character_product_reference_prompt(base_prompt: str, has_character_references: bool) -> str:
@@ -63,6 +80,7 @@ def write_storyboard_product_lock_meta(
         "product_lock_version": PRODUCT_LOCK_VERSION,
         "product_name": product_name,
         "product_reference": str(product_reference),
+        "product_reference_sha256": product_reference_sha256(product_reference),
         "product_reference_count": product_reference_count,
         "created_at": time.time(),
     }
@@ -87,6 +105,12 @@ def has_current_storyboard_product_lock(
         return False
     if product_name and metadata.get("product_name") != product_name:
         return False
-    if product_reference and Path(str(metadata.get("product_reference") or "")).resolve() != product_reference.resolve():
-        return False
+    if product_reference:
+        if Path(str(metadata.get("product_reference") or "")).resolve() != product_reference.resolve():
+            return False
+        try:
+            if metadata.get("product_reference_sha256") != product_reference_sha256(product_reference):
+                return False
+        except OSError:
+            return False
     return True

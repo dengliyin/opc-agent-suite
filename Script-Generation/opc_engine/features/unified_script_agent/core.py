@@ -58,6 +58,22 @@ OMNI_FIELDS = (
     "音频文案",
     "背景音乐",
 )
+PRODUCT_APPEARANCE_RE = re.compile(
+    r"(?:\[产品\]|\[手持产品\]|产品|商品|瓶身|瓶体|容器|包装|膏体|液体|凝胶|乳液|泡沫|内容物|"
+    r"泵头|喷头|喷嘴|刷头|滴管|滚珠|瓶盖|梳齿).{0,12}"
+    r"(?:颜色|色号|形状|外形|轮廓|材质|质地|包装|标签|Logo|logo|商标|品牌字样|"
+    r"黑色|白色|红色|橙色|黄色|绿色|青色|蓝色|紫色|灰色|棕色|褐色|棕褐色|金色|银色|粉色|米色|"
+    r"透明|半透明|不透明|圆柱形|方形|塑料|玻璃|金属|纸盒|软管)"
+    r"|(?:颜色|色号|形状|外形|轮廓|材质|质地|包装|标签|Logo|logo|商标|品牌字样|"
+    r"黑色|白色|红色|橙色|黄色|绿色|青色|蓝色|紫色|灰色|棕色|褐色|棕褐色|金色|银色|粉色|米色|"
+    r"透明|半透明|不透明|圆柱形|方形|塑料|玻璃|金属|纸盒|软管).{0,12}"
+    r"(?:\[产品\]|\[手持产品\]|产品|商品|瓶身|瓶体|容器|包装|膏体|液体|凝胶|乳液|泡沫|内容物|"
+    r"泵头|喷头|喷嘴|刷头|滴管|滚珠|瓶盖|梳齿)",
+    re.IGNORECASE,
+)
+PRODUCT_PACKAGING_RE = re.compile(r"包装|标签|Logo|商标|品牌字样|瓶身文字|瓶体文字", re.IGNORECASE)
+PRODUCT_CONTAINER_RE = re.compile(r"瓶身|瓶体|罐身|盒身|外壳")
+PRODUCT_STRUCTURE_TERMS = ("泵头", "喷头", "喷嘴", "刷头", "滴管", "滚珠", "瓶盖", "旋盖", "梳齿")
 SEEDANCE_FIELDS = (
     "画面内容",
     "动作/景别",
@@ -611,7 +627,24 @@ def clean_model_markdown(text: str) -> str:
     return (match.group("body") if match else content).strip()
 
 
-def validate_omni_markdown(text: str) -> list[str]:
+def _product_visual_issues(
+    fields: list[tuple[str, str]],
+    fact_card: str,
+    location: str,
+) -> list[str]:
+    issues: list[str] = []
+    for field_name, value in fields:
+        if PRODUCT_PACKAGING_RE.search(value) or PRODUCT_CONTAINER_RE.search(value) or PRODUCT_APPEARANCE_RE.search(value):
+            issues.append(
+                f"{location} [{field_name}] 不得描述产品颜色、形状、包装、标签、膏体颜色或材质，只能使用 [产品]/[手持产品]"
+            )
+        for term in PRODUCT_STRUCTURE_TERMS:
+            if term in value and term not in fact_card:
+                issues.append(f"{location} [{field_name}] 包含产品资料未确认的使用结构：{term}")
+    return issues
+
+
+def validate_omni_markdown(text: str, fact_card: str = "") -> list[str]:
     content = clean_model_markdown(text)
     issues: list[str] = []
     if not re.match(r"^#\s*\n## 每段生成提示词\s*$", "\n".join(content.splitlines()[:2])):
@@ -656,15 +689,24 @@ def validate_omni_markdown(text: str) -> list[str]:
                 issues.append(f"Segment {number} 镜头 {shot_number} 时间必须连续且结束晚于开始")
             previous_end = end
             shot_block = b_body[shot.end() : shots[shot_index + 1].start() if shot_index + 1 < len(shots) else len(b_body)]
-            fields = [field.group("name") for field in FIELD_RE.finditer(shot_block)]
+            field_matches = list(FIELD_RE.finditer(shot_block))
+            fields = [field.group("name") for field in field_matches]
             if fields != list(OMNI_FIELDS):
                 issues.append(
                     f"Segment {number} 镜头 {shot_number} 必须恰好按顺序包含 9 个字段"
                 )
+            else:
+                issues.extend(
+                    _product_visual_issues(
+                        [(field.group("name"), field.group("value")) for field in field_matches],
+                        fact_card,
+                        f"Segment {number} 镜头 {shot_number}",
+                    )
+                )
     return list(dict.fromkeys(issues))
 
 
-def validate_seedance_markdown(text: str) -> list[str]:
+def validate_seedance_markdown(text: str, fact_card: str = "") -> list[str]:
     content = clean_model_markdown(text)
     issues: list[str] = []
     if not re.match(r"^#\s*\n## 每段生成提示词\s*$", "\n".join(content.splitlines()[:2])):
@@ -731,6 +773,13 @@ def validate_seedance_markdown(text: str) -> list[str]:
             if any(not value for value in values):
                 issues.append(f"Segment {number} 镜头 {shot_number:02d} 的 7 个字段内容均不能为空")
                 continue
+            issues.extend(
+                _product_visual_issues(
+                    list(zip(field_names, values)),
+                    fact_card,
+                    f"Segment {number} 镜头 {shot_number:02d}",
+                )
+            )
 
             action_value = values[1]
             dialogue_value = values[5]
@@ -772,8 +821,9 @@ def validate_seedance_markdown(text: str) -> list[str]:
     return list(dict.fromkeys(issues))
 
 
-def _validator_for_model(model: str) -> Callable[[str], list[str]]:
-    return validate_seedance_markdown if model == "seedance" else validate_omni_markdown
+def _validator_for_model(model: str, fact_card: str = "") -> Callable[[str], list[str]]:
+    validator = validate_seedance_markdown if model == "seedance" else validate_omni_markdown
+    return lambda text: validator(text, fact_card)
 
 
 def normalize_seedance_markdown(markdown: str) -> str:
@@ -969,7 +1019,7 @@ def _generate_one(
     variant_number: int = 0,
 ) -> dict[str, Any]:
     output_path = output_path_for(payload, variant_number)
-    validator = _validator_for_model(payload["model"])
+    validator = _validator_for_model(payload["model"], fact_card)
     if not variant_number and output_path.is_file():
         existing = output_path.read_text(encoding="utf-8", errors="ignore")
         if not validator(existing):

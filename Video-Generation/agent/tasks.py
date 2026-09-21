@@ -1298,13 +1298,11 @@ class JobManager:
         video_api = video_api or ("grok" if self.settings.provider == "grok" else "otu")
 
         output = video_output_path(self.settings, script.product_name, script.md_path, segment.index)
-        output_matches_reference = len(getattr(script, "reference_images", (script.reference_image,))) <= 1 or has_current_storyboard_product_lock(
-            output, script.product_name, script.reference_image
-        )
+        output_matches_reference = has_current_storyboard_product_lock(output, script.product_name, script.reference_image)
         if output.exists() and output_matches_reference and not overwrite:
             return "已存在，跳过"
         if output.exists() and not output_matches_reference and not overwrite:
-            self._log(job_id, "info", f"片段{segment.index} 快速模式{self.settings.video_display_label}：产品 SKU 已切换，自动重做")
+            self._log(job_id, "info", f"片段{segment.index} 快速模式{self.settings.video_display_label}：产品图片内容或 SKU 已变化，自动重做")
         if output.exists() and overwrite:
             self._log(job_id, "info", f"片段{segment.index} 快速模式{self.settings.video_display_label}：强制重跑，旧视频会保留到新视频成功覆盖")
 
@@ -1321,24 +1319,24 @@ class JobManager:
         self._log(
             job_id,
             "info",
-            f"片段{segment.index} 快速模式{self.settings.video_display_label}：使用人物图 + 产品参考图 + 当前片段镜头脚本，prompt {len(video_prompt)} 字符",
+            f"片段{segment.index} 快速模式{self.settings.video_display_label}：使用产品主参考图（第1张） + 人物图（第2张） + 当前片段镜头脚本，prompt {len(video_prompt)} 字符",
         )
         if video_api == "grok":
             omni_client.generate_video(
                 video_prompt,
-                character_path,
+                script.reference_image,
                 output,
                 progress=lambda message: self._log(job_id, "info", f"片段{segment.index} 快速模式{self.settings.video_display_label}：{message}"),
                 duration=_segment_duration_seconds(segment, video_settings.grok_video_duration),
-                reference_paths=[script.reference_image],
+                reference_paths=[character_path],
             )
         else:
             omni_client.generate_video(
                 video_prompt,
-                character_path,
+                script.reference_image,
                 output,
                 progress=lambda message: self._log(job_id, "info", f"片段{segment.index} 快速模式{self.settings.video_display_label}：{message}"),
-                reference_paths=[script.reference_image],
+                reference_paths=[character_path],
             )
         write_storyboard_product_lock_meta(output, script.product_name, script.reference_image, 1)
         return "已生成"

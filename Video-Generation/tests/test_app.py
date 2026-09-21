@@ -106,7 +106,7 @@ def test_omni_page_has_product_reference_fastest_mode():
     assert response.status_code == 200
     assert 'data-stage="product_videos"' in response.text
     assert "功能3 故事版图 → 视频" in response.text
-    assert "功能4 人物图+产品图 → 视频" in response.text
+    assert "功能4 产品图+人物图 → 视频" in response.text
     assert "功能5 产品图+镜头脚本 → 视频" in response.text
     assert "功能6 一键完整流程（1→2→3）" in response.text
 

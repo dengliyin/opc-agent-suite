@@ -34,7 +34,7 @@ VALID_OMNI = """#
 
 - [主体] character_01
 - [在场景中] 普通住宅客厅
-- [做什么动作] 展示图1中的该产品
+- [做什么动作] 展示[产品]
 - [镜头语言] 中景固定镜头
 - [光线] 自然窗光
 - [细节] 动作清晰稳定
@@ -207,6 +207,9 @@ def test_prompt_assembly_uses_only_reviewed_omni_blocks(tmp_path: Path, monkeypa
     assert "## Seedance 模型规则 MODEL_SEEDANCE" not in prompt
     assert "## Grok 模型规则 MODEL_GROK" not in prompt
     assert "## Veo 模型规则 MODEL_VEO" not in prompt
+    assert "最终镜头的任何字段都不得描述产品颜色" in prompt
+    assert "[细节]` 也不得例外" in prompt
+    assert "来源脚本里的旧产品颜色、形状、包装、标签" in prompt
     assert "<SOURCE_SCRIPT>\nSOURCE\n</SOURCE_SCRIPT>" in prompt
     assert "- `VARIANT_NUMBER`：7" in prompt
     assert "ADAPTATION_NOTES" not in prompt
@@ -364,6 +367,21 @@ def test_omni_contract_validator_rejects_missing_ninth_field() -> None:
     broken = VALID_OMNI.replace("- [细节] 动作清晰稳定\n", "")
     issues = core.validate_omni_markdown(broken)
     assert any("恰好按顺序包含 9 个字段" in issue for issue in issues)
+
+
+def test_omni_contract_validator_rejects_product_visual_details_in_any_field() -> None:
+    broken = VALID_OMNI.replace("- [细节] 动作清晰稳定", "- [细节] 棕褐色半透明膏体从白色包装瓶流出，SIMC 标签清晰")
+
+    issues = core.validate_omni_markdown(broken)
+
+    assert any("不得描述产品颜色、形状、包装、标签、膏体颜色或材质" in issue for issue in issues)
+
+
+def test_omni_contract_validator_requires_product_fact_for_usage_structure() -> None:
+    with_pump_action = VALID_OMNI.replace("展示[产品]", "拿起[手持产品]并按压泵头")
+
+    assert any("产品资料未确认的使用结构：泵头" in issue for issue in core.validate_omni_markdown(with_pump_action))
+    assert core.validate_omni_markdown(with_pump_action, "使用方法：按压泵头取用适量产品") == []
 
 
 def test_seedance_contract_validator_accepts_seven_field_format() -> None:
