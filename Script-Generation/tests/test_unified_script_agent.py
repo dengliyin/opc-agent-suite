@@ -213,6 +213,10 @@ def test_prompt_assembly_uses_only_reviewed_omni_blocks(tmp_path: Path, monkeypa
     assert "<SOURCE_SCRIPT>\nSOURCE\n</SOURCE_SCRIPT>" in prompt
     assert "- `VARIANT_NUMBER`：7" in prompt
     assert "ADAPTATION_NOTES" not in prompt
+    assert "## Omni 最终输出硬性约束" in prompt
+    assert "真实直观的产品使用演示" in prompt
+    assert prompt.index("</SOURCE_SCRIPT>") < prompt.index("## Omni 最终输出硬性约束")
+    assert prompt.rstrip().endswith("不要输出自检报告、解释或代码围栏。")
 
 
 def test_prompt_assembly_adds_only_seedance_model_block(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -260,6 +264,7 @@ def test_seedance_uses_full_markdown_repair_without_changing_omni_repair() -> No
     assert "只返回合法 JSON" not in seedance_prompt
     assert "## 局部修复规则 REPAIR" in omni_prompt
     assert "只返回合法 JSON" in omni_prompt
+    assert "不要返回完整 Markdown" in omni_prompt
     assert "Seedance 完整稿修复规则" not in omni_prompt
 
 
@@ -299,6 +304,91 @@ def test_seedance_repairs_nonconforming_first_response(
     saved = Path(result["path"]).read_text(encoding="utf-8")
     assert saved.startswith("#\n## 每段生成提示词")
     assert "**画面内容：**\ncharacter_01" in saved
+
+
+def test_omni_applies_json_local_repair_to_original_markdown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = configure_storage(monkeypatch, tmp_path)
+    source = paths["pure_source"] / "P1" / "US-author-1234567890123-demo.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("source", encoding="utf-8")
+    (paths["product_info"] / "P1-产品信息.md").write_text("# 产品信息\nP1", encoding="utf-8")
+    payload = core.validate_task_payload(
+        {
+            "route": "route1",
+            "mode": "clone",
+            "model": "omni",
+            "source_path": str(source),
+            "target_product": "P1",
+            "target_market": "US",
+            "target_language": "英语（美式）",
+        }
+    )
+    invalid = VALID_OMNI.replace("- [细节] 动作清晰稳定", "- [细节] 白色产品包装瓶")
+    repairs = [
+        {
+            "replacements": [
+                {
+                    "old": "- [细节] 白色产品包装瓶",
+                    "new": "- [细节] 黑色产品包装瓶",
+                }
+            ]
+        },
+        {
+            "replacements": [
+                {
+                    "old": "- [细节] 黑色产品包装瓶",
+                    "new": "- [细节] 红色产品包装瓶",
+                }
+            ]
+        },
+        {
+            "replacements": [
+                {
+                    "old": "- [细节] 红色产品包装瓶",
+                    "new": "- [细节] 动作清晰稳定",
+                }
+            ]
+        },
+    ]
+    responses = iter(
+        [invalid, *(f"```json\n{json.dumps(repair, ensure_ascii=False)}\n```" for repair in repairs)]
+    )
+    prompts: list[str] = []
+
+    def fake_call(prompt: str, *_args: object, **_kwargs: object) -> str:
+        prompts.append(prompt)
+        return next(responses)
+
+    monkeypatch.setattr(core, "_call_model", fake_call)
+
+    result = core._generate_one(payload, "source", "fact", "lesson", lambda _message: None)
+
+    assert len(prompts) == 4
+    assert "## 局部修复规则 REPAIR" in prompts[1]
+    assert "不要返回完整 Markdown" in prompts[1]
+    saved = Path(result["path"]).read_text(encoding="utf-8")
+    assert saved == VALID_OMNI.strip() + "\n"
+
+
+def test_omni_local_repair_can_replace_repeated_invalid_text() -> None:
+    candidate = "- [细节] 白色产品包装瓶\n- [细节] 白色产品包装瓶"
+    repair = json.dumps(
+        {
+            "replacements": [
+                {
+                    "old": "- [细节] 白色产品包装瓶",
+                    "new": "- [细节] 仅保留人物动作",
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    assert core._apply_omni_repair(candidate, repair) == (
+        "- [细节] 仅保留人物动作\n- [细节] 仅保留人物动作"
+    )
 
 
 def test_page_has_no_task_notes_field() -> None:
@@ -384,8 +474,67 @@ def test_omni_contract_validator_requires_product_fact_for_usage_structure() -> 
     assert core.validate_omni_markdown(with_pump_action, "使用方法：按压泵头取用适量产品") == []
 
 
+def test_omni_contract_validator_requires_placeholders_for_visual_product_identity() -> None:
+    fact_card = 'aliases: ["SIMC泡泡染"]\n| **品牌** | SIMC | 用户提供 |\n| **型号-SKU** | SIMC04 | 用户提供 |'
+    broken = VALID_OMNI.replace("展示[产品]", "展示SIMC泡泡染产品")
+
+    issues = core.validate_omni_markdown(broken, fact_card)
+
+    assert any("商品视觉引用必须使用 [产品] 或 [手持产品]" in issue for issue in issues)
+    assert any("不得直接写商品名称、品牌或 SKU" in issue for issue in issues)
+
+
+def test_omni_contract_validator_allows_product_identity_in_spoken_copy() -> None:
+    fact_card = 'aliases: ["SIMC泡泡染"]\n| **品牌** | SIMC | 用户提供 |'
+    with_brand_audio = VALID_OMNI.replace("No more waiting.", "SIMC memang mudah digunakan.")
+
+    assert core.validate_omni_markdown(with_brand_audio, fact_card) == []
+
+
+def test_omni_contract_validator_checks_usage_action_against_product_facts() -> None:
+    spray_action = VALID_OMNI.replace("展示[产品]", "拿起[手持产品]喷洒在头发上")
+
+    issues = core.validate_omni_markdown(spray_action, "使用方法：涂抹在头发上后冲洗")
+
+    assert any("使用动作“喷洒”未在产品资料中确认" in issue for issue in issues)
+    assert core.validate_omni_markdown(spray_action, "使用方法：均匀喷洒在头发上") == []
+
+
+def test_omni_contract_validator_does_not_treat_prop_details_as_product_appearance() -> None:
+    with_props_and_foam = VALID_OMNI.replace(
+        "展示[产品]",
+        "从绿色塑料桶旁拿起[产品]，从[产品]挤出泡沫到掌心",
+    ).replace(
+        "动作清晰稳定",
+        "头发上泡沫增多，左手腕戴着一只黑色手表",
+    )
+
+    assert core.validate_omni_markdown(with_props_and_foam, "使用方法：挤出泡泡后涂抹头发") == []
+
+
+def test_omni_contract_validator_keeps_story_props_as_real_categories() -> None:
+    with_story_props = VALID_OMNI.replace("展示[产品]", "拿起手机连接自拍杆并调整拍摄角度")
+
+    assert core.validate_omni_markdown(with_story_props) == []
+
+
 def test_seedance_contract_validator_accepts_seven_field_format() -> None:
     assert core.validate_seedance_markdown(VALID_SEEDANCE) == []
+
+
+def test_seedance_contract_validator_checks_product_usage_action_against_facts() -> None:
+    spray_action = VALID_SEEDANCE.replace(
+        "character_01 在卧室展示空无一物的无名指。",
+        "character_01 在卧室拿着[手持产品]。",
+    ).replace(
+        "中景，抬起右手并在结束时保持展示。",
+        "中景，使用[手持产品]喷洒在头发上。",
+    )
+
+    issues = core.validate_seedance_markdown(spray_action, "使用方法：涂抹在头发上")
+
+    assert any("使用动作“喷洒”未在产品资料中确认" in issue for issue in issues)
+    assert core.validate_seedance_markdown(spray_action, "使用方法：喷洒在头发上") == []
 
 
 @pytest.mark.parametrize(

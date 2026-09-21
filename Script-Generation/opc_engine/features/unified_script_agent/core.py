@@ -32,6 +32,8 @@ PROMPT_BLOCK_RE = re.compile(
     re.DOTALL,
 )
 OUTER_FENCE_RE = re.compile(r"^```(?:markdown|md)?\s*\n(?P<body>.*)\n```\s*$", re.DOTALL | re.IGNORECASE)
+JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*\n(?P<body>.*)\n```\s*$", re.DOTALL | re.IGNORECASE)
+MAX_REPAIR_ATTEMPTS = 4
 SEGMENT_RE = re.compile(r"(?m)^#\s*Segment\s+(?P<number>\d+)\s*[：:]\s*(?P<range>.+?)\s*$")
 SHOT_RE = re.compile(
     r"(?m)^###\s*镜头\s+(?P<number>\d+)\s*\("
@@ -58,22 +60,65 @@ OMNI_FIELDS = (
     "音频文案",
     "背景音乐",
 )
+PRODUCT_APPEARANCE_ATTRIBUTE = (
+    r"颜色|色号|形状|外形|轮廓|材质|质地|质感|包装|标签|Logo|logo|商标|品牌字样|"
+    r"黑色|白色|红色|橙色|黄色|绿色|青色|蓝色|紫色|灰色|棕色|褐色|棕褐色|金色|银色|粉色|米色|"
+    r"透明|半透明|不透明|圆柱形|方形|塑料|玻璃|金属|纸盒|软管"
+)
+PRODUCT_VISUAL_OBJECT = (
+    r"\[产品\]|\[手持产品\]|产品|商品|瓶身|瓶体|容器|包装|泵头|喷头|喷嘴|刷头|滴管|滚珠|瓶盖|梳齿"
+)
+PRODUCT_CONTENT_OBJECT = r"膏体|液体|凝胶|乳液|泡沫|内容物"
 PRODUCT_APPEARANCE_RE = re.compile(
-    r"(?:\[产品\]|\[手持产品\]|产品|商品|瓶身|瓶体|容器|包装|膏体|液体|凝胶|乳液|泡沫|内容物|"
-    r"泵头|喷头|喷嘴|刷头|滴管|滚珠|瓶盖|梳齿).{0,12}"
-    r"(?:颜色|色号|形状|外形|轮廓|材质|质地|包装|标签|Logo|logo|商标|品牌字样|"
-    r"黑色|白色|红色|橙色|黄色|绿色|青色|蓝色|紫色|灰色|棕色|褐色|棕褐色|金色|银色|粉色|米色|"
-    r"透明|半透明|不透明|圆柱形|方形|塑料|玻璃|金属|纸盒|软管)"
-    r"|(?:颜色|色号|形状|外形|轮廓|材质|质地|包装|标签|Logo|logo|商标|品牌字样|"
-    r"黑色|白色|红色|橙色|黄色|绿色|青色|蓝色|紫色|灰色|棕色|褐色|棕褐色|金色|银色|粉色|米色|"
-    r"透明|半透明|不透明|圆柱形|方形|塑料|玻璃|金属|纸盒|软管).{0,12}"
-    r"(?:\[产品\]|\[手持产品\]|产品|商品|瓶身|瓶体|容器|包装|膏体|液体|凝胶|乳液|泡沫|内容物|"
-    r"泵头|喷头|喷嘴|刷头|滴管|滚珠|瓶盖|梳齿)",
+    rf"(?:{PRODUCT_VISUAL_OBJECT})(?:的)?(?:颜色|色号|形状|外形|轮廓|材质|质地|质感|为|是|呈|采用|带有)"
+    rf".{{0,8}}(?:{PRODUCT_APPEARANCE_ATTRIBUTE})"
+    rf"|(?:{PRODUCT_APPEARANCE_ATTRIBUTE})(?:的)?(?:{PRODUCT_VISUAL_OBJECT})"
+    rf"|(?:{PRODUCT_APPEARANCE_ATTRIBUTE}).{{0,4}}(?:{PRODUCT_CONTENT_OBJECT})"
+    rf"|(?:{PRODUCT_CONTENT_OBJECT})(?:的)?(?:颜色|色号|材质|质地|质感|为|是|呈).{{0,6}}"
+    rf"(?:{PRODUCT_APPEARANCE_ATTRIBUTE})",
     re.IGNORECASE,
 )
 PRODUCT_PACKAGING_RE = re.compile(r"包装|标签|Logo|商标|品牌字样|瓶身文字|瓶体文字", re.IGNORECASE)
 PRODUCT_CONTAINER_RE = re.compile(r"瓶身|瓶体|罐身|盒身|外壳")
+PRODUCT_CONTEXT_RE = re.compile(
+    r"\[产品\]|\[手持产品\]|产品|商品|包装|瓶身|瓶体|膏体|液体|凝胶|乳液|泡沫|内容物|"
+    r"泵头|喷头|喷嘴|刷头|滴管|滚珠|瓶盖|梳齿"
+)
 PRODUCT_STRUCTURE_TERMS = ("泵头", "喷头", "喷嘴", "刷头", "滴管", "滚珠", "瓶盖", "旋盖", "梳齿")
+PRODUCT_VISUAL_FIELDS = frozenset(
+    {
+        "主体",
+        "在场景中",
+        "做什么动作",
+        "镜头语言",
+        "光线",
+        "细节",
+        "画面风格/氛围",
+        "画面内容",
+        "动作/景别",
+        "构图",
+        "拍摄方式",
+    }
+)
+PRODUCT_ACTION_FIELDS = frozenset({"做什么动作", "动作/景别"})
+PRODUCT_USAGE_ACTION_RULES = (
+    ("按压", re.compile(r"按压|压下|压动"), ("按压", "泵头", "压泵")),
+    ("喷洒", re.compile(r"喷洒|喷向|喷到|喷在"), ("喷洒", "喷雾", "喷头")),
+    ("挤出", re.compile(r"挤出|挤压|挤到|挤在"), ("挤出", "挤压")),
+    ("倒出", re.compile(r"倒出|倒入|倾倒"), ("倒出", "倒入", "倾倒")),
+    ("滴用", re.compile(r"滴入|滴到|滴在"), ("滴入", "滴到", "滴管")),
+    ("开盖或拆封", re.compile(r"拧开|旋开|开盖|撕开|拆封"), ("拧开", "旋开", "开盖", "拆封")),
+    ("涂抹", re.compile(r"涂抹|抹到|抹在|涂到|涂在"), ("涂抹", "抹到", "抹在", "涂到", "涂在")),
+    ("揉搓", re.compile(r"揉搓"), ("揉搓", "洗头", "涂抹")),
+    ("冲洗", re.compile(r"冲洗|洗净"), ("冲洗", "洗净")),
+    ("口服或饮用", re.compile(r"吞服|口服|饮用|喝下"), ("吞服", "口服", "饮用", "喝下")),
+    ("插接或充电", re.compile(r"插入|接入|连接电源|充电"), ("插入", "接入", "连接", "充电")),
+    ("安装或拆卸", re.compile(r"安装|装上|拆卸|取下配件"), ("安装", "装上", "拆卸", "取下")),
+)
+PRODUCT_FACT_ROW_RE = re.compile(
+    r"(?m)^\|\s*\*\*(?:产品名称|品牌|型号-SKU|产品类型)\*\*\s*\|\s*(?P<value>[^|]+)\|"
+)
+PRODUCT_FACT_ALIASES_RE = re.compile(r"(?m)^aliases:\s*(?P<value>\[[^\n]+\])\s*$")
 SEEDANCE_FIELDS = (
     "画面内容",
     "动作/景别",
@@ -496,6 +541,8 @@ def assemble_prompt(
     document = f"{preamble}\n\n{selected}\n\n---\n\n{runtime}".strip()
     if model == "seedance":
         document += f"\n\n---\n\n{blocks['SEEDANCE_FINAL_CONTRACT']}"
+    elif model == "omni":
+        document += f"\n\n---\n\n{blocks['OMNI_FINAL_CONTRACT']}"
     return document.strip() + "\n"
 
 
@@ -627,20 +674,63 @@ def clean_model_markdown(text: str) -> str:
     return (match.group("body") if match else content).strip()
 
 
+def _product_identity_terms(fact_card: str) -> tuple[str, ...]:
+    terms: set[str] = set()
+    for match in PRODUCT_FACT_ROW_RE.finditer(fact_card):
+        value = re.sub(r"[*_`]", "", match.group("value")).strip()
+        if value:
+            terms.add(value)
+            terms.update(part.strip() for part in re.split(r"\s*/\s*", value) if len(part.strip()) >= 3)
+    aliases = PRODUCT_FACT_ALIASES_RE.search(fact_card)
+    if aliases:
+        try:
+            values = json.loads(aliases.group("value"))
+        except (json.JSONDecodeError, TypeError):
+            values = []
+        terms.update(str(value).strip() for value in values if len(str(value).strip()) >= 3)
+    return tuple(sorted(terms, key=len, reverse=True))
+
+
 def _product_visual_issues(
     fields: list[tuple[str, str]],
     fact_card: str,
     location: str,
 ) -> list[str]:
     issues: list[str] = []
+    identity_terms = _product_identity_terms(fact_card)
+    combined_text = "\n".join(value for _field_name, value in fields)
+    has_product_context = bool(PRODUCT_CONTEXT_RE.search(combined_text)) or any(
+        term.casefold() in combined_text.casefold() for term in identity_terms
+    )
     for field_name, value in fields:
         if PRODUCT_PACKAGING_RE.search(value) or PRODUCT_CONTAINER_RE.search(value) or PRODUCT_APPEARANCE_RE.search(value):
             issues.append(
-                f"{location} [{field_name}] 不得描述产品颜色、形状、包装、标签、膏体颜色或材质，只能使用 [产品]/[手持产品]"
+                f"{location} [{field_name}] 不得描述产品颜色、形状、包装、标签、膏体颜色或材质，"
+                f"只能使用 [产品]/[手持产品]；当前内容：{value}"
             )
+        if field_name in PRODUCT_VISUAL_FIELDS:
+            without_placeholders = value.replace("[手持产品]", "").replace("[产品]", "")
+            if re.search(r"产品|商品", without_placeholders):
+                issues.append(
+                    f"{location} [{field_name}] 商品视觉引用必须使用 [产品] 或 [手持产品] 占位符；"
+                    f"当前内容：{value}"
+                )
+            identity_term = next(
+                (term for term in identity_terms if term.casefold() in value.casefold()),
+                "",
+            )
+            if identity_term:
+                issues.append(
+                    f"{location} [{field_name}] 不得直接写商品名称、品牌或 SKU：{identity_term}，请改用 [产品]/[手持产品]"
+                )
         for term in PRODUCT_STRUCTURE_TERMS:
             if term in value and term not in fact_card:
                 issues.append(f"{location} [{field_name}] 包含产品资料未确认的使用结构：{term}")
+    if has_product_context:
+        action_text = "\n".join(value for field_name, value in fields if field_name in PRODUCT_ACTION_FIELDS)
+        for action_name, action_pattern, evidence_terms in PRODUCT_USAGE_ACTION_RULES:
+            if action_pattern.search(action_text) and not any(term in fact_card for term in evidence_terms):
+                issues.append(f"{location} 使用动作“{action_name}”未在产品资料中确认")
     return issues
 
 
@@ -849,7 +939,6 @@ def _repair_prompt(candidate: str, issues: list[str], model: str = "omni") -> st
 {candidate}
 </REPAIR_CONTEXT>
 """
-    model_label = MODEL_LABELS.get(model, model)
     return f"""{blocks['REPAIR']}
 
 # 本次局部修复输入
@@ -857,12 +946,39 @@ def _repair_prompt(candidate: str, issues: list[str], model: str = "omni") -> st
 错误：
 {chr(10).join(f'- {issue}' for issue in issues)}
 
-请只修正导致上述错误的结构和内容，返回修复后的完整 {model_label} Markdown，不要解释。
+请只修正导致上述错误的局部内容，严格按上方规则返回 JSON 替换列表，不要返回完整 Markdown 或解释。
+若错误涉及产品视觉描述，请把对应字段的完整内容作为 old 并重写该字段：保留人物动作与手机、水管、塑料桶、手套等剧情道具；真正带货商品只能写成 [产品] 或 [手持产品]，不得改写成裸写“产品”“商品”，也不得保留任何产品颜色、形状、包装、标签、膏体颜色、质地或材质。
 
 <REPAIR_CONTEXT>
 {candidate}
 </REPAIR_CONTEXT>
 """
+
+
+def _apply_omni_repair(candidate: str, response: str) -> str:
+    content = str(response or "").strip()
+    fence = JSON_FENCE_RE.fullmatch(content)
+    if fence:
+        content = fence.group("body").strip()
+    try:
+        payload = json.loads(content)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise ValueError("未返回合法 JSON 替换列表") from exc
+    replacements = payload.get("replacements") if isinstance(payload, dict) else None
+    if not isinstance(replacements, list) or not replacements:
+        raise ValueError("JSON 中缺少非空 replacements 列表")
+    repaired = candidate
+    for replacement in replacements:
+        if not isinstance(replacement, dict):
+            raise ValueError("replacements 每一项都必须是 object")
+        old = replacement.get("old")
+        new = replacement.get("new")
+        if not isinstance(old, str) or not old or not isinstance(new, str):
+            raise ValueError("每项 replacement 必须包含非空 old 和字符串 new")
+        if old not in repaired:
+            raise ValueError("replacement.old 必须存在于当前稿中")
+        repaired = repaired.replace(old, new)
+    return repaired
 
 
 def _call_model(prompt: str, request_kind: str, label: str) -> str:
@@ -1041,13 +1157,23 @@ def _generate_one(
     if payload["model"] == "seedance":
         candidate = normalize_seedance_markdown(candidate)
     issues = validator(candidate)
-    for attempt in range(1, 3):
+    for attempt in range(1, MAX_REPAIR_ATTEMPTS + 1):
         if not issues:
             break
         progress(f"{label} 第 {attempt} 次校验未通过，只修复失败内容：{'；'.join(issues[:3])}")
-        candidate = _call_model(_repair_prompt(candidate, issues, payload["model"]), "repair", f"{label} 局部修复")
+        repair_response = _call_model(
+            _repair_prompt(candidate, issues, payload["model"]),
+            "repair",
+            f"{label} 局部修复",
+        )
         if payload["model"] == "seedance":
-            candidate = normalize_seedance_markdown(candidate)
+            candidate = normalize_seedance_markdown(repair_response)
+        else:
+            try:
+                candidate = _apply_omni_repair(candidate, repair_response)
+            except ValueError as exc:
+                progress(f"{label} 第 {attempt} 次局部修复响应不可用：{exc}")
+                continue
         issues = validator(candidate)
     if issues:
         raise RuntimeError(f"{MODEL_LABELS[payload['model']]} 输出校验失败：" + "；".join(issues))
