@@ -63,6 +63,8 @@ CHARACTER_DESCRIPTION_RE = re.compile(
     r"(?m)^-\s*(?P<role_id>character_\d{2,})[：:]\s*(?P<description>\S.*?)\s*$",
     re.IGNORECASE,
 )
+CHARACTER_ID_RE = re.compile(r"character_\d{2,}", re.IGNORECASE)
+MIN_EXPANDED_CHARACTER_DESCRIPTION_LENGTH = 12
 SOURCE_AUDIO_RE = re.compile(r"(?m)^\s*[-*]\s*\[音频文案\]\s*(?P<value>\S.*?)\s*$")
 OMNI_GENERATION_MODES = frozenset({"首次生成", "直接复用", "状态更新", "新角色合并", "无人物场景"})
 LOCKED_SUBJECT_TYPES = frozenset({"skeleton", "robot", "doll", "animal", "monster", "no_person"})
@@ -691,6 +693,89 @@ def clean_model_markdown(text: str) -> str:
     return (match.group("body") if match else content).strip()
 
 
+def _subject_role_has_description(
+    subject_value: str,
+    role_match: re.Match[str],
+    next_role_start: int,
+) -> bool:
+    tail = subject_value[role_match.end() : next_role_start]
+    description_match = re.match(r"\s*[：:]\s*(?P<description>.+)", tail)
+    if not description_match:
+        return False
+    compact = re.sub(r"[^\w\u3400-\u9fff]+", "", description_match.group("description"))
+    return len(compact) >= MIN_EXPANDED_CHARACTER_DESCRIPTION_LENGTH
+
+
+def _materialize_subject_value(subject_value: str, descriptions: dict[str, str]) -> str:
+    result = subject_value
+    role_matches = list(CHARACTER_ID_RE.finditer(subject_value))
+    for index in range(len(role_matches) - 1, -1, -1):
+        role_match = role_matches[index]
+        next_role_start = role_matches[index + 1].start() if index + 1 < len(role_matches) else len(subject_value)
+        if _subject_role_has_description(subject_value, role_match, next_role_start):
+            continue
+        role_id = role_match.group(0).lower()
+        description = descriptions.get(role_id)
+        if not description:
+            continue
+        tail = result[role_match.end() : next_role_start]
+        colon = re.match(r"(?P<space>\s*)[：:]\s*", tail)
+        replacement_end = role_match.end()
+        separator = ""
+        if colon:
+            replacement_end += colon.end()
+            separator = "；"
+        result = (
+            result[: role_match.start()]
+            + f"{role_id}：{description}{separator}"
+            + result[replacement_end:]
+        )
+    return result
+
+
+def materialize_omni_character_subjects(text: str) -> str:
+    content = clean_model_markdown(text)
+    segments = list(SEGMENT_RE.finditer(content))
+    descriptions: dict[str, str] = {}
+    replacements: list[tuple[int, int, str]] = []
+    for index, segment in enumerate(segments):
+        block_start = segment.start()
+        block_end = segments[index + 1].start() if index + 1 < len(segments) else len(content)
+        block = content[block_start:block_end]
+        a_heading = block.find("## A. 人物造型参考板提示词")
+        b_heading = block.find("## B. 故事板图片提示词")
+        if a_heading < 0 or b_heading <= a_heading:
+            continue
+        for description_match in CHARACTER_DESCRIPTION_RE.finditer(block[a_heading:b_heading]):
+            descriptions[description_match.group("role_id").lower()] = description_match.group(
+                "description"
+            ).strip()
+
+        b_body_start = block_start + b_heading
+        b_body = content[b_body_start:block_end]
+        shots = list(SHOT_RE.finditer(b_body))
+        for shot_index, shot in enumerate(shots):
+            shot_body_start = shot.end()
+            shot_body_end = shots[shot_index + 1].start() if shot_index + 1 < len(shots) else len(b_body)
+            shot_body = b_body[shot_body_start:shot_body_end]
+            subject = next(
+                (field for field in FIELD_RE.finditer(shot_body) if field.group("name") == "主体"),
+                None,
+            )
+            if subject is None:
+                continue
+            value = subject.group("value")
+            materialized = _materialize_subject_value(value, descriptions)
+            if materialized == value:
+                continue
+            value_start = b_body_start + shot_body_start + subject.start("value")
+            replacements.append((value_start, value_start + len(value), materialized))
+
+    for start, end, replacement in reversed(replacements):
+        content = content[:start] + replacement + content[end:]
+    return content
+
+
 def _product_identity_terms(fact_card: str) -> tuple[str, ...]:
     terms: set[str] = set()
     for match in PRODUCT_FACT_ROW_RE.finditer(fact_card):
@@ -920,20 +1005,24 @@ def validate_omni_markdown(text: str, fact_card: str = "", source_text: str = ""
             else:
                 field_values = {field.group("name"): field.group("value") for field in field_matches}
                 subject_value = field_values["主体"]
-                normalized_subject = re.sub(r"\s+", "", subject_value).casefold()
-                subject_role_ids = list(
-                    dict.fromkeys(
-                        role_id.lower()
-                        for role_id in re.findall(r"character_\d{2,}", subject_value, re.I)
-                    )
-                )
-                for role_id in subject_role_ids:
-                    expected_description = character_descriptions.get(role_id, "")
-                    normalized_description = re.sub(r"\s+", "", expected_description).casefold()
-                    if not normalized_description or normalized_description not in normalized_subject:
+                subject_role_matches = list(CHARACTER_ID_RE.finditer(subject_value))
+                for role_index, role_match in enumerate(subject_role_matches):
+                    role_id = role_match.group(0).lower()
+                    if role_id not in character_descriptions:
                         omni_issues.append(
                             f"Segment {number} 镜头 {shot_number} [主体] 中 {role_id} "
-                            "必须逐字包含 A 区的完整角色描述；不能只写角色ID、代词或身体局部"
+                            "在 A 区没有可用于自动填入的角色描述"
+                        )
+                        continue
+                    next_role_start = (
+                        subject_role_matches[role_index + 1].start()
+                        if role_index + 1 < len(subject_role_matches)
+                        else len(subject_value)
+                    )
+                    if not _subject_role_has_description(subject_value, role_match, next_role_start):
+                        omni_issues.append(
+                            f"Segment {number} 镜头 {shot_number} [主体] 中 {role_id} "
+                            "缺少展开后的人物描述；不能只写角色ID、代词或身体局部"
                         )
                 content_issues.extend(
                     _product_visual_issues(
@@ -1340,7 +1429,16 @@ def _generate_one(
     validator = _validator_for_model(payload["model"], fact_card, source_text)
     if not variant_number and output_path.is_file():
         existing = output_path.read_text(encoding="utf-8", errors="ignore")
+        materialized_existing = False
+        if payload["model"] == "omni":
+            materialized = materialize_omni_character_subjects(existing)
+            if materialized != existing:
+                existing = materialized
+                materialized_existing = True
         if not validator(existing):
+            if materialized_existing:
+                _write_output(output_path, existing)
+                progress(f"已从 A 区自动补全 B 区人物描述：{output_path.name}")
             progress(f"已有合格适配稿，直接复用：{output_path.name}")
             return {"path": output_path.as_posix(), "name": output_path.name, "reused": True}
 
@@ -1358,6 +1456,8 @@ def _generate_one(
     candidate = _call_model(prompt, payload["mode"], label)
     if payload["model"] == "seedance":
         candidate = normalize_seedance_markdown(candidate)
+    else:
+        candidate = materialize_omni_character_subjects(candidate)
     issues = validator(candidate)
     for attempt in range(1, MAX_REPAIR_ATTEMPTS + 1):
         if not issues:
@@ -1373,6 +1473,7 @@ def _generate_one(
         else:
             try:
                 candidate = _apply_omni_repair(candidate, repair_response)
+                candidate = materialize_omni_character_subjects(candidate)
             except ValueError as exc:
                 progress(f"{label} 第 {attempt} 次局部修复响应不可用：{exc}")
                 continue
