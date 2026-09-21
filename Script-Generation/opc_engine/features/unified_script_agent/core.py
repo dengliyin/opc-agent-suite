@@ -18,9 +18,13 @@ from opc_shared.vault_snapshot import cached_or_empty, refresh_snapshot
 from opc_engine.features.script_generation.generate_product_script import (
     COUNTRY_FILENAME_CODE,
     call_text_model,
+    classify_audio_content,
+    classify_subject_type,
     compact_product_fact_card,
+    extract_subject_profiles,
     reference_country_author_and_video_id,
     safe_output_name,
+    spoken_audio_metrics,
 )
 
 
@@ -49,6 +53,19 @@ SEEDANCE_TIME_RE = re.compile(
 SEGMENT_RANGE_RE = re.compile(
     r"^(?P<start>\d{2}:\d{2}\.\d{3})\s*[–-]\s*(?P<end>\d{2}:\d{2}\.\d{3})$"
 )
+SOURCE_SHOT_RE = re.compile(
+    r"(?m)^[ \t]*(?:#{1,6}[ \t]*)?镜头[ \t]*\d+[ \t]*\([ \t]*"
+    r"(?P<start>\d{1,2}:\d{2}(?:\.\d{1,3})?)[ \t]*[-~—至到]+[ \t]*"
+    r"(?P<end>\d{1,2}:\d{2}(?:\.\d{1,3})?)[ \t]*\)[ \t]*:?[ \t]*$"
+)
+A_FIELD_RE = re.compile(r"(?m)^(?P<name>角色ID|生成方式|参考来源)[：:]\s*(?P<value>\S.*?)\s*$")
+CHARACTER_DESCRIPTION_RE = re.compile(
+    r"(?m)^-\s*(?P<role_id>character_\d{2,})[：:]\s*(?P<description>\S.*?)\s*$",
+    re.IGNORECASE,
+)
+SOURCE_AUDIO_RE = re.compile(r"(?m)^\s*[-*]\s*\[音频文案\]\s*(?P<value>\S.*?)\s*$")
+OMNI_GENERATION_MODES = frozenset({"首次生成", "直接复用", "状态更新", "新角色合并", "无人物场景"})
+LOCKED_SUBJECT_TYPES = frozenset({"skeleton", "robot", "doll", "animal", "monster", "no_person"})
 OMNI_FIELDS = (
     "主体",
     "在场景中",
@@ -734,66 +751,233 @@ def _product_visual_issues(
     return issues
 
 
-def validate_omni_markdown(text: str, fact_card: str = "") -> list[str]:
-    content = clean_model_markdown(text)
+def _source_duration_seconds(source_text: str) -> float | None:
+    ranges = [
+        (_seconds(match.group("start")), _seconds(match.group("end")))
+        for match in SOURCE_SHOT_RE.finditer(str(source_text or ""))
+    ]
+    ranges = [(start, end) for start, end in ranges if end > start]
+    if not ranges:
+        return None
+    start = min(item[0] for item in ranges)
+    end = max(item[1] for item in ranges)
+    return end - start if end > start else None
+
+
+def _source_content_issues(source_text: str, output_text: str, output_has_spoken_audio: bool) -> list[str]:
+    if not source_text:
+        return []
     issues: list[str] = []
+    source_subject_types = {
+        classify_subject_type(subject)
+        for subject in extract_subject_profiles(source_text).values()
+    } & LOCKED_SUBJECT_TYPES
+    output_subject_types = {classify_subject_type(line) for line in output_text.splitlines()}
+    for subject_type in sorted(source_subject_types):
+        if subject_type not in output_subject_types:
+            issues.append(f"来源脚本锁定的特殊主体类型 {subject_type} 未在最终稿中保留")
+
+    source_audio_values = [match.group("value") for match in SOURCE_AUDIO_RE.finditer(source_text)]
+    if source_audio_values:
+        source_has_spoken_audio = any(classify_audio_content(value) == "spoken" for value in source_audio_values)
+        if source_has_spoken_audio and not output_has_spoken_audio:
+            issues.append("来源脚本包含真实口播，但最终稿丢失了全部口播")
+        elif not source_has_spoken_audio and output_has_spoken_audio:
+            issues.append("来源脚本全程无真实口播，最终稿不得新增人物口播、旁白或对白")
+    return issues
+
+
+def validate_omni_markdown(text: str, fact_card: str = "", source_text: str = "") -> list[str]:
+    content = clean_model_markdown(text)
+    content_issues: list[str] = []
+    omni_issues: list[str] = []
     if not re.match(r"^#\s*\n## 每段生成提示词\s*$", "\n".join(content.splitlines()[:2])):
-        issues.append("文件必须以 # 和 ## 每段生成提示词 两行开头")
+        omni_issues.append("文件必须以 # 和 ## 每段生成提示词 两行开头")
     segments = list(SEGMENT_RE.finditer(content))
     if not segments:
-        return issues + ["没有找到任何 # Segment 段落"]
+        omni_issues.append("没有找到任何 # Segment 段落")
+        return [f"[9994 Omni 适配] {issue}" for issue in dict.fromkeys(omni_issues)]
     numbers = [int(match.group("number")) for match in segments]
     if numbers != list(range(1, len(numbers) + 1)):
-        issues.append("Segment 编号必须从 1 开始连续递增")
+        omni_issues.append("Segment 编号必须从 1 开始连续递增")
 
+    source_duration = _source_duration_seconds(source_text)
+    expected_segment_count = math.ceil(source_duration / 10 - 1e-9) if source_duration else None
+    if expected_segment_count is not None and len(segments) != expected_segment_count:
+        omni_issues.append(
+            f"Segment 数量必须遵循原 9994 的固定 10 秒分段：来源有效时长 {source_duration:.3f} 秒，"
+            f"应为 {expected_segment_count} 段，当前为 {len(segments)} 段"
+        )
+
+    defined_characters: list[str] = []
+    character_descriptions: dict[str, str] = {}
+    segment_durations: list[float] = []
+    output_has_spoken_audio = False
     for index, match in enumerate(segments):
         number = int(match.group("number"))
         block = content[match.start() : segments[index + 1].start() if index + 1 < len(segments) else len(content)]
-        if "00:00.000" not in match.group("range"):
-            issues.append(f"Segment {number} 标题必须从 00:00.000 开始")
+        segment_range = SEGMENT_RANGE_RE.fullmatch(match.group("range").strip())
+        segment_end: float | None = None
+        if segment_range is None:
+            omni_issues.append(f"Segment {number} 标题时间格式不正确")
+        else:
+            segment_start = _seconds(segment_range.group("start"))
+            segment_end = _seconds(segment_range.group("end"))
+            segment_duration = segment_end - segment_start
+            segment_durations.append(segment_duration)
+            if abs(segment_start) > 0.001:
+                omni_issues.append(f"Segment {number} 标题必须从 00:00.000 开始")
+            if segment_duration <= 0 or segment_duration > 10.002:
+                omni_issues.append(f"Segment {number} 有效内容时长必须大于 0 且不超过 10 秒")
+            if index < len(segments) - 1 and abs(segment_duration - 10) > 0.002:
+                omni_issues.append(f"Segment {number} 不是最后一段，必须承载完整 10 秒有效内容")
+            if expected_segment_count == len(segments) and source_duration is not None:
+                expected_duration = 10.0 if index < len(segments) - 1 else source_duration - 10 * index
+                if abs(segment_duration - expected_duration) > 0.002:
+                    omni_issues.append(
+                        f"Segment {number} 时长应为 {expected_duration:.3f} 秒，当前为 {segment_duration:.3f} 秒"
+                    )
         a_heading = block.find("## A. 人物造型参考板提示词")
         b_heading = block.find("## B. 故事板图片提示词")
         if a_heading < 0 or b_heading < 0 or b_heading <= a_heading:
-            issues.append(f"Segment {number} 缺少按顺序排列的 A 区和 B 区")
+            omni_issues.append(f"Segment {number} 缺少按顺序排列的 A 区和 B 区")
             continue
         a_body = block[a_heading:b_heading]
-        positions = [a_body.find(label) for label in ("角色ID：", "生成方式：", "参考来源：")]
-        if any(position < 0 for position in positions) or positions != sorted(positions):
-            issues.append(f"Segment {number} A 区必须依次包含角色ID、生成方式和参考来源")
+        a_fields = list(A_FIELD_RE.finditer(a_body))
+        a_names = [field.group("name") for field in a_fields[:3]]
+        if a_names != ["角色ID", "生成方式", "参考来源"]:
+            omni_issues.append(f"Segment {number} A 区必须依次包含角色ID、生成方式和参考来源")
+        else:
+            a_values = {field.group("name"): field.group("value").strip() for field in a_fields[:3]}
+            role_value = a_values["角色ID"]
+            mode = a_values["生成方式"]
+            reference_value = a_values["参考来源"]
+            role_ids = [value.lower() for value in re.findall(r"character_\d{2,}", role_value, re.I)]
+            if mode not in OMNI_GENERATION_MODES:
+                omni_issues.append(f"Segment {number} A 区生成方式无效：{mode}")
+            if mode in {"首次生成", "无人物场景"} and reference_value != "无":
+                omni_issues.append(f"Segment {number} 使用{mode}时参考来源必须为“无”")
+            reference_segments = [int(value) for value in re.findall(r"Segment\s*(\d+)", reference_value, re.I)]
+            if mode in {"直接复用", "状态更新", "新角色合并"}:
+                if not reference_segments:
+                    omni_issues.append(f"Segment {number} 使用{mode}时必须引用更早的真实参考板 Segment")
+                elif any(value >= number for value in reference_segments):
+                    omni_issues.append(f"Segment {number} 参考来源只能指向当前段之前的 Segment")
+            if mode == "无人物场景":
+                if role_value != "无" or role_ids:
+                    omni_issues.append(f"Segment {number} 无人物场景的角色ID必须为“无”")
+            elif not role_ids:
+                omni_issues.append(f"Segment {number} A 区缺少 character_XX 角色ID")
+
+            new_ids = [role_id for role_id in role_ids if role_id not in defined_characters]
+            if mode in {"直接复用", "状态更新"} and new_ids:
+                omni_issues.append(f"Segment {number} 使用{mode}时不得定义新角色：{new_ids}")
+            if mode == "首次生成" and any(role_id in defined_characters for role_id in role_ids):
+                omni_issues.append(f"Segment {number} 首次生成不得重复定义已有角色")
+            if mode == "新角色合并" and not new_ids:
+                omni_issues.append(f"Segment {number} 使用新角色合并时必须至少定义一个新角色")
+            for role_id in new_ids:
+                expected_id = f"character_{len(defined_characters) + 1:02d}"
+                if role_id != expected_id:
+                    omni_issues.append(
+                        f"Segment {number} 角色ID不连续：写成 {role_id}，应为 {expected_id}"
+                    )
+                if role_id not in defined_characters:
+                    defined_characters.append(role_id)
+            for description_match in CHARACTER_DESCRIPTION_RE.finditer(a_body):
+                character_descriptions[description_match.group("role_id").lower()] = (
+                    description_match.group("description").strip()
+                )
         b_body = block[b_heading:]
+        if re.search(r"图\s*3\s*是人物造型参考板|严格参考图\s*2\s*[、,，和及与]\s*图\s*3", b_body):
+            omni_issues.append(f"Segment {number} 声明了额外人物参考图；Omni 每段只能使用图1和图2")
+        if "[TECHNICAL_PADDING: BLACK_SILENT]" in block:
+            omni_issues.append(f"Segment {number} 未收到技术补位要求，不得输出 BLACK_SILENT 标记")
         shots = list(SHOT_RE.finditer(b_body))
         if not shots:
-            issues.append(f"Segment {number} B 区没有可识别镜头")
+            omni_issues.append(f"Segment {number} B 区没有可识别镜头")
             continue
         shot_numbers = [int(shot.group("number")) for shot in shots]
         if shot_numbers != list(range(1, len(shots) + 1)):
-            issues.append(f"Segment {number} 镜头编号必须从 1 开始连续递增")
+            omni_issues.append(f"Segment {number} 镜头编号必须从 1 开始连续递增")
         previous_end = 0.0
         for shot_index, shot in enumerate(shots):
             shot_number = int(shot.group("number"))
             start = _seconds(shot.group("start"))
             end = _seconds(shot.group("end"))
             if shot_index == 0 and abs(start) > 0.001:
-                issues.append(f"Segment {number} 镜头 1 必须从 00:00.000 开始")
+                omni_issues.append(f"Segment {number} 镜头 1 必须从 00:00.000 开始")
             if abs(start - previous_end) > 0.002 or end <= start:
-                issues.append(f"Segment {number} 镜头 {shot_number} 时间必须连续且结束晚于开始")
+                omni_issues.append(f"Segment {number} 镜头 {shot_number} 时间必须连续且结束晚于开始")
             previous_end = end
             shot_block = b_body[shot.end() : shots[shot_index + 1].start() if shot_index + 1 < len(shots) else len(b_body)]
             field_matches = list(FIELD_RE.finditer(shot_block))
             fields = [field.group("name") for field in field_matches]
             if fields != list(OMNI_FIELDS):
-                issues.append(
+                omni_issues.append(
                     f"Segment {number} 镜头 {shot_number} 必须恰好按顺序包含 9 个字段"
                 )
             else:
-                issues.extend(
-                    _product_visual_issues(
-                        [(field.group("name"), field.group("value")) for field in field_matches],
-                        fact_card,
-                        f"Segment {number} 镜头 {shot_number}",
+                field_values = {field.group("name"): field.group("value") for field in field_matches}
+                subject_value = field_values["主体"]
+                normalized_subject = re.sub(r"\s+", "", subject_value).casefold()
+                subject_role_ids = list(
+                    dict.fromkeys(
+                        role_id.lower()
+                        for role_id in re.findall(r"character_\d{2,}", subject_value, re.I)
                     )
                 )
-    return list(dict.fromkeys(issues))
+                for role_id in subject_role_ids:
+                    expected_description = character_descriptions.get(role_id, "")
+                    normalized_description = re.sub(r"\s+", "", expected_description).casefold()
+                    if not normalized_description or normalized_description not in normalized_subject:
+                        omni_issues.append(
+                            f"Segment {number} 镜头 {shot_number} [主体] 中 {role_id} "
+                            "必须逐字包含 A 区的完整角色描述；不能只写角色ID、代词或身体局部"
+                        )
+                content_issues.extend(
+                    _product_visual_issues(
+                        list(field_values.items()), fact_card, f"Segment {number} 镜头 {shot_number}"
+                    )
+                )
+                audio_value = field_values["音频文案"]
+                if "中文翻译" in audio_value:
+                    omni_issues.append(f"Segment {number} 镜头 {shot_number} 音频文案不得保留中文翻译对照")
+                if classify_audio_content(audio_value) == "spoken":
+                    output_has_spoken_audio = True
+                    metrics = spoken_audio_metrics(audio_value)
+                    duration = end - start
+                    uses_cjk_budget = metrics["cjk_count"] >= 2 and metrics["word_count"] <= 2
+                    actual = metrics["cjk_count"] if uses_cjk_budget else metrics["word_count"]
+                    maximum = math.ceil(duration * (6.5 if uses_cjk_budget else 3.8))
+                    if actual > maximum:
+                        unit = "字" if uses_cjk_budget else "词"
+                        content_issues.append(
+                            f"Segment {number} 镜头 {shot_number} 真实口播超过镜头容量："
+                            f"{duration:.3f} 秒内 {actual} {unit}，硬上限 {maximum} {unit}"
+                        )
+                for role_id in re.findall(r"character_\d{2,}", "\n".join(field_values.values()), re.I):
+                    normalized = role_id.lower()
+                    if normalized not in defined_characters:
+                        omni_issues.append(
+                            f"Segment {number} 镜头 {shot_number} 引用了未定义角色 {normalized}"
+                        )
+        if segment_end is not None and shots and abs(previous_end - segment_end) > 0.002:
+            omni_issues.append(f"Segment {number} 最后一个镜头结束时间必须与 Segment 标题一致")
+        if re.search(r"(?m)^-\s*\[(?:字幕|贴纸|特效|声音/语气|音频交付模式|环境音/音效)\]", b_body):
+            omni_issues.append(f"Segment {number} B 区泄漏了 9993 内部字段，必须按 9994 规则过滤")
+
+    if source_duration is not None and len(segment_durations) == len(segments):
+        total_duration = sum(segment_durations)
+        if abs(total_duration - source_duration) > 0.002:
+            omni_issues.append(
+                f"全部 Segment 有效内容总时长必须与来源一致：来源 {source_duration:.3f} 秒，"
+                f"当前 {total_duration:.3f} 秒"
+            )
+    content_issues.extend(_source_content_issues(source_text, content, output_has_spoken_audio))
+    layered = [f"[9993 内容创作] {issue}" for issue in dict.fromkeys(content_issues)]
+    layered.extend(f"[9994 Omni 适配] {issue}" for issue in dict.fromkeys(omni_issues))
+    return layered
 
 
 def validate_seedance_markdown(text: str, fact_card: str = "") -> list[str]:
@@ -911,9 +1095,14 @@ def validate_seedance_markdown(text: str, fact_card: str = "") -> list[str]:
     return list(dict.fromkeys(issues))
 
 
-def _validator_for_model(model: str, fact_card: str = "") -> Callable[[str], list[str]]:
-    validator = validate_seedance_markdown if model == "seedance" else validate_omni_markdown
-    return lambda text: validator(text, fact_card)
+def _validator_for_model(
+    model: str,
+    fact_card: str = "",
+    source_text: str = "",
+) -> Callable[[str], list[str]]:
+    if model == "seedance":
+        return lambda text: validate_seedance_markdown(text, fact_card)
+    return lambda text: validate_omni_markdown(text, fact_card, source_text)
 
 
 def normalize_seedance_markdown(markdown: str) -> str:
@@ -925,7 +1114,12 @@ def normalize_seedance_markdown(markdown: str) -> str:
     return SEEDANCE_LOOSE_FIELD_RE.sub(replace_field, markdown)
 
 
-def _repair_prompt(candidate: str, issues: list[str], model: str = "omni") -> str:
+def _repair_prompt(
+    candidate: str,
+    issues: list[str],
+    model: str = "omni",
+    source_text: str = "",
+) -> str:
     _preamble, blocks = load_prompt_blocks()
     if model == "seedance":
         return f"""{blocks['REPAIR_SEEDANCE']}
@@ -939,6 +1133,11 @@ def _repair_prompt(candidate: str, issues: list[str], model: str = "omni") -> st
 {candidate}
 </REPAIR_CONTEXT>
 """
+    source_context = f"""
+<SOURCE_SCRIPT>
+{source_text.strip()}
+</SOURCE_SCRIPT>
+""" if source_text.strip() else ""
     return f"""{blocks['REPAIR']}
 
 # 本次局部修复输入
@@ -947,7 +1146,10 @@ def _repair_prompt(candidate: str, issues: list[str], model: str = "omni") -> st
 {chr(10).join(f'- {issue}' for issue in issues)}
 
 请只修正导致上述错误的局部内容，严格按上方规则返回 JSON 替换列表，不要返回完整 Markdown 或解释。
+标记为 `[9993 内容创作]` 的错误必须以来源脚本为准恢复主体类型、剧情、音频结构或口播容量，同时保持既有 Omni 分段结构不变。
+标记为 `[9994 Omni 适配]` 的错误只修正分段、时间、角色参考板或九字段格式，不得改写 9993 已确定的内容。
 若错误涉及产品视觉描述，请把对应字段的完整内容作为 old 并重写该字段：保留人物动作与手机、水管、塑料桶、手套等剧情道具；真正带货商品只能写成 [产品] 或 [手持产品]，不得改写成裸写“产品”“商品”，也不得保留任何产品颜色、形状、包装、标签、膏体颜色、质地或材质。
+{source_context}
 
 <REPAIR_CONTEXT>
 {candidate}
@@ -1135,7 +1337,7 @@ def _generate_one(
     variant_number: int = 0,
 ) -> dict[str, Any]:
     output_path = output_path_for(payload, variant_number)
-    validator = _validator_for_model(payload["model"], fact_card)
+    validator = _validator_for_model(payload["model"], fact_card, source_text)
     if not variant_number and output_path.is_file():
         existing = output_path.read_text(encoding="utf-8", errors="ignore")
         if not validator(existing):
@@ -1162,7 +1364,7 @@ def _generate_one(
             break
         progress(f"{label} 第 {attempt} 次校验未通过，只修复失败内容：{'；'.join(issues[:3])}")
         repair_response = _call_model(
-            _repair_prompt(candidate, issues, payload["model"]),
+            _repair_prompt(candidate, issues, payload["model"], source_text),
             "repair",
             f"{label} 局部修复",
         )

@@ -9,7 +9,14 @@ import pytest
 from opc_engine.features.unified_script_agent import core
 
 
-VALID_OMNI = """#
+OMNI_CHARACTER_DESCRIPTION = (
+    "西班牙成年女性，约30岁，浅棕肤色，椭圆脸，五官比例自然，发际线圆润，"
+    "眉毛自然弧形，深褐色中分长直发，无胡须，体格中等，皮肤有轻微自然纹理；"
+    "穿米色长袖针织上衣和深蓝色直筒长裤。"
+)
+
+
+VALID_OMNI = f"""#
 ## 每段生成提示词
 
 ---
@@ -26,13 +33,16 @@ VALID_OMNI = """#
 
 本段首次生成 character_01 的人物造型参考板。
 
+角色设定：
+- character_01：{OMNI_CHARACTER_DESCRIPTION}
+
 ## B. 故事板图片提示词
 
 下面是本段镜头脚本（已过滤字段）:
 
 ### 镜头 1 (00:00.000 - 00:10.000)
 
-- [主体] character_01
+- [主体] character_01：{OMNI_CHARACTER_DESCRIPTION}
 - [在场景中] 普通住宅客厅
 - [做什么动作] 展示[产品]
 - [镜头语言] 中景固定镜头
@@ -112,6 +122,28 @@ character_01 在明亮房间展示无名指上的 [产品]。
 **时间：**
 00:03.000–00:12.000｜9.0秒
 """
+
+
+def omni_with_segment_durations(*durations: int) -> str:
+    template = VALID_OMNI[VALID_OMNI.index("---\n\n# Segment") :]
+    blocks = []
+    for index, duration in enumerate(durations, start=1):
+        end_time = f"00:{duration:02d}.000"
+        block = template.replace("# Segment 1：00:00.000 - 00:10.000", f"# Segment {index}：00:00.000 - {end_time}")
+        block = block.replace("### 镜头 1 (00:00.000 - 00:10.000)", f"### 镜头 1 (00:00.000 - {end_time})")
+        if index > 1:
+            block = block.replace("生成方式：首次生成", "生成方式：直接复用")
+            block = block.replace("参考来源：无", "参考来源：Segment 1")
+        blocks.append(block)
+    return "#\n## 每段生成提示词\n\n" + "\n\n".join(blocks)
+
+
+def source_script(duration: int = 10, subject: str = "30岁女性", audio: str = "无口播。") -> str:
+    return (
+        f"### 镜头 1 (00:00.000 - 00:{duration:02d}.000)\n"
+        f"- [主体] {subject}\n"
+        f"- [音频文案] {audio}\n"
+    )
 
 
 def seedance_with_inline_fields() -> str:
@@ -200,6 +232,8 @@ def test_prompt_assembly_uses_only_reviewed_omni_blocks(tmp_path: Path, monkeypa
     prompt = core.assemble_prompt(payload, "SOURCE", "FACT", "LESSON", variant_number=7)
 
     assert "## 公共规则 COMMON" in prompt
+    assert "### 三、第一阶段：9993 内容创作底座" in prompt
+    assert "### 七、第二阶段：9994 模型适配底座" in prompt
     assert "## 产品改写规则 PRODUCT_REWRITE" in prompt
     assert "## 复刻规则 CLONE" in prompt
     assert "## 裂变规则 MUTATION" in prompt
@@ -210,11 +244,24 @@ def test_prompt_assembly_uses_only_reviewed_omni_blocks(tmp_path: Path, monkeypa
     assert "最终镜头的任何字段都不得描述产品颜色" in prompt
     assert "[细节]` 也不得例外" in prompt
     assert "来源脚本里的旧产品颜色、形状、包装、标签" in prompt
+    assert "音频交付模式" in prompt
+    assert "### 静默提取的人群锚点" in prompt
+    assert "### 裂变轴" in prompt
     assert "<SOURCE_SCRIPT>\nSOURCE\n</SOURCE_SCRIPT>" in prompt
     assert "- `VARIANT_NUMBER`：7" in prompt
     assert "ADAPTATION_NOTES" not in prompt
     assert "## Omni 最终输出硬性约束" in prompt
     assert "真实直观的产品使用演示" in prompt
+    assert "科技产品组装工厂" in prompt
+    assert "9993 内容创作" in prompt
+    assert "9994 Omni 适配" in prompt
+    assert "9995 生成人物图时会把当前产品参考图作为第 1 张图片输入" in prompt
+    assert "产品事实卡不是来源画面中普通剧情道具的完整清单" in prompt
+    assert "手机、遥控器、自拍杆" in prompt
+    assert "夹持、连接、承托、摆放等空间关系必须保留" in prompt
+    assert "从 A 区对应角色设定逐字复制完整描述" in prompt
+    assert "等身体局部均不合格" in prompt
+    assert prompt.index("第一阶段：9993 内容创作底座") < prompt.index("## Omni 模型规则 MODEL_OMNI")
     assert prompt.index("</SOURCE_SCRIPT>") < prompt.index("## Omni 最终输出硬性约束")
     assert prompt.rstrip().endswith("不要输出自检报告、解释或代码围栏。")
 
@@ -256,7 +303,12 @@ def test_prompt_assembly_adds_only_seedance_model_block(tmp_path: Path, monkeypa
 
 def test_seedance_uses_full_markdown_repair_without_changing_omni_repair() -> None:
     seedance_prompt = core._repair_prompt("候选稿", ["没有找到任何 # Segment 段落"], "seedance")
-    omni_prompt = core._repair_prompt("候选稿", ["没有找到任何 # Segment 段落"], "omni")
+    omni_prompt = core._repair_prompt(
+        "候选稿",
+        ["[9993 内容创作] 来源脚本全程无真实口播，最终稿不得新增口播"],
+        "omni",
+        "### 镜头 1 (00:00.000 - 00:10.000)",
+    )
 
     assert "## Seedance 完整稿修复规则 REPAIR_SEEDANCE" in seedance_prompt
     assert "必须返回修复后的完整 Markdown 文件" in seedance_prompt
@@ -266,6 +318,9 @@ def test_seedance_uses_full_markdown_repair_without_changing_omni_repair() -> No
     assert "只返回合法 JSON" in omni_prompt
     assert "不要返回完整 Markdown" in omni_prompt
     assert "Seedance 完整稿修复规则" not in omni_prompt
+    assert "标记为 `[9993 内容创作]`" in omni_prompt
+    assert "标记为 `[9994 Omni 适配]`" in omni_prompt
+    assert "<SOURCE_SCRIPT>" in omni_prompt
 
 
 def test_seedance_repairs_nonconforming_first_response(
@@ -516,6 +571,91 @@ def test_omni_contract_validator_keeps_story_props_as_real_categories() -> None:
     with_story_props = VALID_OMNI.replace("展示[产品]", "拿起手机连接自拍杆并调整拍摄角度")
 
     assert core.validate_omni_markdown(with_story_props) == []
+
+
+@pytest.mark.parametrize("subject", ["character_01", "character_01 的右手"])
+def test_omni_contract_validator_rejects_character_without_full_copied_description(subject: str) -> None:
+    broken = VALID_OMNI.replace(
+        f"- [主体] character_01：{OMNI_CHARACTER_DESCRIPTION}",
+        f"- [主体] {subject}",
+    )
+
+    issues = core.validate_omni_markdown(broken)
+
+    assert any(
+        issue.startswith("[9994 Omni 适配]")
+        and "[主体] 中 character_01 必须逐字包含 A 区的完整角色描述" in issue
+        for issue in issues
+    )
+
+
+def test_omni_contract_validator_applies_9994_fixed_segmentation_from_source() -> None:
+    source = source_script(duration=25, audio="No more waiting.")
+    output = omni_with_segment_durations(10, 10, 5)
+
+    assert core.validate_omni_markdown(output, source_text=source) == []
+
+    broken = omni_with_segment_durations(10, 8, 7)
+    issues = core.validate_omni_markdown(broken, source_text=source)
+
+    assert any(issue.startswith("[9994 Omni 适配]") and "必须承载完整 10 秒" in issue for issue in issues)
+    assert any("Segment 2 时长应为 10.000 秒" in issue for issue in issues)
+
+
+def test_omni_contract_validator_rejects_wrong_segment_count_and_total_duration() -> None:
+    issues = core.validate_omni_markdown(
+        omni_with_segment_durations(10, 10),
+        source_text=source_script(duration=25),
+    )
+
+    assert any("应为 3 段，当前为 2 段" in issue for issue in issues)
+    assert any("总时长必须与来源一致" in issue for issue in issues)
+
+
+def test_omni_contract_validator_checks_9994_character_reference_rules() -> None:
+    broken = VALID_OMNI.replace("生成方式：首次生成", "生成方式：直接复用").replace(
+        "参考来源：无", "参考来源：Segment 1"
+    )
+
+    issues = core.validate_omni_markdown(broken)
+
+    assert any(issue.startswith("[9994 Omni 适配]") and "只能指向当前段之前" in issue for issue in issues)
+    assert any("直接复用时不得定义新角色" in issue for issue in issues)
+
+
+def test_omni_contract_validator_allows_product_reference_and_action_in_a_section() -> None:
+    with_product_in_a = VALID_OMNI.replace(
+        "本段首次生成 character_01 的人物造型参考板。",
+        "本段首次生成 character_01 的人物造型参考板；character_01 手持[手持产品]进行展示，商品外观只参考输入图1。",
+    )
+
+    assert core.validate_omni_markdown(with_product_in_a) == []
+
+
+def test_omni_contract_validator_checks_9993_audio_capacity() -> None:
+    broken = omni_with_segment_durations(1).replace("No more waiting.", "One two three four five.")
+
+    issues = core.validate_omni_markdown(broken)
+
+    assert any(issue.startswith("[9993 内容创作]") and "真实口播超过镜头容量" in issue for issue in issues)
+
+
+def test_omni_contract_validator_preserves_9993_silent_audio_structure() -> None:
+    issues = core.validate_omni_markdown(
+        VALID_OMNI,
+        source_text=source_script(audio="无口播、无旁白、无对白、无歌词。"),
+    )
+
+    assert any(issue.startswith("[9993 内容创作]") and "不得新增人物口播" in issue for issue in issues)
+
+
+def test_omni_contract_validator_preserves_9993_locked_subject_type() -> None:
+    issues = core.validate_omni_markdown(
+        VALID_OMNI,
+        source_text=source_script(subject="一具真人比例的人体骨骼模型"),
+    )
+
+    assert any(issue.startswith("[9993 内容创作]") and "skeleton" in issue for issue in issues)
 
 
 def test_seedance_contract_validator_accepts_seven_field_format() -> None:
