@@ -3894,27 +3894,27 @@ PRODUCT_ID_HTML = r"""<!doctype html>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>商品 ID 映射表</title>
   <style>
-    body { margin:0; background:#f6f3ea; color:#101010; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",Arial,sans-serif; }
-    header { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 22px; border-bottom:1px solid #111; background:#fffdf7; }
+    body { margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",Arial,sans-serif; }
+    header { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 22px; border-bottom:1px solid var(--line); background:var(--surface); }
     h1 { margin:0; font-size:22px; }
     main { padding:16px; }
-    a, button { color:#101010; }
+    a, button { color:var(--text); }
     .actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-    button { border:1px solid #111; background:#fff; padding:8px 12px; font-weight:800; cursor:pointer; box-shadow:3px 3px 0 rgba(16,16,16,.13); }
-    button.primary { background:#101010; color:#fff; box-shadow:4px 4px 0 #d9ff63; }
-    button.danger { color:#b42318; }
-    section { border:1px solid #111; background:#fffdf7; margin-bottom:14px; }
-    .head { padding:10px 12px; border-bottom:1px solid #111; background:#eee9dd; font-weight:850; }
+    button { border:1px solid var(--line); background:var(--surface-raised); padding:8px 12px; font-weight:800; cursor:pointer; box-shadow:none; }
+    button.primary { background:#e7edf5; color:#11161d; box-shadow:none; }
+    button.danger { color:var(--red); }
+    section { border:1px solid var(--line); background:var(--surface); margin-bottom:14px; }
+    .head { padding:10px 12px; border-bottom:1px solid var(--line); background:var(--surface-soft); color:var(--text); font-weight:850; }
     .body { padding:12px; overflow:auto; }
-    label { display:block; font-size:11px; font-weight:800; color:#5e5a51; margin-bottom:4px; }
-    input, select { width:100%; border:1px solid #111; padding:8px; font:inherit; box-sizing:border-box; }
+    label { display:block; font-size:11px; font-weight:800; color:var(--muted); margin-bottom:4px; }
+    input, select { width:100%; border:1px solid var(--line); background:#0d1116; color:var(--text); padding:8px; font:inherit; box-sizing:border-box; }
     .grid { display:grid; grid-template-columns:repeat(7,minmax(120px,1fr)) auto; gap:10px; align-items:end; }
     table { width:100%; border-collapse:collapse; font-size:13px; }
-    th, td { border-bottom:1px solid rgba(16,16,16,.16); padding:8px; text-align:left; vertical-align:top; }
-    th { background:#eee9dd; font-size:11px; text-transform:uppercase; }
-    .muted { color:#5e5a51; font-size:12px; overflow-wrap:anywhere; }
-    .status { min-height:18px; margin-top:8px; font-size:12px; color:#0e766e; }
-    .status.error { color:#b42318; }
+    th, td { border-bottom:1px solid var(--line-soft); color:var(--text); padding:8px; text-align:left; vertical-align:top; }
+    th { background:var(--surface-soft); font-size:11px; text-transform:uppercase; }
+    .muted { color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
+    .status { min-height:18px; margin-top:8px; font-size:12px; color:var(--teal); }
+    .status.error { color:var(--red); }
     @media (max-width:900px) { .grid { grid-template-columns:1fr; } }
   </style>
 </head>

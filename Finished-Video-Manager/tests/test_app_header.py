@@ -110,6 +110,11 @@ class AppHeaderTest(unittest.TestCase):
         self.assertIn("products = payload.products || [];", PRODUCT_ID_HTML)
         self.assertNotIn("fetch('/api/state')", PRODUCT_ID_HTML)
 
+    def test_product_mapping_page_uses_dark_theme_surfaces(self) -> None:
+        self.assertIn("section { border:1px solid var(--line); background:var(--surface);", PRODUCT_ID_HTML)
+        self.assertIn("th, td { border-bottom:1px solid var(--line-soft); color:var(--text);", PRODUCT_ID_HTML)
+        self.assertNotIn("section { border:1px solid #111; background:#fffdf7;", PRODUCT_ID_HTML)
+
     def test_home_page_reports_state_api_errors_before_rendering(self) -> None:
         error_check = "if (!res.ok || state.error) throw new Error(state.error || '读取成品管理数据失败');"
         self.assertIn(error_check, HTML)
