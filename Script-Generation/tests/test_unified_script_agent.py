@@ -15,12 +15,6 @@ OMNI_CHARACTER_DESCRIPTION = (
     "穿米色长袖针织上衣和深蓝色直筒长裤。"
 )
 
-OMNI_CHARACTER_DESCRIPTION_02 = (
-    "西班牙成年男性，约32岁，小麦肤色，方脸，下颌较宽，眉毛浓密，黑色短发，"
-    "无胡须，体格健壮，皮肤有轻微自然纹理；穿亮橙色长袖工业连体工作服和黑色工装鞋。"
-)
-
-
 VALID_OMNI = f"""#
 ## 每段生成提示词
 
@@ -47,7 +41,7 @@ VALID_OMNI = f"""#
 
 ### 镜头 1 (00:00.000 - 00:10.000)
 
-- [主体] character_01：{OMNI_CHARACTER_DESCRIPTION}
+- [主体] character_01
 - [在场景中] 普通住宅客厅
 - [做什么动作] 展示[产品]
 - [镜头语言] 中景固定镜头
@@ -264,9 +258,7 @@ def test_prompt_assembly_uses_only_reviewed_omni_blocks(tmp_path: Path, monkeypa
     assert "产品事实卡不是来源画面中普通剧情道具的完整清单" in prompt
     assert "手机、遥控器、自拍杆" in prompt
     assert "夹持、连接、承托、摆放等空间关系必须保留" in prompt
-    assert "系统在模型输出后还会从 A 区确定性补全遗漏的角色描述" in prompt
-    assert "校验不因不影响人物信息的标点、空格或轻微措辞差异单独判失败" in prompt
-    assert "等身体局部均不合格" in prompt
+    assert "B 区不得重新设计或重复描述这些角色" in prompt
     assert prompt.index("第一阶段：9993 内容创作底座") < prompt.index("## Omni 模型规则 MODEL_OMNI")
     assert prompt.index("</SOURCE_SCRIPT>") < prompt.index("## Omni 最终输出硬性约束")
     assert prompt.rstrip().endswith("不要输出自检报告、解释或代码围栏。")
@@ -433,44 +425,6 @@ def test_omni_applies_json_local_repair_to_original_markdown(
     assert saved == VALID_OMNI.strip() + "\n"
 
 
-def test_omni_materializes_character_subject_before_validation_without_model_repair(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    paths = configure_storage(monkeypatch, tmp_path)
-    source = paths["pure_source"] / "P1" / "US-author-1234567890123-demo.md"
-    source.parent.mkdir(parents=True)
-    source.write_text("source", encoding="utf-8")
-    (paths["product_info"] / "P1-产品信息.md").write_text("# 产品信息\nP1", encoding="utf-8")
-    payload = core.validate_task_payload(
-        {
-            "route": "route1",
-            "mode": "clone",
-            "model": "omni",
-            "source_path": str(source),
-            "target_product": "P1",
-            "target_market": "US",
-            "target_language": "英语（美式）",
-        }
-    )
-    bare_subject = VALID_OMNI.replace(
-        f"- [主体] character_01：{OMNI_CHARACTER_DESCRIPTION}",
-        "- [主体] character_01 的右手",
-    )
-    prompts: list[str] = []
-
-    def fake_call(prompt: str, *_args: object, **_kwargs: object) -> str:
-        prompts.append(prompt)
-        return bare_subject
-
-    monkeypatch.setattr(core, "_call_model", fake_call)
-
-    result = core._generate_one(payload, "source", "fact", "lesson", lambda _message: None)
-
-    assert len(prompts) == 1
-    saved = Path(result["path"]).read_text(encoding="utf-8")
-    assert f"- [主体] character_01：{OMNI_CHARACTER_DESCRIPTION} 的右手" in saved
-
-
 def test_omni_local_repair_can_replace_repeated_invalid_text() -> None:
     candidate = "- [细节] 白色产品包装瓶\n- [细节] 白色产品包装瓶"
     repair = json.dumps(
@@ -617,51 +571,8 @@ def test_omni_contract_validator_keeps_story_props_as_real_categories() -> None:
     assert core.validate_omni_markdown(with_story_props) == []
 
 
-@pytest.mark.parametrize("subject", ["character_01", "character_01 的右手"])
-def test_omni_contract_validator_rejects_character_without_expanded_description(subject: str) -> None:
-    broken = VALID_OMNI.replace(
-        f"- [主体] character_01：{OMNI_CHARACTER_DESCRIPTION}",
-        f"- [主体] {subject}",
-    )
-
-    issues = core.validate_omni_markdown(broken)
-
-    assert any(
-        issue.startswith("[9994 Omni 适配]")
-        and "[主体] 中 character_01 缺少展开后的人物描述" in issue
-        for issue in issues
-    )
-
-
-def test_omni_contract_validator_allows_complete_non_verbatim_character_description() -> None:
-    non_verbatim = VALID_OMNI.replace(
-        f"- [主体] character_01：{OMNI_CHARACTER_DESCRIPTION}",
-        "- [主体] character_01：西班牙成年女性，约30岁，浅棕肤色，椭圆脸，"
-        "深褐色中分长直发，穿米色长袖针织上衣和深蓝色直筒长裤。",
-    )
-
-    assert core.validate_omni_markdown(non_verbatim) == []
-
-
-def test_materialize_omni_character_subjects_expands_multiple_roles_and_keeps_qualifier() -> None:
-    candidate = VALID_OMNI.replace(
-        "角色ID：character_01",
-        "角色ID：character_01、character_02",
-    ).replace(
-        f"- character_01：{OMNI_CHARACTER_DESCRIPTION}",
-        f"- character_01：{OMNI_CHARACTER_DESCRIPTION}\n"
-        f"- character_02：{OMNI_CHARACTER_DESCRIPTION_02}",
-    ).replace(
-        f"- [主体] character_01：{OMNI_CHARACTER_DESCRIPTION}",
-        "- [主体] character_01、character_02 的右手与智能手机",
-    )
-
-    materialized = core.materialize_omni_character_subjects(candidate)
-
-    assert f"character_01：{OMNI_CHARACTER_DESCRIPTION}" in materialized
-    assert f"character_02：{OMNI_CHARACTER_DESCRIPTION_02} 的右手与智能手机" in materialized
-    assert core.materialize_omni_character_subjects(materialized) == materialized
-    assert core.validate_omni_markdown(materialized) == []
+def test_omni_contract_validator_allows_character_id_only_in_subject() -> None:
+    assert core.validate_omni_markdown(VALID_OMNI) == []
 
 
 def test_omni_contract_validator_applies_9994_fixed_segmentation_from_source() -> None:

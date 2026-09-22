@@ -86,7 +86,7 @@ def test_same_agent_run_is_accepted_for_manager_queue(monkeypatch):
     assert omni.started == [("characters", False, ["/tmp/a.md"], None, None)]
 
 
-def test_product_video_stage_is_accepted(monkeypatch):
+def test_removed_product_video_stage_is_rejected(monkeypatch):
     omni = FakeManager()
     monkeypatch.setattr(app_module, "job_managers", {"omni": omni, "grok": FakeManager()})
     client = TestClient(app_module.app)
@@ -96,18 +96,17 @@ def test_product_video_stage_is_accepted(monkeypatch):
         json={"stage": "product_videos", "overwrite": False, "script_paths": ["/tmp/a.md"]},
     )
 
-    assert response.status_code == 200
-    assert omni.started == [("product_videos", False, ["/tmp/a.md"], None, None)]
+    assert response.status_code == 422
+    assert omni.started == []
 
 
-def test_omni_page_has_product_reference_fastest_mode():
+def test_omni_page_has_supported_generation_modes_only():
     response = TestClient(app_module.app).get("/omni")
 
     assert response.status_code == 200
-    assert 'data-stage="product_videos"' in response.text
+    assert 'data-stage="product_videos"' not in response.text
     assert "功能3 故事版图 → 视频" in response.text
     assert "功能4 产品图+人物图 → 视频" in response.text
-    assert "功能5 产品图+镜头脚本 → 视频" in response.text
     assert "功能6 一键完整流程（1→2→3）" in response.text
 
 
