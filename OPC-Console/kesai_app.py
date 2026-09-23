@@ -607,10 +607,10 @@ main{max-width:1180px;margin:auto;padding:64px 24px 80px}header{display:flex;jus
 @media(max-width:700px){main{padding-top:38px}header{align-items:start;flex-direction:column}.summary{white-space:normal}.agents{grid-template-columns:1fr}}
 </style>
 </head>
-<body><main><header><div><h1>OPC 大 Agent 控制台</h1><p>统一进入当前主力 Agent。具体生产线路和任务类型在各 Agent 内选择，旧回退服务不在首页展示。</p></div><div class="headerTools"><a class="button" href="/settings/ai">全局 API / 模型</a><a class="button" href="/settings/paths">全局路径设置</a><div class="summary" id="summary">正在检测服务…</div></div></header><section class="console"><div class="consoleHead"><div class="consoleTitle">主力 Agent</div><div class="consoleDescription">每个 Agent 只显示一次；点击打开后继续选择线路、产品和任务。</div></div><div class="agents" id="agents"></div></section><p class="note">控制台端口 8888 · 旧脚本 Agent 暂时保留作为回退</p></main>
+<body><main><header><div><h1>OPC 大 Agent 控制台</h1><p>统一进入当前生产 Agent。具体生产线路和任务类型在各 Agent 内选择，9993 与 9994 保留为稳定回退流程。</p></div><div class="headerTools"><a class="button" href="/settings/ai">全局 API / 模型</a><a class="button" href="/settings/paths">全局路径设置</a><div class="summary" id="summary">正在检测服务…</div></div></header><section class="console"><div class="consoleHead"><div class="consoleTitle">生产 Agent</div><div class="consoleDescription">9993、9994 与 10006 可并行使用；点击打开后继续选择线路、产品和任务。</div></div><div class="agents" id="agents"></div></section><p class="note">控制台端口 8888 · 9993 / 9994 已恢复为回退入口</p></main>
 <script>
 const agentsHost=document.querySelector('#agents'),summary=document.querySelector('#summary');
-const dashboardAgentIds=['analyze','unified_script','assemble','hybrid_voice','hybrid_mix','finished','auto_publish'];
+const dashboardAgentIds=['analyze','script','adapt','unified_script','assemble','hybrid_voice','hybrid_mix','finished','auto_publish'];
 let services=[];
 function esc(value){return String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function cardHtml(service){return `<article class="card"><div class="top"><span class="port">AGENT · ${esc(new URL(service.url).port)}</span><span class="status ${service.running?'on':''}">${service.running?'运行中':'未启动'}</span></div><h2>${esc(service.label)}</h2><div class="description">${esc(service.description)}</div><div class="actions"><a class="button" href="${esc(service.url)}" target="_blank" rel="noreferrer">打开</a></div></article>`}
