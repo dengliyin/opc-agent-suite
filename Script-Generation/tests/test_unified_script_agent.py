@@ -473,6 +473,9 @@ def test_page_has_no_task_notes_field() -> None:
     assert "裂变 ${Number(status.mutation_count||0)} 次" in app_js
     assert "pathRow" in app_js
     assert "refreshedJobs" in app_js
+    assert "function jobStatusLabel(job)" in app_js
+    assert "`已完成 ${completed} · 失败 ${Math.max(0,total-completed)} · 总计 ${total}`" in app_js
+    assert "esc(jobStatusLabel(job))" in app_js
     assert "route()==='route1'?source.product" in app_js
     assert "model:$('#targetModel').value" in app_js
     assert "model:'omni'" not in app_js

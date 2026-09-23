@@ -144,6 +144,13 @@ async function createJob(event){
 }
 
 const statusText={queued:'排队中',running:'执行中',completed:'已完成',partial:'部分完成',failed:'失败',interrupted:'已中断'};
+function jobStatusLabel(job){
+  const fallback=statusText[job.status]||job.status;
+  if(job.status!=='partial')return fallback;
+  const total=Number(job.result?.requested||0);
+  const completed=Number(job.result?.completed||0);
+  return total>0?`已完成 ${completed} · 失败 ${Math.max(0,total-completed)} · 总计 ${total}`:fallback;
+}
 function relativeTime(job){
   const timestamp=job.finished_at||job.started_at||job.created_at;
   if(!timestamp)return'';
@@ -158,7 +165,7 @@ function renderJobs(data){
   $('.jobsPanel').classList.toggle('idle',!data.jobs.length);
   if(!data.jobs.length){$('#jobs').innerHTML='<div class="empty">暂无任务</div>';$('#jobLog').textContent='暂无任务日志';$('#selectedJobStatus').textContent='当前未选择任务';return}
   if(!selectedJob)selectedJob=data.jobs[0].id;
-  $('#jobs').innerHTML=data.jobs.map(job=>`<div class="job ${job.id===selectedJob?'active':''}" data-id="${job.id}"><b class="jobNumber">#${job.id}</b><span class="jobTitle">${esc(job.title)}</span><span class="jobStatus ${esc(job.status)}">${esc(statusText[job.status]||job.status)}</span><span class="jobAge">${esc(relativeTime(job))}</span><span class="jobArrow">›</span></div>`).join('');
+  $('#jobs').innerHTML=data.jobs.map(job=>`<div class="job ${job.id===selectedJob?'active':''}" data-id="${job.id}"><b class="jobNumber">#${job.id}</b><span class="jobTitle">${esc(job.title)}</span><span class="jobStatus ${esc(job.status)}">${esc(jobStatusLabel(job))}</span><span class="jobAge">${esc(relativeTime(job))}</span><span class="jobArrow">›</span></div>`).join('');
   document.querySelectorAll('.job').forEach(item=>item.onclick=()=>{selectedJob=Number(item.dataset.id);renderJobs(data)});
   const active=data.jobs.find(job=>job.id===selectedJob)||data.jobs[0];
   $('#selectedJobStatus').textContent=`当前所选任务：#${active.id}`;
