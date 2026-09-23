@@ -74,6 +74,19 @@ def test_normalize_segmented_markdown_inserts_canonical_heading_once() -> None:
     assert web.normalize_segmented_markdown(normalized) == normalized
 
 
+def test_omni_prompt_keeps_full_character_appearance_out_of_embedded_shot_subjects() -> None:
+    prompt_path = (
+        MODULE_PATH.parent
+        / "agent_config"
+        / "omni_script_adaptation_prompt.md"
+    )
+    prompt = prompt_path.read_text(encoding="utf-8")
+
+    assert "A 区人物造型参考板是人物固定外观的唯一文字来源" in prompt
+    assert "B 区逐镜头脚本不得重复或重新设计上述固定外观" in prompt
+    assert "源脚本含完整人物描述时，在这里改写为角色 ID，不得原样粘贴" in prompt
+
+
 def test_status_record_uses_preloaded_log_without_reading_directory(monkeypatch, tmp_path: Path) -> None:
     output_path = tmp_path / "P1" / "adapted.md"
     preloaded = {
