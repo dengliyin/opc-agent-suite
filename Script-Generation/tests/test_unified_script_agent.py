@@ -255,6 +255,9 @@ def test_prompt_assembly_uses_only_reviewed_omni_blocks(tmp_path: Path, monkeypa
     assert "9993 内容创作" in prompt
     assert "9994 Omni 适配" in prompt
     assert "9995 生成人物图时会把当前产品参考图作为第 1 张图片输入" in prompt
+    assert "半写实 2.5D 数字人物概念设定图" in prompt
+    assert "不得呈现为相机拍摄的真人照片" in prompt
+    assert "上述真人感要求" not in prompt
     assert "产品事实卡不是来源画面中普通剧情道具的完整清单" in prompt
     assert "手机、遥控器、自拍杆" in prompt
     assert "夹持、连接、承托、摆放等空间关系必须保留" in prompt

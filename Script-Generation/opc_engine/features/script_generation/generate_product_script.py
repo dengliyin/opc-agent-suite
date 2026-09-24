@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 import uuid
+from difflib import SequenceMatcher
 from pathlib import Path
 
 from opc_shared.global_ai import load_profile
@@ -949,6 +950,8 @@ def build_generation_prompt(config):
 
 - 以“{prompt_inputs_text}”为唯一输入边界；产品事实以精简事实卡为准，错题本只用于规避历史错误。
 - 结构化的国家/地区、目标语言和参考时间轴优先级最高；不要输出分析过程。
+- `[做什么动作]` 必须用“主体”承接 `[主体]`，只写站位、动作、表情和必要的产品使用，不得重复人数、年龄、性别、外貌、发型、服装或配饰；多个角色确需区分时，只能使用 `[主体]` 已定义的角色 ID 或角色称谓。
+- 人物手中出现带货商品时必须写 `[手持产品]`，其他带货商品画面写 `[产品]`；不得写“图1中的该产品”“参考图中的产品”或“该产品”。
 - 复刻规则、字段格式、镜头锁定、音频、贴纸、主体类型和合规要求只执行上方提示词中的对应规则，不重复扩写。
 """
 
@@ -962,7 +965,11 @@ def build_mutation_prompt(config, generated_script, variant_count, batch_start=1
     country = str(config.get("script_country", "") or "").strip()
     target_language = normalized_target_language(config)
     language_rule = target_language_rule(config, "母稿")
-    timecode_rule = "必须保持原脚本每个镜头的时间码、镜头编号、景别/机位逻辑、情绪强度、视觉奇观底层逻辑、叙事推进顺序和 CTA 位置。"
+    timecode_rule = (
+        "必须保持原脚本每个镜头的时间码、镜头编号、镜头信息交付功能、情绪强度、"
+        "视觉奇观底层逻辑、叙事推进顺序和 CTA 位置；"
+        "但不得因此照抄原景别、机位角度、局部动作文字或场景陈设。"
+    )
 
     total_variant_count = total_variant_count or variant_count
     batch_end = batch_start + variant_count - 1
@@ -1024,6 +1031,11 @@ def build_mutation_prompt(config, generated_script, variant_count, batch_start=1
 - 输出必须是“改写后的结果”，不要要求用户再提供原脚本，也不要输出和执行无关的说明。
 - 只裂变“裂变主输入”；不再附带或重复发送原参考脚本。
 - {timecode_rule}
+- 每个变体的人物具体外观、服装造型、场景子类型与陈设必须同时发生可见变化；如母版无真人或无服装则跳过不适用的轴。
+- 除上述必改轴外，还必须在环境道具、光线/时间点、拍摄角度/景别、局部动作包装、环境音中至少改变两项。
+- 保留的是主动作目的和镜头功能，不是原动作句、原机位句或原场景句；只换同义词或形容词不算裂变。
+- `[做什么动作]` 必须用“主体”承接 `[主体]`，只写站位、动作、表情和必要的产品使用，不得重复人数、年龄、性别、外貌、发型、服装或配饰；多个角色确需区分时，只能使用 `[主体]` 已定义的角色 ID 或角色称谓。
+- 人物手中出现带货商品时必须写 `[手持产品]`，其他带货商品画面写 `[产品]`；不得写“图1中的该产品”“参考图中的产品”或“该产品”。
 - 裂变阶段以裂变提示词、精简事实卡和错题本为唯一规则边界；重复规则只执行上方提示词中的版本。
 - 当前语言规则：{language_rule}
 - 如果“国家/地区变量”不是“不改变原脚本”，人物外观、服装审美、场景陈设、道具、消费语境和本地化表达必须服务于该国家/地区；不得回到母版原国家语境。
@@ -1645,6 +1657,171 @@ def extract_subject_profiles(text):
             ).strip()
             profiles[current_key] = subject
     return profiles
+
+
+MUTATION_SURFACE_FIELDS = ("主体", "在场景中", "做什么动作", "镜头语言", "光线", "细节")
+MUTATION_EXTRA_AXES = {
+    "做什么动作": "局部动作包装",
+    "镜头语言": "拍摄角度/景别",
+    "光线": "光线/时间点",
+    "细节": "环境道具/画面细节",
+}
+MUTATION_CLOTHING_RE = re.compile(
+    r"(?:穿着|穿|身穿|上身穿|下身穿|上装为|下装为|佩戴)(?P<value>[^\n。；;]+)"
+)
+
+
+def extract_visual_field_profiles(text):
+    profiles = {}
+    current_key = None
+    shot_index = 0
+    for line in str(text or "").splitlines():
+        stripped = line.strip()
+        is_shot_heading = bool(
+            re.search(r"(?:镜头|Shot|SHOT)\s*#?\s*\d{1,3}", stripped)
+            or re.match(r"^\s*(?:#{1,6}\s*)?\d{1,3}[\.、\s-]", stripped)
+        )
+        if is_shot_heading:
+            shot_index += 1
+            current_key = extract_shot_key(stripped, shot_index)
+            profiles.setdefault(current_key, {})
+            continue
+        field_name = markdown_field_name(line)
+        if current_key and field_name in MUTATION_SURFACE_FIELDS:
+            value = re.sub(
+                r"^\s*(?:[-*]\s*)?(?:\*\*)?[【\[][^】\]]+[】\]](?:\*\*)?\s*[:：]?\s*",
+                "",
+                line,
+            ).strip()
+            if value:
+                profiles[current_key][field_name] = value
+    return profiles
+
+
+def _mutation_normalized(value):
+    text = str(value or "").casefold()
+    text = re.sub(r"character[_-]?\d+", "", text)
+    text = text.replace("[手持产品]", "产品").replace("[产品]", "产品")
+    return re.sub(r"[^\w\u4e00-\u9fff]+", "", text)
+
+
+def _mutation_similarity(reference_value, variant_value):
+    reference = _mutation_normalized(reference_value)
+    variant = _mutation_normalized(variant_value)
+    if not reference or not variant:
+        return 0.0
+    if reference == variant:
+        return 1.0
+    return SequenceMatcher(None, reference, variant).ratio()
+
+
+def _clothing_signature(subject):
+    return "、".join(match.group("value").strip() for match in MUTATION_CLOTHING_RE.finditer(str(subject or "")))
+
+
+def _appearance_signature(subject):
+    return MUTATION_CLOTHING_RE.sub("", str(subject or "")).strip(" ，,;；。")
+
+
+def validate_mutation_difference(reference_text, variant_text, similarity_threshold=0.84):
+    reference_profiles = extract_visual_field_profiles(reference_text)
+    variant_profiles = extract_visual_field_profiles(variant_text)
+    common_shots = [shot_key for shot_key in reference_profiles if shot_key in variant_profiles]
+    if not common_shots:
+        return ["无法按镜头对齐母版与变体，不能确认裂变差异"]
+
+    issues = []
+    human_shots = [
+        shot_key
+        for shot_key in common_shots
+        if classify_subject_type(reference_profiles[shot_key].get("主体", "")) == "human"
+    ]
+    if human_shots:
+        if any(
+            classify_subject_type(variant_profiles[shot_key].get("主体", "")) != "human"
+            for shot_key in human_shots
+        ):
+            issues.append("母版真人主体在变体中丢失或改变了主体类型")
+        elif any(
+            _mutation_similarity(
+                _appearance_signature(reference_profiles[shot_key].get("主体", "")),
+                _appearance_signature(variant_profiles[shot_key].get("主体", "")),
+            ) >= similarity_threshold
+            for shot_key in human_shots
+        ):
+            issues.append("人物具体外观与母版相同或过于相似")
+
+    clothing_shots = [
+        shot_key
+        for shot_key in common_shots
+        if _clothing_signature(reference_profiles[shot_key].get("主体", ""))
+    ]
+    if clothing_shots:
+        if any(
+            not _clothing_signature(variant_profiles[shot_key].get("主体", ""))
+            for shot_key in clothing_shots
+        ):
+            issues.append("变体未完整描述新的服装造型")
+        elif any(
+            _mutation_similarity(
+                _clothing_signature(reference_profiles[shot_key].get("主体", "")),
+                _clothing_signature(variant_profiles[shot_key].get("主体", "")),
+            ) >= similarity_threshold
+            for shot_key in clothing_shots
+        ):
+            issues.append("服装造型与母版相同或过于相似")
+
+    scene_shots = [
+        shot_key
+        for shot_key in common_shots
+        if reference_profiles[shot_key].get("在场景中")
+    ]
+    if scene_shots:
+        if any(not variant_profiles[shot_key].get("在场景中") for shot_key in scene_shots):
+            issues.append("变体缺少可比较的新场景描述")
+        elif any(
+            _mutation_similarity(
+                reference_profiles[shot_key]["在场景中"],
+                variant_profiles[shot_key]["在场景中"],
+            ) >= similarity_threshold
+            for shot_key in scene_shots
+        ):
+            issues.append("场景子类型或陈设与母版相同或过于相似")
+
+    available_extra_axes = []
+    changed_extra_axes = []
+    for field_name, axis_label in MUTATION_EXTRA_AXES.items():
+        comparable = [
+            shot_key
+            for shot_key in common_shots
+            if reference_profiles[shot_key].get(field_name) and variant_profiles[shot_key].get(field_name)
+        ]
+        if not comparable:
+            continue
+        available_extra_axes.append(axis_label)
+        if any(
+            _mutation_similarity(
+                reference_profiles[shot_key][field_name],
+                variant_profiles[shot_key][field_name],
+            ) < similarity_threshold
+            for shot_key in comparable
+        ):
+            changed_extra_axes.append(axis_label)
+    required_changes = min(2, len(available_extra_axes))
+    if required_changes and len(changed_extra_axes) < required_changes:
+        issues.append(
+            f"局部表现轴至少需要改变 {required_changes} 项，"
+            f"当前仅改变 {len(changed_extra_axes)} 项："
+            f"{'、'.join(changed_extra_axes) or '无'}"
+        )
+    return issues
+
+
+def require_mutation_difference(reference_text, variant_text):
+    issues = validate_mutation_difference(reference_text, variant_text)
+    if issues:
+        raise RuntimeError("裂变差异校验失败: " + "；".join(issues))
+    return issues
 
 
 def classify_subject_type(subject):
@@ -2323,6 +2500,7 @@ def mutate_script_source(config, args, generated_script, reference_context=""):
                 variant, audio_metadata = repair_script_audio(
                     config, args, variant, generated_script, f"裂变第 {variant_number} 条音频缩写"
                 )
+                require_mutation_difference(generated_script, variant)
                 item_warnings = []
                 for metadata in (subject_metadata, audio_metadata):
                     for warning in metadata.get("timeline_warnings", []):

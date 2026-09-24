@@ -568,6 +568,84 @@ class GenerateProductScriptTests(unittest.TestCase):
 
             self.assertFalse(list(output_dir.glob("*.md")))
 
+    def test_mutation_difference_rejects_unchanged_visual_surface(self):
+        reference = """### 镜头 1 (00:00.000 - 00:05.000)
+
+* **[主体]**：西班牙成年女性，约30岁，浅棕肤色，椭圆脸，深褐色中分长直发；穿米色长袖针织上衣和深蓝色长裤。
+* **[在场景中]**：现代公寓客厅，背景是木质墙板和绿色植物。
+* **[做什么动作]**：女性站在茶几旁，右手将[产品]举到肩膀高度展示。
+* **[镜头语言]**：正面中景固定机位。
+* **[光线]**：左侧自然窗光。
+* **[细节]**：茶几上放着一只黑色遥控器。
+"""
+
+        issues = generate_product_script.validate_mutation_difference(reference, reference)
+
+        self.assertIn("人物具体外观与母版相同或过于相似", issues)
+        self.assertIn("服装造型与母版相同或过于相似", issues)
+        self.assertIn("场景子类型或陈设与母版相同或过于相似", issues)
+        self.assertTrue(any("局部表现轴至少需要改变 2 项" in issue for issue in issues))
+
+    def test_mutation_difference_accepts_changed_surface_and_preserved_function(self):
+        reference = """### 镜头 1 (00:00.000 - 00:05.000)
+
+* **[主体]**：西班牙成年女性，约30岁，浅棕肤色，椭圆脸，深褐色中分长直发；穿米色长袖针织上衣和深蓝色长裤。
+* **[在场景中]**：现代公寓客厅，背景是木质墙板和绿色植物。
+* **[做什么动作]**：女性站在茶几旁，右手将[产品]举到肩膀高度展示。
+* **[镜头语言]**：正面中景固定机位。
+* **[光线]**：左侧自然窗光。
+* **[细节]**：茶几上放着一只黑色遥控器。
+"""
+        variant = """### 变体 #1
+
+### 镜头 1 (00:00.000 - 00:05.000)
+
+* **[主体]**：西班牙成年女性，约30岁，暖棕肤色，圆脸，黑色齐肩卷发；穿浅绿色短袖衬衫和米白色休闲长裤。
+* **[在场景中]**：普通住宅卧室的镜子旁，背景有窗帘和床头柜。
+* **[做什么动作]**：女性侧身靠近镜子，左手将[产品]缓慢移到脸侧展示。
+* **[镜头语言]**：近景平视，轻微手持跟随。
+* **[光线]**：傍晚暖色环境光。
+* **[细节]**：床头柜上放着普通台灯和一本杂志。
+"""
+
+        self.assertFalse(generate_product_script.validate_mutation_difference(reference, variant))
+
+    def test_mutation_prompt_distinguishes_story_function_from_surface_copying(self):
+        config = {"script_country": "ES", "script_target_language": "西班牙语"}
+        with (
+            patch.object(generate_product_script, "get_product_fact_card", return_value="FACT"),
+            patch.object(generate_product_script, "get_content_knowledge_base", return_value=""),
+            patch.object(generate_product_script, "get_reference_label", return_value="参考脚本"),
+            patch.object(generate_product_script, "get_reference_path", return_value=Path("reference.md")),
+        ):
+            prompt = generate_product_script.build_mutation_prompt(config, "MOTHER", 1)
+
+        self.assertIn("不得因此照抄原景别、机位角度、局部动作文字或场景陈设", prompt)
+        self.assertIn("人物具体外观、服装造型、场景子类型与陈设必须同时发生可见变化", prompt)
+        self.assertIn("只换同义词或形容词不算裂变", prompt)
+        self.assertIn("`[做什么动作]` 必须用“主体”承接 `[主体]`", prompt)
+        self.assertIn("人物手中出现带货商品时必须写 `[手持产品]`", prompt)
+        self.assertIn("不得写“图1中的该产品”", prompt)
+
+    def test_generation_prompt_keeps_subject_description_out_of_action_field(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            reference_path = Path(temp_dir) / "ES-author-1234567890123456789.md"
+            reference_path.write_text("### 镜头 1\n参考内容", encoding="utf-8")
+            config = {"script_country": "ES", "script_target_language": "西班牙语"}
+            with (
+                patch.object(generate_product_script, "get_reference_path", return_value=reference_path),
+                patch.object(generate_product_script, "get_reference_label", return_value="参考脚本"),
+                patch.object(generate_product_script, "get_prompt_template", return_value="BASE PROMPT"),
+                patch.object(generate_product_script, "get_content_knowledge_base", return_value=""),
+                patch.object(generate_product_script, "get_product_fact_card", return_value="FACT"),
+            ):
+                prompt = generate_product_script.build_generation_prompt(config)
+
+        self.assertIn("`[做什么动作]` 必须用“主体”承接 `[主体]`", prompt)
+        self.assertIn("不得重复人数、年龄、性别、外貌、发型、服装或配饰", prompt)
+        self.assertIn("人物手中出现带货商品时必须写 `[手持产品]`", prompt)
+        self.assertIn("不得写“图1中的该产品”", prompt)
+
     def test_recloning_overwrites_existing_clone_and_raw_response(self):
         reference = """### 镜头 1 (00:00.000 - 00:01.000)
 """

@@ -85,6 +85,9 @@ def test_omni_prompt_keeps_full_character_appearance_out_of_embedded_shot_subjec
     assert "A 区人物造型参考板是人物固定外观的唯一文字来源" in prompt
     assert "B 区逐镜头脚本不得重复或重新设计上述固定外观" in prompt
     assert "源脚本含完整人物描述时，在这里改写为角色 ID，不得原样粘贴" in prompt
+    assert "半写实 2.5D 数字人物概念设定图" in prompt
+    assert "不得呈现为相机拍摄的真人照片" in prompt
+    assert "真实手机实拍感" not in prompt
 
 
 def test_status_record_uses_preloaded_log_without_reading_directory(monkeypatch, tmp_path: Path) -> None:
