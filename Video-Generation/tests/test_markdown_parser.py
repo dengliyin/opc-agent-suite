@@ -358,7 +358,18 @@ def test_build_video_prompt_treats_storyboard_as_director_reference_only() -> No
     assert "不得从故事板整页开始后再放大、裁切或转场进入镜头" in prompt
     assert "不得省略、合并、重排或新增镜头" in prompt
     assert "### 镜头 1" in prompt
-    assert "当前片段完整脚本" in prompt
+    assert "当前片段逐镜头脚本" in prompt
+    assert "人物提示词 1" not in prompt
+    assert "故事提示词 1" not in prompt
+    assert "## A. 人物造型参考板提示词" not in prompt
+    assert "## B. 故事板图片提示词" not in prompt
+
+
+def test_build_video_prompt_requires_shot_script() -> None:
+    segment = parse_segments(SAMPLE)[1]
+
+    with pytest.raises(ValueError, match="未找到镜头脚本"):
+        build_video_prompt(segment)
 
 
 def test_build_storyboard_image_prompt_replaces_legacy_layout_with_nine_field_sheet() -> None:

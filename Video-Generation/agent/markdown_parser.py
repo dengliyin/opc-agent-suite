@@ -246,7 +246,10 @@ def build_storyboard_image_prompt(segment: Segment) -> str:
 
 
 def build_video_prompt(segment: Segment) -> str:
-    normalized_script = _ensure_background_music_field(segment.raw_text)
+    shot_match = re.search(r"^#{1,6}\s*镜头\s*\d+\b.*$", segment.raw_text, re.MULTILINE)
+    if shot_match is None:
+        raise ValueError(f"片段{segment.index}未找到镜头脚本，无法运行功能3")
+    normalized_script = _ensure_background_music_field(segment.raw_text[shot_match.start() :].strip())
     return (
         "输入图片是一张导演使用的分镜故事板执行单，只用于理解镜头画面和镜头顺序，不是视频首帧，也不是成片画面。"
         "成片必须从00:00直接进入镜头1左侧代表画面，并按脚本时间依次切换为单一9:16全屏镜头。"
@@ -260,7 +263,7 @@ def build_video_prompt(segment: Segment) -> str:
         f"{CAMERA_VISIBILITY_GUARD}"
         f"{DIRECT_VIDEO_LAYOUT_GUARD}"
         "画面自然真实，适合竖屏短视频带货。\n\n"
-        "当前片段完整脚本如下：\n"
+        "当前片段逐镜头脚本如下：\n"
         f"{normalized_script}"
     )
 

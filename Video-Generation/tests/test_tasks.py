@@ -638,10 +638,10 @@ def test_process_video_logs_progress_with_job_id(tmp_path: Path) -> None:
     assert omni_client.calls
     assert "故事板执行单" in omni_client.calls[0][0]
     assert "不是视频首帧" in omni_client.calls[0][0]
-    assert "当前片段完整脚本" in omni_client.calls[0][0]
+    assert "当前片段逐镜头脚本" in omni_client.calls[0][0]
     assert "hello" in omni_client.calls[0][0]
     assert omni_client.calls[0][3] == []
-    assert any("故事板仅作导演参考 + 当前片段完整脚本" in entry["message"] for entry in refreshed["logs"])
+    assert any("故事板仅作导演参考 + 当前片段逐镜头脚本" in entry["message"] for entry in refreshed["logs"])
     assert any("fake video progress" in entry["message"] for entry in refreshed["logs"])
 
 

@@ -1245,7 +1245,7 @@ class JobManager:
         self._log(
             job_id,
             "info",
-            f"片段{segment.index} {self.settings.video_display_label}：故事板仅作导演参考 + 当前片段完整脚本，禁止整页故事板进入成片",
+            f"片段{segment.index} {self.settings.video_display_label}：故事板仅作导演参考 + 当前片段逐镜头脚本，禁止整页故事板进入成片",
         )
         if video_api == "grok":
             omni_client.generate_video(

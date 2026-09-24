@@ -1121,7 +1121,7 @@ def _normalize_skyreels_prompt(prompt: str, image_count: int) -> str:
         "@image_3=人物参考图，保持人物一致",
     ][: max(1, image_count)]
     prefix = (
-        "严格按当前片段完整脚本生成短视频，不得省略、不得重排镜头时间段。"
+        "严格按当前片段逐镜头脚本生成短视频，不得省略、不得重排镜头时间段。"
         "参考图标签："
         + "；".join(reference_labels)
         + "。输出必须竖屏/横屏比例遵循接口 aspectRatio。脚本如下：\n"

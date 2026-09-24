@@ -638,7 +638,7 @@ def _function_option_detail(current: Settings, stage: str, value: str) -> Dict[s
             )
         else:
             endpoint = "/v1/videos"
-            params = f"size={_control_value(controls, 'video_size')}；duration=10s；故事板=仅作导演参考、不作为首帧；prompt=当前片段完整脚本"
+            params = f"size={_control_value(controls, 'video_size')}；duration=10s；故事板=仅作导演参考、不作为首帧；prompt=当前片段逐镜头脚本"
     return {"api": api_label, "model": model, "endpoint": endpoint, "params": params, "controls": controls}
 
 
