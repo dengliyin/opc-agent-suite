@@ -91,7 +91,7 @@ class ConsoleBoundaryTests(unittest.TestCase):
         self.assertNotIn("线路 1 · 爆款复刻", html)
         self.assertNotIn("统一归口 · 成品管理与发布", html)
         self.assertIn(
-            "const dashboardAgentIds=['analyze','script','adapt','unified_script','assemble','hybrid_voice','hybrid_mix','finished','auto_publish'];",
+            "const dashboardAgentIds=['analyze','script','adapt','unified_script','hybrid_script','hybrid_adapt','assemble','hybrid_voice','hybrid_mix','finished','auto_publish'];",
             html,
         )
         for primary_agent in (
@@ -99,6 +99,8 @@ class ConsoleBoundaryTests(unittest.TestCase):
             "script",
             "adapt",
             "unified_script",
+            "hybrid_script",
+            "hybrid_adapt",
             "assemble",
             "hybrid_voice",
             "hybrid_mix",
@@ -106,8 +108,8 @@ class ConsoleBoundaryTests(unittest.TestCase):
             "auto_publish",
         ):
             self.assertEqual(html.count(f"'{primary_agent}'"), 1)
-        for legacy_agent in ("rewrite", "hybrid_adapt", "hybrid_analyze", "hybrid_script"):
-            self.assertNotIn(f"'{legacy_agent}'", html)
+        for hidden_agent in ("rewrite", "hybrid_analyze"):
+            self.assertNotIn(f"'{hidden_agent}'", html)
 
     def test_agent_cards_are_compact_and_equal_sized(self):
         html = self.app.INDEX_HTML

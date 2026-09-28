@@ -270,6 +270,38 @@ class HybridAgentConfigurationTests(unittest.TestCase):
         )
         self.assertEqual(web.validation_retry_feedback("HTTP 500"), "")
 
+    def test_omni_source_structure_accepts_heading_suffix_and_single_digit_seconds(self) -> None:
+        source = """### 镜头 1 (00:00.000 - 00:04.000) · 钩子镜头
+* **[主体]** 人物
+### 镜头 6 (00:04.000 - 00:8.200)
+* **[主体]** [产品]
+### 镜头 8 (00:8.200 - 00:10.000)
+* **[主体]** 人物
+"""
+
+        self.assertEqual(web.workflow.omni_source_structure_issues(source), [])
+        self.assertEqual(web.workflow.omni_source_duration_seconds(source), 10.0)
+
+    def test_omni_source_structure_rejects_missing_shot_headings(self) -> None:
+        source = """### 镜头 2 (00:04.000 - 00:05.100)
+* **[主体]** 人物
+* **[主体]** 人物
+### 镜头 3 (00:05.100 - 00:06.500)
+* **[主体]** [产品]
+* **[主体]** 人物
+"""
+
+        issues = web.workflow.omni_source_structure_issues(source)
+
+        self.assertTrue(any("镜头标题 2 个，[主体] 区块 4 个" in issue for issue in issues))
+        self.assertTrue(any("第一个镜头必须从 00:00.000 开始" in issue for issue in issues))
+
+    def test_source_structure_error_is_non_retryable_for_one_task_only(self) -> None:
+        message = "上游脚本结构损坏：镜头标题缺失"
+
+        self.assertTrue(web.is_non_retryable_source_error(message))
+        self.assertFalse(web.is_non_retryable_model_error(message))
+
 
 def test_cached_catalog_does_not_scan_until_refresh(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("OPC_SCAN_INDEX_ROOT", str(tmp_path))

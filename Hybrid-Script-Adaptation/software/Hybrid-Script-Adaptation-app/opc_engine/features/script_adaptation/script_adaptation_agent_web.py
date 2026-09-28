@@ -693,6 +693,10 @@ def is_non_retryable_model_error(message: str) -> bool:
     return any(token in text for token in fatal_tokens)
 
 
+def is_non_retryable_source_error(message: str) -> bool:
+    return "上游脚本结构损坏" in str(message or "")
+
+
 def validation_retry_feedback(message: str) -> str:
     marker = "输出质检未通过："
     if marker not in message:
@@ -1998,6 +2002,8 @@ class AgentWebJob:
         script_text = script["text"]
         target_model = normalize_target_model(config.get("script_adaptation_target_model"))
         config["script_adaptation_target_model"] = target_model
+        if target_model in {"omni", "grok"}:
+            workflow.require_omni_source_structure(script_text)
         config["script_adaptation_segment_seconds"] = segment_seconds_for_target(
             target_model,
             config.get("script_adaptation_segment_seconds"),
@@ -2215,6 +2221,10 @@ class AgentWebJob:
                             self.cancel_waiting_tasks(batch_id, reason)
                             self.update_task(index, "failed", error=message, attempt=attempt)
                             return {"success": False, "fatal": True, "error": message, "outputs": [], "script_path": ""}
+                        if is_non_retryable_source_error(message):
+                            print(f"[任务 {index}] 上游脚本需要先修复，已停止无效重试")
+                            self.update_task(index, "failed", error=message, attempt=attempt)
+                            return {"success": False, "error": message, "outputs": [], "script_path": ""}
                         if attempt < max_attempts:
                             print(f"[任务 {index}] 自动重新触发该脚本适配")
                             retry_feedback = validation_retry_feedback(message)
