@@ -78,6 +78,7 @@ DEFAULT_MUTATION_MAX_OUTPUT_TOKENS = 96 * 1024
 DEFAULT_MUTATION_VARIANTS = 3
 DEFAULT_MUTATION_BATCH_SIZE = 3
 MAX_MUTATION_BATCH_SIZE = 3
+CLONE_MAX_ATTEMPTS = 4
 MUTATION_RUN_TS_FORMAT = "%Y%m%d-%H%M%S"
 API_CONCURRENCY_STATE_PATH = Path(
     os.environ.get("KESAI_API_CONCURRENCY_STATE_PATH", "/tmp/kesai_script_generation_api_slots.json")
@@ -2374,35 +2375,56 @@ def repair_script_audio(config, args, script_text, reference_text, task_name):
 
 
 def generate_validated_clone(config, args):
-    generated_text, generated_raw, endpoint_style, field_style = generate_script(config, args)
     if args.dry_run:
-        return generated_text, generated_raw, endpoint_style, field_style
+        return generate_script(config, args)
+
     reference_text = read_text_file(get_reference_path(config))
-    generated_text, subject_repair_metadata = repair_script_subject_type(
-        config,
-        args,
-        generated_text,
-        reference_text,
-        "复刻脚本主体类型纠正",
-    )
-    generated_text, repair_metadata = repair_script_audio(
-        config,
-        args,
-        generated_text,
-        reference_text,
-        "复刻脚本音频缩写",
-    )
-    validation_warnings = []
-    for metadata in (subject_repair_metadata, repair_metadata):
-        for warning in metadata.get("timeline_warnings", []):
-            if warning not in validation_warnings:
-                validation_warnings.append(warning)
-                log(f"复刻脚本: {warning}")
-    raw_payload = dict(generated_raw) if isinstance(generated_raw, dict) else {"generation_raw": generated_raw}
-    raw_payload["subject_type_repair"] = subject_repair_metadata
-    raw_payload["audio_fit_repair"] = repair_metadata
-    raw_payload["validation_warnings"] = validation_warnings
-    return generated_text, raw_payload, endpoint_style, field_style
+    last_error = None
+    for attempt in range(1, CLONE_MAX_ATTEMPTS + 1):
+        log(f"复刻第 {attempt}/{CLONE_MAX_ATTEMPTS} 次尝试")
+        generated_text, generated_raw, endpoint_style, field_style = generate_script(config, args)
+        try:
+            generated_text, structure_warnings = enforce_output_timeline(
+                config,
+                reference_text,
+                generated_text,
+            )
+            generated_text, subject_repair_metadata = repair_script_subject_type(
+                config,
+                args,
+                generated_text,
+                reference_text,
+                "复刻脚本主体类型纠正",
+            )
+            generated_text, repair_metadata = repair_script_audio(
+                config,
+                args,
+                generated_text,
+                reference_text,
+                "复刻脚本音频缩写",
+            )
+        except ValueError as exc:
+            last_error = exc
+            log(f"复刻第 {attempt}/{CLONE_MAX_ATTEMPTS} 次结构校验失败: {exc}")
+            if attempt < CLONE_MAX_ATTEMPTS:
+                continue
+            break
+
+        validation_warnings = list(structure_warnings)
+        for metadata in (subject_repair_metadata, repair_metadata):
+            for warning in metadata.get("timeline_warnings", []):
+                if warning not in validation_warnings:
+                    validation_warnings.append(warning)
+                    log(f"复刻脚本: {warning}")
+        raw_payload = dict(generated_raw) if isinstance(generated_raw, dict) else {"generation_raw": generated_raw}
+        raw_payload["clone_generation_attempts"] = attempt
+        raw_payload["clone_structure_retry_count"] = attempt - 1
+        raw_payload["subject_type_repair"] = subject_repair_metadata
+        raw_payload["audio_fit_repair"] = repair_metadata
+        raw_payload["validation_warnings"] = validation_warnings
+        return generated_text, raw_payload, endpoint_style, field_style
+
+    raise RuntimeError(f"复刻结构校验连续 {CLONE_MAX_ATTEMPTS} 次失败: {last_error}")
 
 
 def validate_audio_length_against_source(source_profiles, variant_profiles, variant_number):

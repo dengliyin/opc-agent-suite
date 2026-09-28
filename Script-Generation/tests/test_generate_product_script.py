@@ -928,6 +928,75 @@ class GenerateProductScriptTests(unittest.TestCase):
             self.assertTrue(raw["fresh"])
             self.assertEqual(endpoint, "openai")
 
+    def test_clone_structure_failure_retries_three_times_after_first_attempt(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            reference = Path(temp_dir) / "FR-author-1234567890123456789.md"
+            reference.write_text(
+                "### 镜头 1 (00:00.000 - 00:01.000)\n"
+                "### 镜头 2 (00:01.000 - 00:02.000)\n",
+                encoding="utf-8",
+            )
+            config = {"script_reference_script_path": str(reference)}
+            args = argparse.Namespace(dry_run=False)
+            invalid = "### 镜头 1 (00:00.000 - 00:01.000)\n"
+            valid = (
+                "### 镜头 1 (00:00.000 - 00:01.000)\n"
+                "### 镜头 2 (00:01.000 - 00:02.000)\n"
+            )
+
+            with (
+                patch.object(
+                    generate_product_script,
+                    "generate_script",
+                    side_effect=[
+                        (invalid, {}, "openai", "content"),
+                        (invalid, {}, "openai", "content"),
+                        (invalid, {}, "openai", "content"),
+                        (valid, {"request": "fourth"}, "openai", "content"),
+                    ],
+                ) as generate_clone,
+                patch.object(
+                    generate_product_script,
+                    "repair_script_subject_type",
+                    side_effect=lambda _c, _a, text, _r, _n: (text, {"timeline_warnings": []}),
+                ),
+                patch.object(
+                    generate_product_script,
+                    "repair_script_audio",
+                    side_effect=lambda _c, _a, text, _r, _n: (text, {"timeline_warnings": []}),
+                ),
+            ):
+                text, raw, _endpoint, _field = generate_product_script.generate_validated_clone(
+                    config, args
+                )
+
+            self.assertEqual(generate_clone.call_count, 4)
+            self.assertEqual(text, valid)
+            self.assertEqual(raw["clone_generation_attempts"], 4)
+            self.assertEqual(raw["clone_structure_retry_count"], 3)
+
+    def test_clone_structure_failure_stops_after_four_attempts(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            reference = Path(temp_dir) / "IT-author-1234567890123456789.md"
+            reference.write_text(
+                "### 镜头 1 (00:00.000 - 00:01.000)\n"
+                "### 镜头 2 (00:01.000 - 00:02.000)\n",
+                encoding="utf-8",
+            )
+            config = {"script_reference_script_path": str(reference)}
+            args = argparse.Namespace(dry_run=False)
+            invalid = "### 镜头 1 (00:00.000 - 00:01.000)\n"
+
+            with patch.object(
+                generate_product_script,
+                "generate_script",
+                return_value=(invalid, {}, "openai", "content"),
+            ) as generate_clone:
+                with self.assertRaisesRegex(RuntimeError, "连续 4 次失败"):
+                    generate_product_script.generate_validated_clone(config, args)
+
+            self.assertEqual(generate_clone.call_count, 4)
+
     def test_mutation_batches_three_then_halves_and_keeps_valid_items(self):
         args = argparse.Namespace(backend="api", mutation_variants=3, mutation_batch_size=3)
         config = {"script_mutation_attempts_per_variant": 3}

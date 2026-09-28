@@ -40,6 +40,63 @@ def test_omni_validation_accepts_level_one_simple_structure_heading() -> None:
     assert result == {"valid": True, "state": "done", "message": "已适配"}
 
 
+def test_omni_validation_rejects_merged_source_shots() -> None:
+    source = """### 镜头 1 (00:00.000 - 00:04.000)
+* **[主体]**：人物
+### 镜头 2 (00:04.000 - 00:10.000)
+* **[主体]**：[产品]
+"""
+    markdown = """# 每段生成提示词
+
+# Segment 1：00:00.000 - 00:10.000
+## A. 人物造型参考板提示词
+本段无人物，不需要生成人物造型参考板。
+
+## B. 故事板图片提示词
+生成一张单一全屏故事板。
+
+下面是本段镜头脚本（已过滤字段）：
+### 镜头 1 (00:00.000 - 00:10.000)
+* **[做什么动作]**：[产品]保持静止。
+* **[音频文案]**：无口播
+"""
+
+    result = web.omni_output_validation_text(markdown, source)
+
+    assert result["valid"] is False
+    assert "源镜头覆盖质检失败" in result["message"]
+    assert "疑似遗漏或合并镜头" in result["message"]
+
+
+def test_omni_validation_accepts_complete_source_shot_coverage() -> None:
+    source = """### 镜头 1 (00:00.000 - 00:04.000)
+* **[主体]**：人物
+### 镜头 2 (00:04.000 - 00:10.000)
+* **[主体]**：[产品]
+"""
+    markdown = """# 每段生成提示词
+
+# Segment 1：00:00.000 - 00:10.000
+## A. 人物造型参考板提示词
+本段无人物，不需要生成人物造型参考板。
+
+## B. 故事板图片提示词
+生成一张单一全屏故事板。
+
+下面是本段镜头脚本（已过滤字段）：
+### 镜头 1 (00:00.000 - 00:04.000)
+* **[做什么动作]**：人物展示[产品]。
+* **[音频文案]**：无口播
+### 镜头 2 (00:04.000 - 00:10.000)
+* **[做什么动作]**：[产品]保持静止。
+* **[音频文案]**：无口播
+"""
+
+    result = web.omni_output_validation_text(markdown, source)
+
+    assert result == {"valid": True, "state": "done", "message": "已适配"}
+
+
 def test_status_record_uses_preloaded_log_without_reading_directory(monkeypatch, tmp_path: Path) -> None:
     output_path = tmp_path / "P1" / "adapted.md"
     preloaded = {
