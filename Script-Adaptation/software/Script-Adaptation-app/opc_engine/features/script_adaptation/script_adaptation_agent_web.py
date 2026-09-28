@@ -303,6 +303,79 @@ def omni_segment_blocks(text: str) -> list[tuple[str, str]]:
     return blocks
 
 
+def omni_source_shot_coverage_issues(output_text: str, source_text: str) -> list[str]:
+    source_matches = list(workflow.OMNI_SEGMENT_HEADING_PATTERN.finditer(str(source_text or "")))
+    if not source_matches:
+        return []
+
+    source_shots = []
+    for match in source_matches:
+        start = workflow.parse_omni_time_value(match.group("start"))
+        end = workflow.parse_omni_time_value(match.group("end"))
+        if start is None or end is None:
+            return []
+        source_shots.append((int(match.group("number")), start, end))
+
+    output_ranges = []
+    output_duration = 0.0
+    for title, body in omni_segment_blocks(output_text):
+        title_range = parse_time_range_seconds(title)
+        if not title_range:
+            continue
+        segment_duration = title_range[1] - title_range[0]
+        marker = workflow.OMNI_SCRIPT_MARKER_PATTERN.search(body)
+        if marker:
+            for match in workflow.OMNI_SEGMENT_HEADING_PATTERN.finditer(body[marker.end() :]):
+                start = workflow.parse_omni_time_value(match.group("start"))
+                end = workflow.parse_omni_time_value(match.group("end"))
+                if start is not None and end is not None:
+                    output_ranges.append((output_duration + start, output_duration + end))
+        output_duration += segment_duration
+
+    if not output_ranges:
+        return []
+
+    tolerance = 0.05
+    source_start = source_shots[0][1]
+    source_end = source_shots[-1][2]
+    normalized_source = [
+        (number, start - source_start, end - source_start)
+        for number, start, end in source_shots
+    ]
+    source_duration = source_end - source_start
+    issues = []
+
+    if abs(output_duration - source_duration) > tolerance:
+        issues.append(
+            "源镜头覆盖质检失败："
+            f"Segment 总时长 {output_duration:.3f}s 与源脚本 {source_duration:.3f}s 不一致"
+        )
+
+    output_boundaries = [value for start, end in output_ranges for value in (start, end)]
+    missing_shots = [
+        number
+        for number, start, end in normalized_source
+        if not any(abs(boundary - start) <= tolerance for boundary in output_boundaries)
+        or not any(abs(boundary - end) <= tolerance for boundary in output_boundaries)
+    ]
+    if missing_shots:
+        issues.append(
+            "源镜头覆盖质检失败："
+            f"源镜头 {missing_shots} 的时间边界未完整保留，疑似遗漏或合并镜头"
+        )
+
+    previous_end = 0.0
+    for start, end in output_ranges:
+        if abs(start - previous_end) > tolerance:
+            relation = "缺口" if start > previous_end else "重叠"
+            issues.append(f"源镜头覆盖质检失败：输出镜头时间轴存在{relation}")
+            break
+        previous_end = end
+    if not issues and abs(previous_end - source_duration) > tolerance:
+        issues.append("源镜头覆盖质检失败：输出镜头未覆盖源脚本完整时长")
+    return issues
+
+
 def character_reference_issues(text: str) -> list[str]:
     issues: list[str] = []
     defined: list[str] = []
@@ -534,6 +607,7 @@ def segmented_markdown_output_validation_text(
     issues.extend(character_reference_issues(content))
     issues.extend(workflow.omni_embedded_script_reset_issues(content))
     if target_model == "omni":
+        issues.extend(omni_source_shot_coverage_issues(content, source_text))
         issues.extend(workflow.omni_segment_count_issues(content, source_text, segment_seconds_for_target(target_model, segment_seconds)))
     elif target_model == "grok" and source_duration and parsed_durations:
         total_duration = sum(parsed_durations)
@@ -831,7 +905,11 @@ def repair_adaptation_output(path: Path, config: dict[str, Any], validation_mess
 
 def requires_full_adaptation_retry(validation_message: str) -> bool:
     text = str(validation_message or "")
-    return "Omni 分段数量过多" in text or "Omni 分段数量过少" in text
+    return (
+        "Omni 分段数量过多" in text
+        or "Omni 分段数量过少" in text
+        or "源镜头覆盖质检失败" in text
+    )
 
 
 def quarantine_failed_output(path: Path, attempt: int, message: str) -> Path | None:

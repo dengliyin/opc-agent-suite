@@ -58,6 +58,70 @@ def test_omni_validation_uses_segment_structure_when_model_renames_heading() -> 
     assert result == {"valid": True, "state": "done", "message": "已适配"}
 
 
+def test_omni_validation_rejects_merged_source_shots() -> None:
+    source = """### 镜头 1 (00:00.000 - 00:04.000)
+* **[主体]**：人物
+### 镜头 2 (00:04.000 - 00:10.000)
+* **[主体]**：[产品]
+"""
+    markdown = """# 每段生成提示词
+
+# Segment 1：00:00.000 - 00:10.000
+## A. 人物造型参考板提示词
+本段无人物，不需要生成人物造型参考板。
+
+## B. 故事板图片提示词
+生成一张单一全屏故事板。
+
+下面是本段镜头脚本（已过滤字段）：
+### 镜头 1 (00:00.000 - 00:10.000)
+* **[做什么动作]**：[产品]保持静止。
+* **[音频文案]**：无口播
+"""
+
+    result = web.omni_output_validation_text(markdown, source)
+
+    assert result["valid"] is False
+    assert "源镜头覆盖质检失败" in result["message"]
+    assert "疑似遗漏或合并镜头" in result["message"]
+
+
+def test_omni_validation_accepts_one_source_shot_split_across_segments() -> None:
+    source = """### 镜头 1 (00:00.000 - 00:12.000)
+* **[主体]**：[产品]
+"""
+    markdown = """# 每段生成提示词
+
+# Segment 1：00:00.000 - 00:10.000
+## A. 人物造型参考板提示词
+本段无人物，不需要生成人物造型参考板。
+
+## B. 故事板图片提示词
+生成第一段故事板。
+
+下面是本段镜头脚本（已过滤字段）：
+### 镜头 1 (00:00.000 - 00:10.000)
+* **[做什么动作]**：[产品]保持静止。
+* **[音频文案]**：无口播
+
+# Segment 2：00:00.000 - 00:02.000
+## A. 人物造型参考板提示词
+本段无人物，不需要生成人物造型参考板。
+
+## B. 故事板图片提示词
+生成第二段故事板。
+
+下面是本段镜头脚本（已过滤字段）：
+### 镜头 1 (00:00.000 - 00:02.000)
+* **[做什么动作]**：[产品]保持静止。
+* **[音频文案]**：无口播
+"""
+
+    result = web.omni_output_validation_text(markdown, source)
+
+    assert result == {"valid": True, "state": "done", "message": "已适配"}
+
+
 def test_normalize_segmented_markdown_inserts_canonical_heading_once() -> None:
     markdown = """# 生成流程规划
 
@@ -428,6 +492,7 @@ def test_omni_source_structure_rejects_missing_shot_headings() -> None:
 
 def test_segment_count_error_requires_full_retry() -> None:
     assert web.requires_full_adaptation_retry("输出质检未通过：Omni 分段数量过多：当前 2 段")
+    assert web.requires_full_adaptation_retry("源镜头覆盖质检失败：疑似遗漏或合并镜头")
     assert not web.requires_full_adaptation_retry("Segment 1 缺少 ## B. 故事板图片提示词")
 
 
