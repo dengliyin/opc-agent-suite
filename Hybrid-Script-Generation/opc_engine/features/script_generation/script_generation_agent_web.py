@@ -44,6 +44,7 @@ from opc_engine.features.script_generation.generate_product_script import (
     has_direct_file_inputs,
     load_script_generation_config,
     migrate_legacy_local_configs,
+    output_country_for_filename,
     product_project_ready,
     reference_country_author_and_video_id,
     read_json_config,
@@ -251,13 +252,17 @@ def reference_output_stems(reference_path: str | Path) -> tuple[str, ...]:
 def reference_output_status(
     reference_path: Path,
     output_stems: tuple[str, ...] | None = None,
+    target_country: str = "",
 ) -> dict[str, Any]:
     status = {"cloned": False, "mutation_count": 0}
     if output_stems is None:
         output_stems = reference_output_stems(reference_path)
 
-    _country, author, source_id = reference_country_author_and_video_id(reference_path)
-    identity = f"-{author}-{source_id}"
+    source_country, author, source_id = reference_country_author_and_video_id(reference_path)
+    filename_country = output_country_for_filename(
+        {"script_country": target_country or "不改变原脚本"}, source_country
+    )
+    identity = f"-{filename_country}-{author}-{source_id}"
     for stem in output_stems:
         if identity not in stem:
             continue
@@ -304,7 +309,11 @@ def library_payload(config: dict[str, Any] | None = None) -> dict[str, Any]:
                 "group": classification["group"],
                 "output_dir": output_dir_for_reference(path).as_posix(),
                 "selected": bool(selected_reference and resolve_root_path(selected_reference) == path.resolve()),
-                "status": reference_output_status(path, output_stems_by_reference[reference_key]),
+                "status": reference_output_status(
+                    path,
+                    output_stems_by_reference[reference_key],
+                    str(config.get("script_country") or ""),
+                ),
             }
         )
     references.sort(
@@ -745,13 +754,23 @@ class GenerationJob:
     def snapshot(self) -> dict[str, Any]:
         with self.lock:
             running = self.active_count > 0 or bool(self.queue)
-            latest_task = max(self.tasks.values(), key=lambda item: int(item.get("id") or 0), default=None)
+            task_values = list(self.tasks.values())
+            summary = {
+                "completed": sum(1 for task in task_values if task.get("status") == "completed"),
+                "failed": sum(1 for task in task_values if task.get("status") == "failed"),
+                "running": sum(1 for task in task_values if task.get("status") == "running"),
+                "queued": sum(1 for task in task_values if task.get("status") == "queued"),
+            }
             if self.active_count > 0:
                 status = "running"
             elif self.queue:
                 status = "queued"
-            elif latest_task:
-                status = str(latest_task.get("status") or "idle")
+            elif summary["completed"] and summary["failed"]:
+                status = "partial_failed"
+            elif summary["failed"]:
+                status = "failed"
+            elif summary["completed"]:
+                status = "completed"
             else:
                 status = "idle"
             return {
@@ -760,6 +779,7 @@ class GenerationJob:
                 "active_count": self.active_count,
                 "queued_count": len(self.queue),
                 "max_workers": self.max_workers,
+                "summary": summary,
                 "tasks": [
                     {
                         key: task.get(key)
@@ -1325,6 +1345,7 @@ HTML_PAGE = r"""<!doctype html>
     }
     .chip.ok { color: #1f7a3a; border-color: rgba(52,199,89,.24); background: rgba(52,199,89,.10); }
     .chip.bad { color: #b42318; border-color: rgba(255,59,48,.24); background: rgba(255,59,48,.09); }
+    .chip.partial { color: #8a6500; border-color: rgba(255,204,0,.34); background: rgba(255,204,0,.13); }
     .flow {
       display: grid;
       grid-template-columns: repeat(5, minmax(108px, 1fr));
@@ -2280,9 +2301,16 @@ HTML_PAGE = r"""<!doctype html>
     async function refreshJob() {
       const job = await api('/api/job');
       renderJobLogs(job.logs);
-      $('jobChip').className = 'chip ' + (job.status === 'completed' ? 'ok' : job.status === 'failed' ? 'bad' : '');
+      const summary = job.summary || {};
+      $('jobChip').className = 'chip ' + (job.status === 'completed' ? 'ok' : job.status === 'failed' ? 'bad' : job.status === 'partial_failed' ? 'partial' : '');
       if (job.running) {
-        $('jobChip').textContent = `运行 ${job.active_count || 0}/${job.max_workers || 1} · 排队 ${job.queued_count || 0}`;
+        $('jobChip').textContent = `运行 ${job.active_count || 0}/${job.max_workers || 1} · 排队 ${job.queued_count || 0} · 成功 ${summary.completed || 0} · 失败 ${summary.failed || 0}`;
+      } else if (job.status === 'partial_failed') {
+        $('jobChip').textContent = `部分失败 · 成功 ${summary.completed || 0} · 失败 ${summary.failed || 0}`;
+      } else if (job.status === 'completed') {
+        $('jobChip').textContent = `已完成 · 成功 ${summary.completed || 0}`;
+      } else if (job.status === 'failed') {
+        $('jobChip').textContent = `失败 · ${summary.failed || 0} 个任务`;
       } else {
         $('jobChip').textContent = job.status || 'idle';
       }

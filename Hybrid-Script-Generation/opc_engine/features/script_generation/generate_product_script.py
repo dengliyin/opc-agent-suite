@@ -76,6 +76,7 @@ DEFAULT_MUTATION_MAX_OUTPUT_TOKENS = 96 * 1024
 DEFAULT_MUTATION_VARIANTS = 3
 DEFAULT_MUTATION_BATCH_SIZE = 3
 MAX_MUTATION_BATCH_SIZE = 3
+CLONE_MAX_ATTEMPTS = 4
 MUTATION_RUN_TS_FORMAT = "%Y%m%d-%H%M%S"
 API_CONCURRENCY_STATE_PATH = Path(
     os.environ.get("KESAI_API_CONCURRENCY_STATE_PATH", "/tmp/kesai_hybrid_script_generation_api_slots.json")
@@ -1259,6 +1260,34 @@ def generate_script(config, args):
     return call_text_model(config, args, prompt, "脚本产出", f"参考内容: {get_reference_path(config).name}")
 
 
+def generate_clone_with_structure_retry(config, args):
+    if args.dry_run:
+        return generate_script(config, args)
+
+    reference_text = read_text_file(get_reference_path(config))
+    last_error = None
+    for attempt in range(1, CLONE_MAX_ATTEMPTS + 1):
+        log(f"复刻第 {attempt}/{CLONE_MAX_ATTEMPTS} 次尝试")
+        generated_text, generated_raw, endpoint_style, field_style = generate_script(config, args)
+        try:
+            corrected_text, timeline_warnings = enforce_output_timeline(config, reference_text, generated_text)
+        except ValueError as exc:
+            last_error = exc
+            log(f"复刻第 {attempt}/{CLONE_MAX_ATTEMPTS} 次结构校验失败: {exc}")
+            if attempt < CLONE_MAX_ATTEMPTS:
+                continue
+            break
+
+        raw_payload = dict(generated_raw) if isinstance(generated_raw, dict) else {"raw_response": generated_raw}
+        raw_payload["clone_generation_attempts"] = attempt
+        raw_payload["clone_structure_retry_count"] = attempt - 1
+        if timeline_warnings:
+            raw_payload["duration_validation_warnings"] = timeline_warnings
+        return corrected_text, raw_payload, endpoint_style, field_style
+
+    raise RuntimeError(f"复刻结构校验连续 {CLONE_MAX_ATTEMPTS} 次失败: {last_error}")
+
+
 def strip_translation_parentheses(text):
     content = str(text or "")
     patterns = (
@@ -1502,12 +1531,27 @@ def mutate_script_source(config, args, generated_script, reference_context=""):
                 unnamed.append(variant)
         for number, variant in zip((number for number in variant_numbers if number not in received), unnamed):
             received[number] = variant
+        received_count = len(received)
+        validated = {}
+        structure_errors = {}
+        timeline_warnings = {}
+        for number, variant in received.items():
+            try:
+                corrected_variant, warnings = enforce_output_timeline(config, generated_script, variant)
+            except ValueError as exc:
+                structure_errors[str(number)] = str(exc)
+                log(f"裂变第 {number} 条结构校验失败，将只重试该编号: {exc}")
+                continue
+            validated[number] = corrected_variant
+            timeline_warnings[str(number)] = warnings
         return {
             "variant_numbers": variant_numbers,
             "attempt": attempt_number,
-            "variants": received,
+            "variants": validated,
             "requested_variant_count": len(variant_numbers),
-            "received_variant_count": len(received),
+            "received_variant_count": received_count,
+            "structure_validation_errors": structure_errors,
+            "timeline_warnings": timeline_warnings,
             "raw": batch_raw,
             "endpoint_style": endpoint_style,
             "field_style": field_style,
@@ -1535,6 +1579,7 @@ def mutate_script_source(config, args, generated_script, reference_context=""):
             result = {
                 "variant_numbers": variant_numbers, "attempt": attempt, "variants": {},
                 "requested_variant_count": len(variant_numbers), "received_variant_count": 0,
+                "structure_validation_errors": {}, "timeline_warnings": {},
                 "raw": {"error": str(error)}, "endpoint_style": backend, "field_style": "error", "elapsed": 0,
             }
             log(f"裂变编号 {number_text} 请求失败: {error}")
@@ -1544,9 +1589,10 @@ def mutate_script_source(config, args, generated_script, reference_context=""):
         for variant_number, variant in result["variants"].items():
             if variant_number in collected_variants:
                 continue
-            warnings = validate_audio_length_against_source(
+            warnings = list(result.get("timeline_warnings", {}).get(str(variant_number), []))
+            warnings.extend(validate_audio_length_against_source(
                 source_audio_profiles, extract_audio_profiles(variant), variant_number
-            )
+            ))
             collected_variants[variant_number] = variant
             accepted_numbers.append(variant_number)
             item_warnings[str(variant_number)] = warnings
@@ -1562,6 +1608,7 @@ def mutate_script_source(config, args, generated_script, reference_context=""):
             "received_variant_count": result["received_variant_count"],
             "accepted_variant_numbers": accepted_numbers,
             "missing_variant_numbers": missing,
+            "structure_validation_errors": result.get("structure_validation_errors", {}),
             "validation_warnings": item_warnings,
             "raw": result["raw"],
         })
@@ -1657,7 +1704,7 @@ def run_script_pipeline(config, args):
                     log(f"复刻稿已存在且结构校验通过，复用且不调用 API: {clone_path}")
                     return existing_text, existing_raw, "reused", "markdown"
 
-    generated_text, generated_raw, endpoint_style, field_style = generate_script(config, args)
+    generated_text, generated_raw, endpoint_style, field_style = generate_clone_with_structure_retry(config, args)
     if args.dry_run:
         return generated_text, generated_raw, endpoint_style, field_style
     return generated_text, generated_raw, endpoint_style, field_style
@@ -1804,7 +1851,7 @@ def ensure_clone_source_for_mutation(config, args):
         return require_clone_source_for_mutation(config, args)
 
     log(f"未找到对应国家的复刻稿，先自动复刻: {expected_clone_path}")
-    generated_text, generated_raw, clone_endpoint, clone_field = generate_script(config, args)
+    generated_text, generated_raw, clone_endpoint, clone_field = generate_clone_with_structure_retry(config, args)
     output_paths, _raw_paths = write_script_outputs(config, getattr(args, "output_dir", ""), generated_text, generated_raw)
     if not output_paths:
         raise RuntimeError("自动复刻未生成可用脚本，不能继续裂变。")

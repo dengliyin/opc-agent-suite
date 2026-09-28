@@ -53,19 +53,37 @@ class ScriptGenerationAgentWebTests(unittest.TestCase):
             with patch.object(Path, "read_text", side_effect=PermissionError("denied")):
                 self.assertEqual(script_generation_agent_web.read_text(path), "")
 
-    def test_reference_status_uses_markdown_stems_across_target_countries(self):
+    def test_reference_status_is_scoped_to_target_country(self):
         reference = Path("/tmp/混剪-钩子/product/MX-author-1234567890123456789-example.md")
         stems = (
             "复刻-product-IE-author-1234567890123456789",
             "裂变-product-ES-author-1234567890123456789",
             "裂变-product-IT-author-1234567890123456789_002",
+            "裂变-product-IE-author-1234567890123456789_003",
             "裂变-product-IE-other-9999999999999999999",
         )
 
-        status = script_generation_agent_web.reference_output_status(reference, stems)
+        ireland = script_generation_agent_web.reference_output_status(reference, stems, "爱尔兰")
+        spain = script_generation_agent_web.reference_output_status(reference, stems, "西班牙")
 
-        self.assertTrue(status["cloned"])
-        self.assertEqual(status["mutation_count"], 2)
+        self.assertTrue(ireland["cloned"])
+        self.assertEqual(ireland["mutation_count"], 1)
+        self.assertFalse(spain["cloned"])
+        self.assertEqual(spain["mutation_count"], 1)
+
+    def test_job_summary_reports_partial_failure_without_hiding_successes(self):
+        job = GenerationJob()
+        job.tasks = {
+            1: {"id": 1, "status": "completed"},
+            2: {"id": 2, "status": "completed"},
+            3: {"id": 3, "status": "failed"},
+        }
+
+        snapshot = job.snapshot()
+
+        self.assertEqual(snapshot["status"], "partial_failed")
+        self.assertEqual(snapshot["summary"]["completed"], 2)
+        self.assertEqual(snapshot["summary"]["failed"], 1)
 
     def test_library_groups_type_and_product_and_preserves_source_output_directory(self):
         with tempfile.TemporaryDirectory() as temp_dir:

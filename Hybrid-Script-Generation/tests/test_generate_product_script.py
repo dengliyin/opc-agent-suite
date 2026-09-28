@@ -464,6 +464,65 @@ class GenerateProductScriptTests(unittest.TestCase):
             self.assertTrue(raw["fresh"])
             self.assertEqual(endpoint, "openai")
 
+    def test_clone_structure_failure_retries_three_times_after_first_attempt(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            reference = root / "FR-author-1234567890123456789.md"
+            reference.write_text(
+                "### 镜头 1 (00:00.000 - 00:01.000)\n"
+                "### 镜头 2 (00:01.000 - 00:02.000)\n",
+                encoding="utf-8",
+            )
+            config = {"script_reference_script_path": str(reference)}
+            args = argparse.Namespace(dry_run=False)
+            invalid = "### 镜头 1 (00:00.000 - 00:01.000)\n"
+            valid = (
+                "### 镜头 1 (00:00.000 - 00:01.000)\n"
+                "### 镜头 2 (00:01.000 - 00:02.000)\n"
+            )
+
+            with patch.object(
+                generate_product_script,
+                "generate_script",
+                side_effect=[
+                    (invalid, {}, "openai", "content"),
+                    (invalid, {}, "openai", "content"),
+                    (invalid, {}, "openai", "content"),
+                    (valid, {"request": "fourth"}, "openai", "content"),
+                ],
+            ) as generate_clone:
+                text, raw, _endpoint, _field = generate_product_script.generate_clone_with_structure_retry(
+                    config, args
+                )
+
+            self.assertEqual(generate_clone.call_count, 4)
+            self.assertEqual(text, valid)
+            self.assertEqual(raw["clone_generation_attempts"], 4)
+            self.assertEqual(raw["clone_structure_retry_count"], 3)
+
+    def test_clone_structure_failure_stops_after_four_attempts(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            reference = root / "IT-author-1234567890123456789.md"
+            reference.write_text(
+                "### 镜头 1 (00:00.000 - 00:01.000)\n"
+                "### 镜头 2 (00:01.000 - 00:02.000)\n",
+                encoding="utf-8",
+            )
+            config = {"script_reference_script_path": str(reference)}
+            args = argparse.Namespace(dry_run=False)
+            invalid = "### 镜头 1 (00:00.000 - 00:01.000)\n"
+
+            with patch.object(
+                generate_product_script,
+                "generate_script",
+                return_value=(invalid, {}, "openai", "content"),
+            ) as generate_clone:
+                with self.assertRaisesRegex(RuntimeError, "连续 4 次失败"):
+                    generate_product_script.generate_clone_with_structure_retry(config, args)
+
+            self.assertEqual(generate_clone.call_count, 4)
+
     def test_mutation_batches_three_then_halves_and_keeps_valid_items(self):
         args = argparse.Namespace(backend="api", mutation_variants=3, mutation_batch_size=3)
         config = {"script_mutation_attempts_per_variant": 3}
@@ -500,6 +559,47 @@ class GenerateProductScriptTests(unittest.TestCase):
         self.assertEqual(call_model.call_count, 3)
         self.assertEqual(raw["mutation_variant_numbers"], [1, 2, 3])
         self.assertFalse(raw["partial_success"])
+
+    def test_mutation_retries_only_variant_with_invalid_timeline_structure(self):
+        args = argparse.Namespace(backend="api", mutation_variants=2, mutation_batch_size=2)
+        config = {"script_mutation_attempts_per_variant": 3}
+        source = (
+            "### 镜头 1 (00:00.000 - 00:01.000)\n"
+            "### 镜头 2 (00:01.000 - 00:02.000)\n"
+        )
+
+        def variant(number, valid=True):
+            shots = "### 镜头 1 (00:00.000 - 00:01.000)\n"
+            if valid:
+                shots += "### 镜头 2 (00:01.000 - 00:02.000)\n"
+            return f"### 变体 #{number}\n{shots}" + ("有效内容。" * 250)
+
+        prompts = []
+
+        def build_prompt(_config, _source, count, batch_start=1, **_kwargs):
+            prompts.append((batch_start, count))
+            return f"batch {batch_start} {count}"
+
+        with (
+            patch.object(generate_product_script, "build_mutation_prompt", side_effect=build_prompt),
+            patch.object(
+                generate_product_script,
+                "call_text_model",
+                side_effect=[
+                    (variant(1) + "\n\n" + variant(2, valid=False), {"id": "first"}, "openai", "content"),
+                    (variant(2), {"id": "retry-2"}, "openai", "content"),
+                ],
+            ) as call_model,
+        ):
+            _text, raw, _endpoint, _field = generate_product_script.mutate_script_source(
+                config, args, source
+            )
+
+        self.assertEqual(prompts, [(1, 2), (2, 1)])
+        self.assertEqual(call_model.call_count, 2)
+        self.assertEqual(raw["mutation_variant_numbers"], [1, 2])
+        self.assertFalse(raw["partial_success"])
+        self.assertIn("2", raw["mutation_batches"][0]["structure_validation_errors"])
 
 
 if __name__ == "__main__":
