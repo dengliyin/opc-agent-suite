@@ -840,6 +840,54 @@ def omni_source_duration_seconds(text):
     return end - start if end > start else None
 
 
+OMNI_SUBJECT_FIELD_PATTERN = re.compile(
+    r"(?m)^\s*[-*]\s*(?:\*\*)?\s*[【\[]主体[】\]]\s*(?:\*\*)?\s*[:：]?"
+)
+
+
+def omni_source_structure_issues(text):
+    content = str(text or "")
+    matches = list(OMNI_SEGMENT_HEADING_PATTERN.finditer(content))
+    if not matches:
+        return ["未识别到镜头标题时间码"]
+
+    issues = []
+    subject_count = len(OMNI_SUBJECT_FIELD_PATTERN.findall(content))
+    if subject_count and subject_count != len(matches):
+        issues.append(f"镜头标题 {len(matches)} 个，[主体] 区块 {subject_count} 个，存在镜头标题缺失或错位")
+
+    numbers = [int(match.group("number")) for match in matches]
+    if len(numbers) != len(set(numbers)):
+        issues.append("存在重复镜头编号")
+
+    ranges = [
+        (parse_omni_time_value(match.group("start")), parse_omni_time_value(match.group("end")))
+        for match in matches
+    ]
+    if any(start is None or end is None or end <= start for start, end in ranges):
+        issues.append("存在无法解析或非正时长的镜头时间码")
+        return issues
+    if abs(ranges[0][0]) > 0.001:
+        issues.append("第一个镜头必须从 00:00.000 开始")
+    for index in range(1, len(ranges)):
+        previous_end = ranges[index - 1][1]
+        current_start = ranges[index][0]
+        if abs(current_start - previous_end) > 0.001:
+            issues.append(
+                f"镜头时间轴不连续：第 {index} 个镜头结束于 {previous_end:.3f}s，"
+                f"下一镜头开始于 {current_start:.3f}s"
+            )
+            break
+    return issues
+
+
+def require_omni_source_structure(text):
+    issues = omni_source_structure_issues(text)
+    if issues:
+        raise RuntimeError("上游脚本结构损坏：" + "；".join(issues))
+    return issues
+
+
 def expected_omni_segment_count(source_text, segment_seconds=10):
     duration = omni_source_duration_seconds(source_text)
     if duration is None:
@@ -1378,6 +1426,9 @@ def run_adapt(config):
     segment_seconds = int(config.get("script_adaptation_segment_seconds") or 8)
     notes = str(config.get("script_adaptation_notes") or "").strip()
     prompt_template = get_script_adaptation_prompt(config)
+
+    if source_text and target_model.lower() in {"omni", "grok"}:
+        require_omni_source_structure(source_text)
 
     log("开始脚本适配")
     log(f"目标视频生成模型: {target_model}")

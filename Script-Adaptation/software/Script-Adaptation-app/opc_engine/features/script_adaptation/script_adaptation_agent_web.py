@@ -641,6 +641,10 @@ def is_non_retryable_model_error(message: str) -> bool:
     return any(token in text for token in fatal_tokens)
 
 
+def is_non_retryable_source_error(message: str) -> bool:
+    return "上游脚本结构损坏" in str(message or "")
+
+
 def read_adaptation_status_log(output_dir: Path) -> dict[str, Any]:
     log_path = output_dir / ADAPTATION_STATUS_LOG_NAME
     if not log_path.exists():
@@ -823,6 +827,11 @@ def repair_adaptation_output(path: Path, config: dict[str, Any], validation_mess
     repaired_text, _raw_response, _endpoint_style = workflow.run_text_model(prompt, config, "脚本适配局部修复")
     replacements = parse_repair_replacements(repaired_text)
     path.write_text(apply_repair_replacements(content, replacements).rstrip() + "\n", encoding="utf-8")
+
+
+def requires_full_adaptation_retry(validation_message: str) -> bool:
+    text = str(validation_message or "")
+    return "Omni 分段数量过多" in text or "Omni 分段数量过少" in text
 
 
 def quarantine_failed_output(path: Path, attempt: int, message: str) -> Path | None:
@@ -2197,6 +2206,8 @@ class AgentWebJob:
         script_text = script["text"]
         target_model = normalize_target_model(config.get("script_adaptation_target_model"))
         config["script_adaptation_target_model"] = target_model
+        if target_model in {"omni", "grok"}:
+            workflow.require_omni_source_structure(script_text)
         config["script_adaptation_segment_seconds"] = segment_seconds_for_target(
             target_model,
             config.get("script_adaptation_segment_seconds"),
@@ -2300,10 +2311,14 @@ class AgentWebJob:
         print(f"[{index}/{total}] 已导入 Markdown: {script_filename}")
         print(f"[{index}/{total}] 脚本已保存: {display_path(script_path)}")
         print(f"[{index}/{total}] 输出目录: {display_path(output_dir)}")
+        previous_validation_message = str(
+            previous_status.get("validation_message") or previous_status.get("message") or "输出质检未通过"
+        )
         repair_only = (
             attempt > 1
             and expected_md.exists()
             and str(previous_status.get("validation_state") or "") in INVALID_ADAPTATION_STATES
+            and not requires_full_adaptation_retry(previous_validation_message)
         )
         print(f"[{index}/{total}] 开始{'局部修复' if repair_only else '调用脚本适配智能体'}...")
         if self.is_cancelled():
@@ -2322,10 +2337,18 @@ class AgentWebJob:
                 repair_adaptation_output(
                     expected_md,
                     output_config,
-                    str(previous_status.get("validation_message") or previous_status.get("message") or "输出质检未通过"),
+                    previous_validation_message,
                 )
             else:
-                workflow.run_adapt(output_config)
+                retry_config = output_config
+                if attempt > 1 and requires_full_adaptation_retry(previous_validation_message):
+                    previous_notes = str(output_config.get("script_adaptation_notes") or "").strip()
+                    retry_note = f"上次质检错误：{previous_validation_message}。本次必须完整重新适配并修正该错误。"
+                    retry_config = {
+                        **output_config,
+                        "script_adaptation_notes": "\n".join(item for item in (previous_notes, retry_note) if item),
+                    }
+                workflow.run_adapt(retry_config)
         except BaseException as exc:
             cancelled = self.is_cancelled()
             write_adaptation_status(
@@ -2461,11 +2484,24 @@ class AgentWebJob:
             except BaseException as exc:  # noqa: BLE001 - keep batch progress visible.
                 message = str(exc)
                 fatal = is_non_retryable_model_error(message)
+                retryable = not fatal and not is_non_retryable_source_error(message)
                 print(f"[任务 {index}] 第 {attempt}/{max_attempts} 次适配失败: {message}")
                 if fatal:
                     self.cancel_waiting_tasks(batch_id, "模型接口返回不可重试错误，已终止剩余批量任务")
-                self.update_task(index, "failed" if fatal or attempt >= max_attempts else "retrying", error=message, attempt=attempt)
-                return {"index": index, "script": script, "success": False, "fatal": fatal, "error": message}
+                self.update_task(
+                    index,
+                    "failed" if not retryable or attempt >= max_attempts else "retrying",
+                    error=message,
+                    attempt=attempt,
+                )
+                return {
+                    "index": index,
+                    "script": script,
+                    "success": False,
+                    "fatal": fatal,
+                    "retryable": retryable,
+                    "error": message,
+                }
             finally:
                 STDOUT_ROUTER.unregister()
                 STDERR_ROUTER.unregister()
@@ -2492,7 +2528,7 @@ class AgentWebJob:
                 pending = [
                     (int(result["index"]), result["script"])
                     for result in attempt_results
-                    if not result.get("success") and not result.get("cancelled")
+                    if not result.get("success") and not result.get("cancelled") and result.get("retryable", True)
                 ]
                 if pending and attempt < max_attempts:
                     wave_size = next_retry_batch_size(wave_size)

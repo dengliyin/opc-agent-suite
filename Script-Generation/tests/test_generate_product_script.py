@@ -67,6 +67,51 @@ class GenerateProductScriptTests(unittest.TestCase):
                 generated,
             )
 
+    def test_timeline_parser_accepts_heading_suffix_and_single_digit_seconds(self):
+        reference = """### 镜头 1 (00:00.000 - 00:04.000) · 融合镜头
+* **[主体]** 人物
+### 镜头 6 (00:04.000 - 00:8.200)
+* **[主体]** [产品]
+### 镜头 8 (00:8.200 - 00:10.000)
+* **[主体]** 人物
+"""
+        generated = """### 镜头 1 (00:00.000 - 00:04.000) · 法国场景
+* **[主体]** 法国成年男子
+### 镜头 6 (00:04.000 - 00:8.200)
+* **[主体]** [产品]
+### 镜头 8 (00:8.200 - 00:10.000)
+* **[主体]** 法国成年男子
+"""
+
+        corrected, warnings = generate_product_script.enforce_output_timeline({}, reference, generated)
+
+        self.assertIn("· 法国场景", corrected)
+        self.assertEqual(warnings, [])
+
+    def test_timeline_validation_rejects_missing_headings_with_extra_subject_blocks(self):
+        reference = """### 镜头 1 (00:00.000 - 00:04.000) · 融合镜头
+* **[主体]** 人物
+### 镜头 2 (00:04.000 - 00:05.100)
+* **[主体]** 人物
+### 镜头 3 (00:05.100 - 00:06.500)
+* **[主体]** [产品]
+### 镜头 6 (00:06.500 - 00:8.200)
+* **[主体]** 骑手
+### 镜头 8 (00:8.200 - 00:10.000)
+* **[主体]** 人物
+"""
+        damaged = """### 镜头 2 (00:04.000 - 00:05.100)
+* **[主体]** 人物
+* **[主体]** 人物
+### 镜头 3 (00:05.100 - 00:06.500)
+* **[主体]** [产品]
+* **[主体]** 骑手
+* **[主体]** 人物
+"""
+
+        with self.assertRaisesRegex(ValueError, "镜头编号或数量与参考稿不一致"):
+            generate_product_script.enforce_output_timeline({}, reference, damaged)
+
     def test_extra_shot_is_merged_into_reference_timeline_before_validation(self):
         reference = """### 镜头 1 (00:00.000 - 00:01.500)
 ### 镜头 2 (00:01.500 - 00:02.800)
@@ -833,16 +878,55 @@ class GenerateProductScriptTests(unittest.TestCase):
                 config, reference, str(output_dir)
             )
             clone_path.parent.mkdir(parents=True)
-            clone_path.write_text("existing clone\n", encoding="utf-8")
+            clone_path.write_text(
+                "### 镜头 1 (00:00.000 - 00:01.000)\n* **[主体]** 成年人物\n",
+                encoding="utf-8",
+            )
             args = argparse.Namespace(dry_run=False, output_dir=str(output_dir), enable_mutation=False)
 
             with patch.object(generate_product_script, "generate_validated_clone") as generate_clone:
                 text, raw, endpoint, _field = generate_product_script.run_script_pipeline(config, args)
 
             generate_clone.assert_not_called()
-            self.assertEqual(text, "existing clone")
+            self.assertIn("成年人物", text)
             self.assertTrue(raw["reused_existing_clone"])
             self.assertEqual(endpoint, "reused")
+
+    def test_invalid_existing_clone_is_regenerated_instead_of_reused(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            reference = root / "US-author-1234567890123456789.md"
+            reference.write_text(
+                "### 镜头 1 (00:00.000 - 00:01.000)\n* **[主体]** 人物\n"
+                "### 镜头 2 (00:01.000 - 00:02.000)\n* **[主体]** [产品]\n",
+                encoding="utf-8",
+            )
+            output_dir = root / "outputs"
+            config = {
+                "script_reference_script_path": str(reference),
+                "script_product_document_path": str(root / "产品-产品信息.md"),
+            }
+            clone_path = generate_product_script.clone_output_path_for_reference(config, reference, str(output_dir))
+            clone_path.parent.mkdir(parents=True)
+            clone_path.write_text(
+                "### 镜头 1 (00:00.000 - 00:01.000)\n"
+                "* **[主体]** 人物\n* **[主体]** [产品]\n",
+                encoding="utf-8",
+            )
+            args = argparse.Namespace(dry_run=False, output_dir=str(output_dir), enable_mutation=False)
+            regenerated = "### 镜头 1 (00:00.000 - 00:01.000)\n### 镜头 2 (00:01.000 - 00:02.000)"
+
+            with patch.object(
+                generate_product_script,
+                "generate_validated_clone",
+                return_value=(regenerated, {"fresh": True}, "openai", "content"),
+            ) as generate_clone:
+                text, raw, endpoint, _field = generate_product_script.run_script_pipeline(config, args)
+
+            generate_clone.assert_called_once()
+            self.assertEqual(text, regenerated)
+            self.assertTrue(raw["fresh"])
+            self.assertEqual(endpoint, "openai")
 
     def test_mutation_batches_three_then_halves_and_keeps_valid_items(self):
         args = argparse.Namespace(backend="api", mutation_variants=3, mutation_batch_size=3)

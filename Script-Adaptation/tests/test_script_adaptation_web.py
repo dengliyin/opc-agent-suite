@@ -395,3 +395,44 @@ def test_repair_request_uses_local_excerpt_and_writes_patch(monkeypatch, tmp_pat
 
     assert len(captured["prompt"]) < len("开头\n" + ("稳定内容\n" * 2000) + "错误动作\n")
     assert path.read_text(encoding="utf-8").endswith("正确动作\n")
+
+
+def test_omni_source_structure_accepts_heading_suffix_and_single_digit_seconds() -> None:
+    source = """### 镜头 1 (00:00.000 - 00:04.000) · 融合镜头
+* **[主体]** 人物
+### 镜头 6 (00:04.000 - 00:8.200)
+* **[主体]** [产品]
+### 镜头 8 (00:8.200 - 00:10.000)
+* **[主体]** 人物
+"""
+
+    assert web.workflow.omni_source_structure_issues(source) == []
+    assert web.workflow.omni_source_duration_seconds(source) == 10.0
+
+
+def test_omni_source_structure_rejects_missing_shot_headings() -> None:
+    source = """### 镜头 2 (00:04.000 - 00:05.100)
+* **[主体]** 人物
+* **[主体]** 人物
+### 镜头 3 (00:05.100 - 00:06.500)
+* **[主体]** [产品]
+* **[主体]** 骑手
+* **[主体]** 人物
+"""
+
+    issues = web.workflow.omni_source_structure_issues(source)
+
+    assert any("镜头标题 2 个，[主体] 区块 5 个" in issue for issue in issues)
+    assert any("第一个镜头必须从 00:00.000 开始" in issue for issue in issues)
+
+
+def test_segment_count_error_requires_full_retry() -> None:
+    assert web.requires_full_adaptation_retry("输出质检未通过：Omni 分段数量过多：当前 2 段")
+    assert not web.requires_full_adaptation_retry("Segment 1 缺少 ## B. 故事板图片提示词")
+
+
+def test_source_structure_error_is_non_retryable_for_one_task_only() -> None:
+    message = "上游脚本结构损坏：镜头标题缺失"
+
+    assert web.is_non_retryable_source_error(message)
+    assert not web.is_non_retryable_model_error(message)

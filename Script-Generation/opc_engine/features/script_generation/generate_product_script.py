@@ -622,34 +622,75 @@ def preserves_original_script(value):
 
 def parse_timestamp_seconds(value):
     text = str(value or "").strip()
-    match = re.fullmatch(r"(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?", text)
+    match = re.fullmatch(r"(?:(\d{1,2}):)?(\d{1,2}):(\d{1,2})(?:\.(\d{1,3}))?", text)
     if match:
         hours = int(match.group(1) or 0)
         minutes = int(match.group(2) or 0)
         seconds = int(match.group(3) or 0)
         millis = int((match.group(4) or "0").ljust(3, "0")[:3])
         return hours * 3600 + minutes * 60 + seconds + millis / 1000
-    match = re.fullmatch(r"(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?", text)
-    if match:
-        minutes = int(match.group(1) or 0)
-        seconds = int(match.group(2) or 0)
-        millis = int((match.group(3) or "0").ljust(3, "0")[:3])
-        return minutes * 60 + seconds + millis / 1000
     return None
 
 
+TIMESTAMP_TOKEN_PATTERN = r"\d{1,2}:\d{1,2}(?:\.\d{1,3})?"
 TIMECODE_RANGE_PATTERN = re.compile(
-    r"(?P<start>\d{1,2}:\d{2}(?:\.\d{1,3})?)\s*(?P<sep>[-~—至到]+)\s*(?P<end>\d{1,2}:\d{2}(?:\.\d{1,3})?)"
+    rf"(?P<start>{TIMESTAMP_TOKEN_PATTERN})\s*(?P<sep>[-~—至到]+)\s*(?P<end>{TIMESTAMP_TOKEN_PATTERN})"
 )
 
 SHOT_HEADING_TIMECODE_PATTERN = re.compile(
     r"^(?P<prefix>[ \t]*(?:#{1,6}[ \t]*)?镜头[ \t]*(?P<number>\d+)[ \t]*\([ \t]*)"
-    r"(?P<start>\d{1,2}:\d{2}(?:\.\d{1,3})?)[ \t]*"
+    rf"(?P<start>{TIMESTAMP_TOKEN_PATTERN})[ \t]*"
     r"(?P<sep>[-~—至到]+)[ \t]*"
-    r"(?P<end>\d{1,2}:\d{2}(?:\.\d{1,3})?)"
-    r"(?P<suffix>[ \t]*\)[ \t]*:?[ \t]*)$",
+    rf"(?P<end>{TIMESTAMP_TOKEN_PATTERN})"
+    r"(?P<suffix>[ \t]*\)[^\n]*)$",
     re.MULTILINE,
 )
+SUBJECT_FIELD_PATTERN = re.compile(
+    r"(?m)^\s*[-*]\s*(?:\*\*)?\s*[【\[]主体[】\]]\s*(?:\*\*)?\s*[:：]?"
+)
+
+
+def script_timeline_structure_issues(text, label="脚本"):
+    content = str(text or "")
+    matches = list(SHOT_HEADING_TIMECODE_PATTERN.finditer(content))
+    if not matches:
+        return [f"{label}中未识别到镜头标题时间码"]
+
+    issues = []
+    subject_count = len(SUBJECT_FIELD_PATTERN.findall(content))
+    if subject_count and subject_count != len(matches):
+        issues.append(f"{label}镜头标题 {len(matches)} 个，[主体] 区块 {subject_count} 个，存在镜头标题缺失或错位")
+
+    numbers = [int(match.group("number")) for match in matches]
+    if len(numbers) != len(set(numbers)):
+        issues.append(f"{label}存在重复镜头编号")
+
+    ranges = [
+        (parse_timestamp_seconds(match.group("start")), parse_timestamp_seconds(match.group("end")))
+        for match in matches
+    ]
+    if any(start is None or end is None or end <= start for start, end in ranges):
+        issues.append(f"{label}存在无法解析或非正时长的镜头时间码")
+        return issues
+    if abs(ranges[0][0]) > 0.001:
+        issues.append(f"{label}第一个镜头必须从 00:00.000 开始")
+    for index in range(1, len(ranges)):
+        previous_end = ranges[index - 1][1]
+        current_start = ranges[index][0]
+        if abs(current_start - previous_end) > 0.001:
+            issues.append(
+                f"{label}镜头时间轴不连续：第 {index} 个镜头结束于 {previous_end:.3f}s，"
+                f"下一镜头开始于 {current_start:.3f}s"
+            )
+            break
+    return issues
+
+
+def require_script_timeline_structure(text, label="脚本"):
+    issues = script_timeline_structure_issues(text, label)
+    if issues:
+        raise ValueError("时间码校验失败: " + "；".join(issues))
+    return issues
 
 
 def extract_timecode_ranges(text):
@@ -742,6 +783,7 @@ def merge_extra_output_shots(reference_matches, generated_text, generated_matche
 
 
 def enforce_output_timeline(config, reference_text, generated_text):
+    require_script_timeline_structure(reference_text, "参考稿")
     reference_matches = list(SHOT_HEADING_TIMECODE_PATTERN.finditer(str(reference_text or "")))
     generated_matches = list(SHOT_HEADING_TIMECODE_PATTERN.finditer(str(generated_text or "")))
     reference_numbers = [int(match.group("number")) for match in reference_matches]
@@ -779,6 +821,7 @@ def enforce_output_timeline(config, reference_text, generated_text):
         return f'{match.group("prefix")}{start} - {end}{match.group("suffix")}'
 
     corrected = SHOT_HEADING_TIMECODE_PATTERN.sub(restore_timecode, str(generated_text or ""))
+    require_script_timeline_structure(corrected, "输出稿")
     if not corrected_shots:
         return corrected, merge_warnings
     return corrected, merge_warnings + [
@@ -2609,20 +2652,32 @@ def run_script_pipeline(config, args):
         return mutation_text, raw_bundle, f"mutation:{mutation_endpoint}", mutation_field
 
     if not args.dry_run and not parse_bool(config.get("script_force_regenerate")):
+        reference_path = get_reference_path(config)
         clone_path = clone_output_path_for_reference(
             config,
-            get_reference_path(config),
+            reference_path,
             getattr(args, "output_dir", ""),
         )
         if clone_path.is_file():
             existing_text = clone_path.read_text(encoding="utf-8").strip()
             if existing_text:
-                raw_path = clone_path.with_suffix(".raw.json")
-                existing_raw = read_json_config(raw_path) if raw_path.is_file() else {}
-                existing_raw["reused_existing_clone"] = True
-                existing_raw["reused_clone_path"] = str(clone_path)
-                log(f"复刻稿已存在，默认复用且不调用 API: {clone_path}")
-                return existing_text, existing_raw, "reused", "markdown"
+                try:
+                    existing_text, timeline_warnings = enforce_output_timeline(
+                        config,
+                        read_text_file(reference_path),
+                        existing_text,
+                    )
+                except ValueError as exc:
+                    log(f"已有复刻稿结构无效，自动重新生成: {exc}")
+                else:
+                    raw_path = clone_path.with_suffix(".raw.json")
+                    existing_raw = read_json_config(raw_path) if raw_path.is_file() else {}
+                    existing_raw["reused_existing_clone"] = True
+                    existing_raw["reused_clone_path"] = str(clone_path)
+                    if timeline_warnings:
+                        existing_raw["duration_validation_warnings"] = timeline_warnings
+                    log(f"复刻稿已存在且结构校验通过，复用且不调用 API: {clone_path}")
+                    return existing_text, existing_raw, "reused", "markdown"
 
     generated_text, generated_raw, endpoint_style, field_style = generate_validated_clone(config, args)
     if args.dry_run:
@@ -2766,6 +2821,11 @@ def require_clone_source_for_mutation(config, args):
         text = clone_path.read_text(encoding="utf-8").strip()
         if not text:
             raise RuntimeError(f"复刻稿为空，不能作为裂变母稿: {clone_path}")
+        reference_text = read_text_file(get_reference_path(config))
+        try:
+            text, _warnings = enforce_output_timeline(config, reference_text, text)
+        except ValueError as exc:
+            raise RuntimeError(f"复刻稿结构损坏，不能作为裂变母稿: {exc}") from exc
         return clone_path, text
 
     reference_path = get_reference_path(config)
@@ -2779,6 +2839,10 @@ def require_clone_source_for_mutation(config, args):
     if not text:
         raise RuntimeError(f"复刻稿为空，不能作为裂变母稿: {clone_path}")
     reference_text = read_text_file(reference_path)
+    try:
+        text, _warnings = enforce_output_timeline(config, reference_text, text)
+    except ValueError as exc:
+        raise RuntimeError(f"复刻稿结构损坏，不能作为裂变母稿: {exc}") from exc
     text, subject_repair_metadata = repair_script_subject_type(
         config,
         args,
