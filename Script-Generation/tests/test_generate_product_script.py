@@ -655,6 +655,49 @@ class GenerateProductScriptTests(unittest.TestCase):
 
         self.assertFalse(generate_product_script.validate_mutation_difference(reference, variant))
 
+    def test_mutation_difference_issues_are_warnings_and_do_not_reject_variant(self):
+        args = argparse.Namespace(backend="api", mutation_variants=1, mutation_batch_size=1)
+        config = {"script_mutation_attempts_per_variant": 3}
+        visual_fields = """### 镜头 1 (00:00.000 - 00:05.000)
+
+* **[主体]**：西班牙成年女性，约30岁，浅棕肤色，椭圆脸，深褐色中分长直发；穿米色长袖针织上衣和深蓝色长裤。
+* **[在场景中]**：现代公寓客厅，背景是木质墙板和绿色植物。
+* **[做什么动作]**：女性站在茶几旁，右手将[产品]举到肩膀高度展示。
+* **[镜头语言]**：正面中景固定机位。
+* **[光线]**：左侧自然窗光。
+* **[细节]**：茶几上放着一只黑色遥控器。
+"""
+        reference = visual_fields + ("母版补充描述。" * 100)
+        variant = "### 变体 #1\n\n" + reference
+
+        with (
+            patch.object(generate_product_script, "build_mutation_prompt", return_value="prompt"),
+            patch.object(
+                generate_product_script,
+                "call_text_model",
+                return_value=(variant, {"id": "same-surface"}, "openai", "content"),
+            ) as call_model,
+            patch.object(
+                generate_product_script,
+                "repair_script_subject_type",
+                side_effect=lambda _c, _a, text, _r, _n: (text, {"timeline_warnings": []}),
+            ),
+            patch.object(
+                generate_product_script,
+                "repair_script_audio",
+                side_effect=lambda _c, _a, text, _r, _n: (text, {"timeline_warnings": []}),
+            ),
+        ):
+            text, raw, _endpoint, _field = generate_product_script.mutate_script_source(
+                config, args, reference
+            )
+
+        self.assertEqual(call_model.call_count, 1)
+        self.assertEqual(raw["received_variant_count"], 1)
+        self.assertIn("### 变体 #1", text)
+        self.assertTrue(any("裂变差异警告" in warning for warning in raw["validation_warnings"]))
+        self.assertFalse(raw["partial_success"])
+
     def test_mutation_prompt_distinguishes_story_function_from_surface_copying(self):
         config = {"script_country": "ES", "script_target_language": "西班牙语"}
         with (

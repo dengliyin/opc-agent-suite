@@ -1861,13 +1861,6 @@ def validate_mutation_difference(reference_text, variant_text, similarity_thresh
     return issues
 
 
-def require_mutation_difference(reference_text, variant_text):
-    issues = validate_mutation_difference(reference_text, variant_text)
-    if issues:
-        raise RuntimeError("裂变差异校验失败: " + "；".join(issues))
-    return issues
-
-
 def classify_subject_type(subject):
     text = str(subject or "").strip().lower()
     if not text:
@@ -2565,8 +2558,13 @@ def mutate_script_source(config, args, generated_script, reference_context=""):
                 variant, audio_metadata = repair_script_audio(
                     config, args, variant, generated_script, f"裂变第 {variant_number} 条音频缩写"
                 )
-                require_mutation_difference(generated_script, variant)
-                item_warnings = []
+                difference_warnings = [
+                    f"裂变差异警告: {issue}"
+                    for issue in validate_mutation_difference(generated_script, variant)
+                ]
+                item_warnings = list(difference_warnings)
+                for warning in difference_warnings:
+                    log(f"裂变第 {variant_number} 条已保留，{warning}")
                 for metadata in (subject_metadata, audio_metadata):
                     for warning in metadata.get("timeline_warnings", []):
                         if warning not in item_warnings:
